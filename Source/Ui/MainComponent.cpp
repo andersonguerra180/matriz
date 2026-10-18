@@ -4176,16 +4176,20 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         // CONTAINER de importação: no fim do lote, os itens criados por esta chamada viram um nest com origem.
         const std::set<std::string> meus(itemIds.begin(), itemIds.end());
         const std::string origem = origemDoLote;
+        const std::string capaDoContainer = sobre != nullptr ? sobre->capaContainer : std::string();
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
-        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem](const std::vector<std::string>& processados) {
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer](const std::vector<std::string>& processados) {
             if (!seguroContainer || !seguroContainer->projetoAberto_) return;
             std::vector<std::string> doContainer;
             for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
             if (doContainer.size() < 2) return;
             ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
-            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem] {
-                try { proj->criarContainerImportacao(doContainer, origem); } catch (...) {}
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer] {
+                try {
+                    const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
+                    if (!nestId.empty() && !capaDoContainer.empty()) proj->definirCapaDoContainer(nestId, juce::File(capaDoContainer));
+                } catch (...) {}
                 juce::MessageManager::callAsync([seguroContainer, proj] {
                     if (!seguroContainer || seguroContainer->projetoAberto_.get() != proj) return;
                     if (seguroContainer->intakeWorkspace_) seguroContainer->intakeWorkspace_->recarregar();

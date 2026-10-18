@@ -42,6 +42,9 @@ struct SobreMaterial {
     // no Intake com esta origem. Não é metadado do arquivo (não entra em vazio()).
     std::string containerOrigem;
 
+    // Imagem escolhida na ficha (capa do disco/fita) para ser a miniatura do container. Só vale se o lote virar container.
+    std::string capaContainer;
+
     bool vazio() const {
         return collectionType.empty() && subject.empty() && descricao.empty() && pessoas.empty() && tags.empty() &&
                campos.empty() && sufixoTitulo.empty() && geoPadrao.vazio();

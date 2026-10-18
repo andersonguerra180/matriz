@@ -890,6 +890,10 @@ public:
     // CONTAINER de importação (Intake): agrupa os itens recém-ingeridos de uma importação (galeria do celular, Drive,
     // Bridge, Lightroom) num nest com `origem`. Sem Undo (é estado de triagem, não edição). Itens já em nest ficam de fora.
     std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem);
+    // Capa do container (vinil, fita): reduz a imagem, grava em .miniaturas e guarda o caminho no nest. Roda fora da message thread.
+    bool definirCapaDoContainer(const std::string& nestId, const juce::File& imagem);
+    // Se o item é a capa de um container que tem imagem própria, o caminho dela (usado como miniatura no Intake).
+    std::optional<juce::String> capaImagemDoContainer(const std::string& itemId) const;
     // Tira os itens do container (continuam no Intake como itens comuns, sem aprovação). Um container que fica com
     // 1 membro (ou nenhum) é dissolvido.
     void removerDoContainer(const std::vector<std::string>& itemIds);

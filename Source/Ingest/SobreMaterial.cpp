@@ -144,7 +144,9 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
                 db.run("UPDATE item SET ano = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ? AND (ano IS NULL OR ano = 0)",
                        {Value::of(juce::String(valor).getIntValue()), Value::of(agora), Value::of(itemId)});
             } else {
-                upsertCampoHumano(db, itemId, campo, valor, true);
+                // O que o arquivo já traz (formato, origem, aparelho de gravação) fica; a ficha só preenche o que falta.
+                const bool respeitaArquivo = campo == "dc_format" || campo == "dc_source" || campo == "recording_device";
+                upsertCampoHumano(db, itemId, campo, valor, !respeitaArquivo);
             }
         }
 

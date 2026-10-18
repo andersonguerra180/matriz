@@ -25,6 +25,8 @@ struct No {
     std::string chaveDica;        // dica do nível que este grupo abre; vazio = "imp.dica.sub"
     bool emBreve = false;         // card já no lugar, ainda sem fluxo: aparece apagado com selo "em breve"
     bool comSub = false;          // mostra a linha de subtítulo ("imp.sub.<id>")
+    bool filhosEmLista = false;   // os filhos aparecem como lista (linhas), não como cards (ex.: contas do Google Drive)
+    juce::String detalhe;         // segunda linha da linha da lista (ex.: pasta da conta); não passa por i18n
     juce::Colour cor;
     std::vector<No> filhos;
 };
@@ -65,12 +67,14 @@ No montarDrive() {
     if (contas.size() < 2) return drive;
     drive.chaveDica = "imp.dica.drive";
     drive.comSub = true;
+    drive.filhosEmLista = true;
     for (size_t i = 0; i < contas.size(); ++i) {
         No c;
         c.id = "drive." + std::to_string(i);
         c.icone = IconeUi::StorageUnit;
         c.arquivoIcone = "googledrive_png";
         c.rotuloLiteral = contas[i].copiaAntiga ? contas[i].rotulo + " (" + t("gdrive.copia_antiga") + ")" : contas[i].rotulo;
+        c.detalhe = contas[i].pasta.getFullPathName();
         c.cor = drive.cor;
         drive.filhos.push_back(std::move(c));
     }
@@ -159,6 +163,7 @@ std::vector<No> montarArvore() {
                   folha("other.social.tiktok", IconeUi::SocialMedia, "tiktok_jpeg"),
                   folha("other.social.x", IconeUi::SocialMedia, "x_png"),
                   folha("other.social.other", IconeUi::SocialMedia) }),
+          folha("other.design", IconeUi::Multimedia, "3d_jpg"),
           folha("other.custom", IconeUi::Other, "ci_doc_other_png") });
     colorir(outros, tk.tipoOutros);
     raiz.push_back(std::move(outros));
@@ -371,42 +376,132 @@ private:
     int sobre_ = -1;
 };
 
+// Lista de linhas (logo, nome e detalhe) para quando a escolha é entre poucos itens com texto longo (contas do Drive).
+class ListaImportar : public juce::Component {
+public:
+    static constexpr int kAlturaLinha = 60;
+
+    ListaImportar(std::vector<No> nos, juce::String dica) : nos_(std::move(nos)), dica_(std::move(dica)) {
+        setComponentID("imp.lista");
+        setWantsKeyboardFocus(false);
+    }
+
+    static int alturaIdeal(int n) { return kAlturaDica + n * kAlturaLinha + juce::jmax(0, n - 1) * 8; }
+
+    void paint(juce::Graphics& g) override {
+        const auto p = moldura::paleta();
+        g.setColour(p.tinta);
+        g.setFont(fonteUi(14.0f));
+        g.drawText(dica_, getLocalBounds().removeFromTop(kAlturaDica - 4), juce::Justification::centredLeft, true);
+        for (size_t i = 0; i < nos_.size(); ++i) {
+            const auto& no = nos_[i];
+            auto r = linha(static_cast<int>(i)).toFloat().reduced(1.0f);
+            const bool ativo = sobre_ == static_cast<int>(i);
+            g.setColour(p.campo);
+            g.fillRoundedRectangle(r, 14.0f);
+            g.setColour(ativo ? p.grafite : p.linha);
+            g.drawRoundedRectangle(r.reduced(0.5f), 14.0f, ativo ? 2.0f : 1.2f);
+            auto interno = r.reduced(12.0f, 8.0f);
+            const auto& img = imagemDoIcone(no.arquivoIcone);
+            auto areaLogo = interno.removeFromLeft(44.0f);
+            if (img.isValid()) {
+                g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
+                g.drawImage(img, areaLogo, juce::RectanglePlacement::centred);
+            }
+            interno.removeFromLeft(12.0f);
+            auto linhaNome = interno.removeFromTop(interno.getHeight() * 0.5f);
+            g.setColour(p.tinta);
+            g.setFont(fonteUi(14.0f, juce::Font::bold));
+            g.drawText(no.rotuloLiteral.isNotEmpty() ? no.rotuloLiteral : t("imp.node." + no.id), linhaNome.toNearestInt(), juce::Justification::bottomLeft, true);
+            g.setColour(p.mudo);
+            g.setFont(fonteUi(11.5f));
+            g.drawText(no.detalhe, interno.toNearestInt(), juce::Justification::topLeft, true);
+        }
+    }
+
+    void mouseMove(const juce::MouseEvent& e) override {
+        const int novo = linhaEm(e.getPosition());
+        if (novo != sobre_) {
+            sobre_ = novo;
+            setMouseCursor(novo >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+            repaint();
+        }
+    }
+    void mouseExit(const juce::MouseEvent&) override {
+        if (sobre_ != -1) { sobre_ = -1; repaint(); }
+    }
+    void mouseUp(const juce::MouseEvent& e) override {
+        const int i = linhaEm(e.getPosition());
+        if (i < 0 || e.mouseWasDraggedSinceMouseDown()) return;
+        if (auto* overlay = findParentComponentOfClass<PainelOverlay>()) overlay->concluirExterno(100 + i);
+    }
+    bool tratarTecla(const juce::KeyPress& k) {
+        if (k == juce::KeyPress::escapeKey) {
+            if (auto* overlay = findParentComponentOfClass<PainelOverlay>()) overlay->concluirExterno(0);
+            return true;
+        }
+        return false;
+    }
+
+private:
+    juce::Rectangle<int> linha(int i) const { return { 0, kAlturaDica + i * (kAlturaLinha + 8), getWidth(), kAlturaLinha }; }
+    int linhaEm(juce::Point<int> pt) const {
+        for (int i = 0; i < static_cast<int>(nos_.size()); ++i)
+            if (linha(i).contains(pt)) return i;
+        return -1;
+    }
+
+    std::vector<No> nos_;
+    juce::String dica_;
+    int sobre_ = -1;
+};
+
 using AoConcluir = std::function<void(std::optional<std::string>)>;
 
 void mostrarNivel(PainelOverlay& overlay, std::vector<No> nos, juce::String titulo, const std::string& chaveDica,
-                  std::function<void()> voltar, AoConcluir aoConcluir) {
+                  std::function<void()> voltar, AoConcluir aoConcluir, bool emLista = false) {
     const bool ehSub = voltar != nullptr;
-    auto conteudo = std::make_shared<GradeImportar>(nos, t(chaveDica.empty() ? (ehSub ? "imp.dica.sub" : "imp.dica.raiz") : chaveDica));
-    const auto tam = GradeImportar::tamanhoIdeal(static_cast<int>(nos.size()));
+    const juce::String dica = t(chaveDica.empty() ? (ehSub ? "imp.dica.sub" : "imp.dica.raiz") : chaveDica);
 
     PainelOverlay::Config cfg;
     cfg.titulo = titulo;
     cfg.trilha = t("moldura.trilha.adicionar");
-    cfg.conteudo = conteudo;
-    cfg.larguraCartao = tam.x + 2 * PainelOverlay::kMargem + 8;
-    cfg.alturaConteudo = tam.y;
     if (ehSub) cfg.botoes.push_back({ t("imp.voltar"), 1, false, false });
     cfg.botoes.push_back({ t("light.ui.common.cancel"), 0, false, true });
-    juce::Component::SafePointer<GradeImportar> seguroGrade(conteudo.get());
-    cfg.aoTecla = [seguroGrade](const juce::KeyPress& k) { return seguroGrade != nullptr && seguroGrade->tratarTecla(k); };
+    if (emLista) {
+        auto lista = std::make_shared<ListaImportar>(nos, dica);
+        cfg.conteudo = lista;
+        cfg.larguraCartao = 620;
+        cfg.alturaConteudo = ListaImportar::alturaIdeal(static_cast<int>(nos.size()));
+        juce::Component::SafePointer<ListaImportar> seguroLista(lista.get());
+        cfg.aoTecla = [seguroLista](const juce::KeyPress& k) { return seguroLista != nullptr && seguroLista->tratarTecla(k); };
+    } else {
+        auto conteudo = std::make_shared<GradeImportar>(nos, dica);
+        const auto tam = GradeImportar::tamanhoIdeal(static_cast<int>(nos.size()));
+        cfg.conteudo = conteudo;
+        cfg.larguraCartao = tam.x + 2 * PainelOverlay::kMargem + 8;
+        cfg.alturaConteudo = tam.y;
+        juce::Component::SafePointer<GradeImportar> seguroGrade(conteudo.get());
+        cfg.aoTecla = [seguroGrade](const juce::KeyPress& k) { return seguroGrade != nullptr && seguroGrade->tratarTecla(k); };
+    }
 
     juce::Component::SafePointer<PainelOverlay> seguroOverlay(&overlay);
-    overlay.mostrar(cfg, [seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir](PainelOverlay::Resultado r) {
+    overlay.mostrar(cfg, [seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, emLista](PainelOverlay::Resultado r) {
         if (r.botaoId >= 100) {
             const size_t idx = static_cast<size_t>(r.botaoId - 100);
             if (idx >= nos.size()) { aoConcluir(std::nullopt); return; }
             const No no = nos[idx];
             if (no.filhos.empty()) { aoConcluir(no.id); return; }
             // Adiado: este callback roda de dentro do mouseUp do card que o overlay vai substituir.
-            juce::MessageManager::callAsync([seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, no] {
+            juce::MessageManager::callAsync([seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, no, emLista] {
                 if (seguroOverlay == nullptr) { aoConcluir(std::nullopt); return; }
                 const juce::String nomeNo = no.rotuloLiteral.isNotEmpty() ? no.rotuloLiteral : t("imp.node." + no.id);
                 const juce::String tituloSub = titulo + juce::String::fromUTF8(" \xe2\x80\xba ") + nomeNo;
                 mostrarNivel(*seguroOverlay, no.filhos, tituloSub, no.chaveDica,
-                             [seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir] {
-                                 mostrarNivel(*seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir);
+                             [seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, emLista] {
+                                 mostrarNivel(*seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, emLista);
                              },
-                             aoConcluir);
+                             aoConcluir, no.filhosEmLista);
             });
         } else if (r.botaoId == 1 && voltar) {
             juce::MessageManager::callAsync([seguroOverlay, voltar, aoConcluir] {
@@ -423,6 +518,20 @@ void mostrarNivel(PainelOverlay& overlay, std::vector<No> nos, juce::String titu
 
 void mostrarMenuImportar(PainelOverlay& overlay, std::function<void(std::optional<std::string>)> aoConcluir) {
     mostrarNivel(overlay, montarArvore(), t("imp.titulo"), "", nullptr, std::move(aoConcluir));
+}
+
+void mostrarListaDeContasParaTeste(PainelOverlay& overlay) {
+    std::vector<No> contas;
+    for (const char* email : { "anderson@exemplo.com", "estudio@exemplo.com.br", "arquivo-antigo@exemplo.com (old copy)" }) {
+        No c;
+        c.id = "drive." + std::to_string(contas.size());
+        c.arquivoIcone = "googledrive_png";
+        c.rotuloLiteral = email;
+        c.detalhe = juce::String("/Users/exemplo/Library/CloudStorage/GoogleDrive-") + email + "/My Drive";
+        contas.push_back(std::move(c));
+    }
+    mostrarNivel(overlay, std::move(contas), t("imp.titulo") + juce::String::fromUTF8(" \xe2\x80\xba Google Drive"), "imp.dica.drive",
+                 [] {}, [](std::optional<std::string>) {}, true);
 }
 
 std::vector<std::string> idsDasFolhasDoMenuImportar() {

@@ -4647,6 +4647,46 @@ std::string ProjetoAberto::criarContainerImportacao(const std::vector<std::strin
     return nestId;
 }
 
+bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce::File& imagem) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || !imagem.existsAsFile()) return false;
+    juce::Image img = juce::ImageFileFormat::loadFrom(imagem);
+    if (!img.isValid()) return false;
+    constexpr int kLado = 512;
+    if (img.getWidth() > kLado || img.getHeight() > kLado) {
+        const float escala = static_cast<float>(kLado) / static_cast<float>(juce::jmax(img.getWidth(), img.getHeight()));
+        img = img.rescaled(juce::jmax(1, juce::roundToInt(img.getWidth() * escala)), juce::jmax(1, juce::roundToInt(img.getHeight() * escala)),
+                           juce::Graphics::highResamplingQuality);
+    }
+    const juce::String relativo = ".miniaturas/capa_container_" + juce::String(nestId) + ".jpg";
+    const juce::File destino = projeto_->pasta().getChildFile(relativo);
+    destino.getParentDirectory().createDirectory();
+    destino.deleteFile();
+    {
+        juce::FileOutputStream saida(destino);
+        if (!saida.openedOk()) return false;
+        juce::JPEGImageFormat jpeg;
+        jpeg.setQuality(0.9f);
+        if (!jpeg.writeImageToStream(img, saida)) return false;
+    }
+    try {
+        projeto_->registro().run("UPDATE nest SET capa_imagem = ? WHERE id = ?",
+                                 {matriz::db::Value::of(relativo.toStdString()), matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    return true;
+}
+
+std::optional<juce::String> ProjetoAberto::capaImagemDoContainer(const std::string& itemId) const {
+    if (!projeto_) return std::nullopt;
+    try {
+        auto stmt = leitura().prepare("SELECT capa_imagem FROM nest WHERE capa_item_id = ? AND capa_imagem IS NOT NULL AND capa_imagem <> '' LIMIT 1");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (!stmt.step()) return std::nullopt;
+        const juce::File f = projeto_->pasta().getChildFile(juce::String(stmt.columnText(0)));
+        if (f.existsAsFile()) return f.getFullPathName();
+    } catch (...) {}
+    return std::nullopt;
+}
+
 void ProjetoAberto::removerDoContainer(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_ || !projeto_ || itemIds.empty()) return;
     auto& db = projeto_->registro();

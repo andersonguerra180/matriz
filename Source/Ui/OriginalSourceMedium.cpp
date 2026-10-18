@@ -45,6 +45,7 @@ static const std::vector<MediumCategoryGroup> kMediumVocab = {
             "DTRS / Hi8 Digital Audio Tape",
             "MiniDisc (MD)",
             "Audio CD / CD-R",
+            "16\" Vinyl",
             "12\" Vinyl",
             "10\" Vinyl",
             "7\" Vinyl",
@@ -150,6 +151,7 @@ static const std::pair<const char*, const char*> kMediumTranslations[] = {
     {"DTRS / Hi8 Digital Audio Tape", "Fita DTRS / Hi8 Digital Audio"},
     {"MiniDisc (MD)", "MiniDisc (MD)"},
     {"Audio CD / CD-R", "CD de Áudio / CD-R"},
+    {"16\" Vinyl", "Disco de Vinil 16\" (Transcrição)"},
     {"12\" Vinyl", "Disco de Vinil 12\""},
     {"10\" Vinyl", "Disco de Vinil 10\""},
     {"7\" Vinyl", "Disco de Vinil 7\" (Compacto)"},
@@ -632,7 +634,7 @@ void OriginalSourceMediumEditorComponent::rebuildSubfields() {
         addComboField("recordingStandard", "TAPE FORMAT", {"DA-88 (16-bit)", "DA-78HR (24-bit)", "DA-98HR (24-bit)", "Other", "Unknown"}, currentInfo_.recordingStandard);
         addComboField("trackFormat", "TRACK CONFIGURATION", {"8-Track", "16-Track", "24-Track", "Other", "Unknown"}, currentInfo_.trackFormat);
         addComboField("referenceEq", "RECORDING STANDARD", {"DTRS", "Other", "Unknown"}, currentInfo_.referenceEq);
-    } else if (med == "12\" Vinyl" || med == "10\" Vinyl" || med == "7\" Vinyl") {
+    } else if (med == "16\" Vinyl" || med == "12\" Vinyl" || med == "10\" Vinyl" || med == "7\" Vinyl") {
         addComboField("speed", "SPEED", {"33 1/3 RPM", "45 RPM", "78 RPM", "Other", "Unknown"}, currentInfo_.speed);
         addComboField("discType", "DISC TYPE", {"LP", "EP", "Single", "Acetate", "Test Pressing", "Other", "Unknown"}, currentInfo_.discType);
         addComboField("referenceEq", "EQUALIZATION / REFERENCE", {"RIAA", "Pre-RIAA", "Columbia", "Decca", "NAB", "AES", "Other", "Unknown"}, currentInfo_.referenceEq);

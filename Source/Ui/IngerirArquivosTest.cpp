@@ -1136,6 +1136,40 @@ int rodarTestImportarComContexto() {
             checar(membros.columnInt(0) == 2, "o container 'ddp' tem os 2 arquivos");
         }
 
+        // Capa do container (vinil): a imagem escolhida na ficha vira a capa do nest e fica em .miniaturas do projeto.
+        {
+            juce::File pasta = tmpRoot.getChildFile("lado_a_vinil");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=1",
+                             pasta.getChildFile("faixa_1.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=360:duration=1",
+                             pasta.getChildFile("faixa_2.wav").getFullPathName()});
+            juce::File capa = tmpRoot.getChildFile("capa_vinil.png");
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=orange:s=800x800", "-frames:v", "1",
+                             capa.getFullPathName()});
+            auto ctxVinil = std::make_shared<matriz::ingest::SobreMaterial>(*contextoDaFolhaImportar("audio.preservation.vinyl"));
+            ctxVinil->capaContainer = capa.getFullPathName().toStdString();
+            checar(ctxVinil->containerOrigem == "vinyl", "audio.preservation.vinyl pede container 'vinyl'");
+            mainComponent.ingerirArquivos({pasta}, true, ctxVinil);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            std::string capaGravada;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT capa_imagem FROM nest WHERE origem = 'vinyl' AND capa_imagem IS NOT NULL LIMIT 1");
+                if (st.step()) { capaGravada = st.columnText(0); break; }
+            }
+            esperarIngestTerminar(mainComponent);
+            const juce::File arquivoCapa = mainComponent.projetoAberto()->projeto().pasta().getChildFile(juce::String(capaGravada));
+            checar(!capaGravada.empty() && arquivoCapa.existsAsFile() && arquivoCapa.getSize() > 0,
+                   "capa do container 'vinyl' gravada em .miniaturas e registrada no nest (" + juce::String(capaGravada) + ")");
+            // A miniatura do Intake para o item-capa do container é a imagem escolhida, não a forma de onda.
+            auto capaItem = registro.prepare("SELECT capa_item_id FROM nest WHERE origem = 'vinyl' AND capa_imagem IS NOT NULL LIMIT 1");
+            const bool achouCapaItem = capaItem.step();
+            checar(achouCapaItem && mainComponent.projetoAberto()->capaImagemDoContainer(capaItem.columnText(0)).has_value(),
+                   "capaImagemDoContainer devolve a imagem para o item-capa");
+        }
+
         ingerir(neutro, nullptr);
         checar(coluna("neutro", "collection_type").empty() && coluna("neutro", "source_media").empty(),
                "sem contexto (card neutro / arrastar) o item entra como antes: sem CONTENT nem SOURCE MEDIUM");
@@ -1234,9 +1268,19 @@ int rodarTestImportarVisual() {
         mostrarFichaImportar(overlayVinil, "audio.preservation.vinyl", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
         girar(100);
         salvar(overlayVinil, "imp_10_ficha_audio_vinil");
-        const char* fichasVisuais[][2] = { { "photos.folder", "imp_13_ficha_fotos" }, { "files.optical", "imp_14_ficha_arquivos_optico" },
-                                           { "documents.web", "imp_15_ficha_docs_web" }, { "other.multimedia.interactive", "imp_16_ficha_interativo" },
-                                           { "other.social.other", "imp_17_ficha_rede_outra" } };
+        {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarListaDeContasParaTeste(o);
+            girar(100);
+            salvar(o, "imp_18_drive_lista");
+        }
+        const char* fichasVisuais[][2] = { { "photos.folder", "imp_13_ficha_fotos" }, { "documents.web", "imp_15_ficha_docs_web" }, { "other.multimedia.interactive", "imp_16_ficha_interativo" },
+                                           { "other.social.other", "imp_17_ficha_rede_outra" },
+                                           { "audio.preservation.vinyl", "imp_19_ficha_vinil" }, { "audio.preservation.tape", "imp_20_ficha_fita" },
+                                           { "audio.general.field", "imp_21_ficha_campo" }, { "audio.general.film_sound", "imp_22_ficha_film_sound" },
+                                           { "audio.general.voice_over", "imp_23_ficha_locucao" }, { "documents.scanned", "imp_24_ficha_docs_escaneado" },
+                                           { "other.design", "imp_25_ficha_design" }, { "files.optical", "imp_14_ficha_arquivos_optico" } };
         for (const auto& fv : fichasVisuais) {
             PainelOverlay o;
             o.setBounds(0, 0, 1100, 760);
@@ -1244,6 +1288,29 @@ int rodarTestImportarVisual() {
             girar(100);
             salvar(o, fv[1]);
         }
+        // Toda ficha tem que concluir com CONTINUE (era o que faltava testar: o DDP quebrava aqui) e com PULAR.
+        {
+            int total = 0, concluiram = 0;
+            for (const auto& id : idsDasFolhasDoMenuImportar()) {
+                if (!folhaImportarTemFicha(id)) continue;
+                for (int botao : { 1, 2 }) {
+                    PainelOverlay o;
+                    o.setBounds(0, 0, 1100, 760);
+                    bool respondeu = false;
+                    mostrarFichaImportar(o, id, [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) { respondeu = true; });
+                    girar(30);
+                    o.concluirExterno(botao);
+                    girar(30);
+                    ++total;
+                    if (respondeu) ++concluiram;
+                    else std::cout << "  FAIL ficha sem resposta: " << id << " botao " << botao << "\n";
+                }
+            }
+            const bool ok = total > 0 && total == concluiram;
+            std::cout << (ok ? "  OK   " : "  FAIL ") << "todas as fichas concluem com CONTINUE e PULAR (" << concluiram << "/" << total << ")\n";
+            if (!ok) ++falhas;
+        }
+
         PainelOverlay overlayDdp;
         overlayDdp.setBounds(0, 0, 1100, 760);
         mostrarFichaImportar(overlayDdp, "audio.preservation.ddp", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});

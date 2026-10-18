@@ -39,6 +39,9 @@ bool folhaImportarTemFicha(const std::string& id);
 void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
                           std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir);
 
+// Para o self-test: mostra a lista de contas do Drive com contas de mentira (a máquina de teste pode não ter nenhuma).
+void mostrarListaDeContasParaTeste(PainelOverlay& overlay);
+
 // Para o self-test: todos os ids de folha (inclui as "em breve") na ordem da árvore.
 std::vector<std::string> idsDasFolhasDoMenuImportar();
 

@@ -1,45 +1,53 @@
 #include "ImportarMenu.h"
 
+#include <cmath>
 #include <map>
+#include <set>
 
 #include "../I18n/Strings.h"
 #include "FichasSomDados.h"
 #include "OriginalSourceMedium.h"
 
-// Contexto de cada card da janela IMPORT: o que a escolha já implica (tabela) e as fichas que perguntam o resto
-// (vídeo e áudio). Tudo vira um SobreMaterial aplicado a cada arquivo importado (ver MainComponent::ingerirArquivos).
+// Contexto de cada card da janela IMPORT: o que a escolha já implica (tabela) e as fichas que perguntam o resto.
+// Tudo vira um SobreMaterial aplicado a cada arquivo importado (ver MainComponent::ingerirArquivos).
+//
+// Cada campo da ficha carrega a própria regra de gravação (struct Campo): o callback do overlay só roda as regras dos
+// campos, sem ponteiros para dados que já tenham sido destruídos.
 
 namespace matriz::ui {
 
 using matriz::i18n::t;
+using matriz::ingest::SobreMaterial;
 namespace fs = matriz::ui::mini::fichasom;
 
 namespace {
 
-// Opções do campo "formato de origem": digital nativo, os grupos do vocabulário cujo nome começa com um dos
-// prefixos dados e "Outro". O texto exibido é o traduzido; canonicalMedium() devolve o nome em inglês que o catálogo guarda.
-std::vector<juce::String> opcoesFormato(const std::vector<const char*>& prefixosDeGrupo, bool comNativoDigital = true) {
-    const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
-    std::vector<juce::String> opcoes;
-    if (comNativoDigital) opcoes.push_back(OriginalSourceMediumVocabulary::translateMedium("Native Digital", pt));
-    for (const auto& grupoMedio : OriginalSourceMediumVocabulary::getMediumCategories()) {
-        bool serve = false;
-        for (const char* prefixo : prefixosDeGrupo) serve = serve || grupoMedio.groupName.startsWith(prefixo);
-        if (!serve) continue;
-        for (const auto& medio : grupoMedio.mediums) opcoes.push_back(OriginalSourceMediumVocabulary::translateMedium(medio, pt));
-    }
-    opcoes.push_back(OriginalSourceMediumVocabulary::translateMedium("Other", pt));
-    return opcoes;
+using Resultado = PainelOverlay::Resultado;
+using Aplica = std::function<void(const Resultado&, SobreMaterial&)>;
+using AoConcluirFicha = std::function<void(bool, std::shared_ptr<const SobreMaterial>)>;
+
+struct Campo {
+    PainelOverlay::CampoTexto def;
+    Aplica aplica;
+};
+using Campos = std::vector<Campo>;
+
+struct Ficha {
+    Campos campos;
+    std::vector<PainelOverlay::BotaoGrupo> botoesGrupo;
+    Aplica depois;  // roda depois de todos os campos (regras que cruzam campos)
+};
+
+struct Op { std::string id, en, pt; };
+struct FormatoOp { std::string en, pt, medium, nota; };
+
+// ── utilidades ────────────────────────────────────────────────────────────────────────────────────────────
+
+juce::String rot(const std::string& en, const std::string& pt) {
+    return juce::String::fromUTF8((matriz::i18n::localeAtivo() == "pt_BR" ? pt : en).c_str());
 }
 
-void gravarFormato(matriz::ingest::SobreMaterial& sobre, const juce::String& escolhido) {
-    if (escolhido.isEmpty()) return;
-    OriginalSourceMediumInfo info;
-    info.medium = OriginalSourceMediumVocabulary::canonicalMedium(escolhido.toStdString());
-    sobre.campos.push_back({ "source_media", info.serialize() });
-}
-
-std::string valorDe(const PainelOverlay::Resultado& r, const std::string& campo) {
+std::string valorDe(const Resultado& r, const std::string& campo) {
     const auto it = r.valores.find(juce::String(campo));
     return it == r.valores.end() ? std::string() : it->second.trim().toStdString();
 }
@@ -50,68 +58,246 @@ int indiceDe(const std::vector<juce::String>& opcoes, const juce::String& valor)
     return -1;
 }
 
-// ── Áudio: tipos que o Mini já tinha (FichasSomDados.h) + os que o menu novo acrescenta ─────────────────────
-
-const fs::Tipo& tipoFerramentas() {
-    static const fs::Tipo tipo{ "tools", "Production tools", "Ferramentas de produção", {
-        { "asset_kind", "Kind", "Tipo", "", "", 1, false,
-          { { "instrument", "Virtual instrument", "Instrumento virtual" }, { "preset", "Preset", "Preset" },
-            { "ir", "Impulse response (IR)", "Resposta ao impulso (IR)" }, { "plugin", "Plugin", "Plugin" }, { "other", "Other", "Outro" } } },
-        { "asset_name", "Name or vendor", "Nome ou fabricante", "", "", 0, true, {} },
-    } };
-    return tipo;
+// Linha "Rótulo: valor" nas notas (NOTES) de cada arquivo.
+void linhaDeNota(SobreMaterial& sobre, const std::string& rotulo, const std::string& valor) {
+    if (valor.empty()) return;
+    sobre.descricao += (sobre.descricao.empty() ? std::string() : std::string("\n")) + rotulo + ": " + valor;
 }
 
-const fs::Tipo& tipoFita() {
-    static const fs::Tipo tipo{ "tape_rip", "Tape / Cassette transcription", "Transcrição de fita / cassete", {
-        { "artist_title", "Artist and title", "Artista e título", "", "", 0, false, {} },
-        { "condition", "Tape condition", "Estado da fita", "", "", 1, false,
-          { { "good", "Good", "Boa" }, { "worn", "Worn", "Desgastada" }, { "damaged", "Damaged", "Danificada" } } },
-        { "noise_reduction", "Noise reduction", "Redução de ruído", "", "", 1, true,
-          { { "none", "None", "Nenhuma" }, { "dolby_b", "Dolby B", "Dolby B" }, { "dolby_c", "Dolby C", "Dolby C" }, { "dbx", "dbx", "dbx" } } },
-    } };
-    return tipo;
+void somarAssunto(SobreMaterial& s, const std::string& valor) {
+    if (valor.empty()) return;
+    s.subject = s.subject.empty() ? valor : valor + ", " + s.subject;
 }
 
-const fs::Tipo& tipoSomDeFilme() {
-    static const fs::Tipo tipo{ "film_sound", "Film sound", "Som de filme", {
-        { "project", "Film or project", "Filme ou projeto", "", "", 0, false, {} },
-        { "sound_kind", "Sound type", "Tipo de som", "", "", 1, false,
-          { { "dialogue", "Dialogue", "Diálogo" }, { "foley", "Foley", "Foley" }, { "ambience", "Ambience", "Ambiência" },
-            { "sfx", "Sound effects", "Efeitos sonoros" }, { "adr", "ADR", "ADR" }, { "mix", "Mix / stems", "Mix / stems" } } },
-        { "scene", "Scene or reel", "Cena ou rolo", "", "", 0, true, {} },
-    } };
-    return tipo;
+// ── construtores de campo ─────────────────────────────────────────────────────────────────────────────────
+
+Campo cTexto(const std::string& id, const std::string& en, const std::string& pt, const std::string& dicaEn = "",
+             const std::string& dicaPt = "", std::function<void(SobreMaterial&, const std::string&)> extra = nullptr,
+             bool comoNota = true) {
+    Campo c;
+    c.def = { juce::String(id), rot(en, pt), "", rot(dicaEn, dicaPt), {} };
+    c.aplica = [id, en, extra, comoNota](const Resultado& r, SobreMaterial& s) {
+        const std::string v = valorDe(r, id);
+        if (v.empty()) return;
+        if (comoNota) linhaDeNota(s, en, v);
+        if (extra) extra(s, v);
+    };
+    return c;
 }
 
-const fs::Tipo& tipoOutroAudio() {
-    static const fs::Tipo tipo{ "other_audio", "Other audio", "Outro áudio", {} };
-    return tipo;
+Campo cAssunto(const std::string& id, const std::string& en, const std::string& pt, const std::string& dicaEn = "",
+               const std::string& dicaPt = "") {
+    return cTexto(id, en, pt, dicaEn, dicaPt, [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false);
 }
 
-const fs::Tipo* achaTipoDoMini(const std::string& id) {
-    for (const auto& tp : fs::tipos())
-        if (id == tp.id) return &tp;
-    return nullptr;
+Campo cEscolha(const std::string& id, const std::string& en, const std::string& pt, const std::vector<Op>& ops, bool comTag = true,
+               std::function<void(SobreMaterial&, const Op&)> extra = nullptr, const std::string& dicaEn = "",
+               const std::string& dicaPt = "") {
+    std::vector<juce::String> rotulos;
+    for (const auto& op : ops) rotulos.push_back(rot(op.en, op.pt));
+    Campo c;
+    c.def = { juce::String(id), rot(en, pt), "", rot(dicaEn, dicaPt), rotulos };
+    c.aplica = [id, en, ops, rotulos, comTag, extra](const Resultado& r, SobreMaterial& s) {
+        const std::string v = valorDe(r, id);
+        if (v.empty()) return;
+        const int i = indiceDe(rotulos, juce::String::fromUTF8(v.c_str()));
+        if (i < 0) return;
+        const Op& op = ops[static_cast<size_t>(i)];
+        linhaDeNota(s, en, op.en);
+        if (comTag) s.tags.push_back(op.en);
+        if (extra) extra(s, op);
+    };
+    return c;
 }
 
-// Folha do menu -> tipo de ficha de áudio.
-const fs::Tipo* tipoDaFolha(const std::string& folha) {
-    if (folha == "audio.production.project") return achaTipoDoMini("music_production");
-    if (folha == "audio.production.samples") return achaTipoDoMini("sample_pack");
-    if (folha == "audio.production.midi") return achaTipoDoMini("midi");
-    if (folha == "audio.production.tools") return &tipoFerramentas();
-    if (folha == "audio.preservation.ddp") return achaTipoDoMini("ddp_master");
-    if (folha == "audio.preservation.vinyl") return achaTipoDoMini("vinyl_rip");
-    if (folha == "audio.preservation.tape") return &tipoFita();
-    if (folha == "audio.general.soundtrack") return achaTipoDoMini("soundtrack");
-    if (folha == "audio.general.film_sound") return &tipoSomDeFilme();
-    if (folha == "audio.general.audiobook") return achaTipoDoMini("audiobook");
-    if (folha == "audio.general.field") return achaTipoDoMini("field_recording");
-    if (folha == "audio.general.voice_over") return achaTipoDoMini("voice_over");
-    if (folha == "audio.general.voice_notes") return achaTipoDoMini("voice_memo");
-    if (folha == "audio.general.other") return &tipoOutroAudio();
-    return nullptr;
+// "Original source format": o que sai escolhido vira SOURCE MEDIUM (JSON de OriginalSourceMediumInfo) de cada arquivo.
+Campo cFormato(const std::vector<FormatoOp>& ops, const std::string& id = "formato", const std::string& en = "Original source format",
+               const std::string& pt = "Formato de origem", const std::string& dicaEn = "Where the material originally lived. Leave empty if unknown.",
+               const std::string& dicaPt = "Onde o material vivia originalmente. Deixe vazio se não souber.") {
+    std::vector<juce::String> rotulos;
+    for (const auto& op : ops) rotulos.push_back(rot(op.en, op.pt));
+    Campo c;
+    c.def = { juce::String(id), rot(en, pt), "", rot(dicaEn, dicaPt), rotulos };
+    c.aplica = [id, ops, rotulos](const Resultado& r, SobreMaterial& s) {
+        const std::string v = valorDe(r, id);
+        if (v.empty()) return;
+        const int i = indiceDe(rotulos, juce::String::fromUTF8(v.c_str()));
+        if (i < 0) return;
+        const FormatoOp& op = ops[static_cast<size_t>(i)];
+        OriginalSourceMediumInfo info;
+        info.medium = op.medium;
+        info.customNote = op.nota;
+        s.campos.push_back({ "source_media", info.serialize() });
+    };
+    return c;
+}
+
+Campo cInterruptor(const std::string& id, const std::string& en, const std::string& pt, const juce::String& grupo) {
+    Campo c;
+    c.def = { juce::String(id), rot(en, pt), "", "", {}, true, "", "", "", "", grupo };
+    c.aplica = [id, en](const Resultado& r, SobreMaterial& s) {
+        if (valorDe(r, id) == "1") s.tags.push_back(en);
+    };
+    return c;
+}
+
+// ── formatos de origem a partir do vocabulário do Matriz ──────────────────────────────────────────────────
+
+// Opções dos grupos do vocabulário cujo nome começa com um dos prefixos. `excluir` tira entradas pelo nome canônico.
+std::vector<FormatoOp> formatosDoVocabulario(const std::vector<const char*>& prefixosDeGrupo, bool comNativo = true,
+                                             const std::set<std::string>& excluir = {}) {
+    std::vector<FormatoOp> ops;
+    const auto add = [&](const std::string& nome) {
+        if (excluir.count(nome)) return;
+        ops.push_back({ nome, OriginalSourceMediumVocabulary::translateMedium(juce::String(nome), true).toStdString(), nome, "" });
+    };
+    if (comNativo) add("Native Digital");
+    for (const auto& grupoMedio : OriginalSourceMediumVocabulary::getMediumCategories()) {
+        bool serve = false;
+        for (const char* prefixo : prefixosDeGrupo) serve = serve || grupoMedio.groupName.startsWith(prefixo);
+        if (!serve) continue;
+        for (const auto& medio : grupoMedio.mediums) add(medio.toStdString());
+    }
+    add("Other");
+    return ops;
+}
+
+// Formatos por nome canônico, na ordem dada.
+std::vector<FormatoOp> formatosPorNome(const std::vector<std::string>& nomes) {
+    std::vector<FormatoOp> ops;
+    for (const auto& nome : nomes)
+        ops.push_back({ nome, OriginalSourceMediumVocabulary::translateMedium(juce::String(nome), true).toStdString(), nome, "" });
+    return ops;
+}
+
+// "CD-R" e "DVD-R": o vocabulário guarda CD e DVD num nome só; a lista mostra só o que o usuário usa.
+void simplificarOpticos(std::vector<FormatoOp>& ops) {
+    for (auto& op : ops) {
+        if (op.medium == "Audio CD / CD-R / CD-RW") { op.en = "CD-R"; op.pt = "CD-R"; }
+        if (op.medium == "DVD / DVD-R / DVD-Video") { op.en = "DVD-R"; op.pt = "DVD-R"; }
+    }
+}
+
+const std::set<std::string>& semOpticosRaros() {
+    static const std::set<std::string> v = { "MiniDisc (MD)", "LaserDisc", "Blu-ray Disc (BD / BD-R)", "Internal Storage / Smartphone" };
+    return v;
+}
+
+// ── geolocalização (cidade, estado, país, coordenadas) e botão GET ───────────────────────────────────────
+
+void obterLocalizacao(PainelOverlay& overlay) {
+    // Local aproximado pelo IP, preenchido sem apagar nada. Só roda quando o usuário clica em GET; a consulta sai da
+    // thread de interface.
+    juce::Component::SafePointer<PainelOverlay> seguro(&overlay);
+    juce::Thread::launch([seguro] {
+        juce::String cidade, estado, pais, coord;
+        try {
+            juce::URL u("https://ipapi.co/json/");
+            if (auto in = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress).withConnectionTimeoutMs(6000))) {
+                const auto json = juce::JSON::parse(in->readEntireStreamAsString());
+                if (json.isObject() && json.hasProperty("country_name")) {
+                    cidade = json["city"].toString();
+                    estado = json["region"].toString();
+                    pais = json["country_name"].toString();
+                    if (json.hasProperty("latitude") && json.hasProperty("longitude"))
+                        coord = juce::String(static_cast<double>(json["latitude"]), 5) + ", " + juce::String(static_cast<double>(json["longitude"]), 5);
+                }
+            }
+        } catch (...) {}
+        juce::MessageManager::callAsync([seguro, cidade, estado, pais, coord] {
+            if (seguro == nullptr) return;
+            seguro->definirValorCampo("geo_cidade", cidade);
+            seguro->definirValorCampo("geo_estado", estado);
+            seguro->definirValorCampo("geo_pais", pais);
+            seguro->definirValorCampo("geo_coord", coord);
+        });
+    });
+}
+
+Campos cGeo() {
+    const juce::String grupo = t("imp.ficha.geo");
+    const auto campo = [&](const char* id, const char* chave, const char* chaveDica, Aplica aplica) {
+        Campo c;
+        c.def = { id, t(chave), "", chaveDica != nullptr ? t(chaveDica) : juce::String(), {}, false, "", "", "", "", grupo };
+        c.aplica = std::move(aplica);
+        return c;
+    };
+    return {
+        campo("geo_cidade", "imp.ficha.cidade", nullptr, [](const Resultado& r, SobreMaterial& s) { s.geoPadrao.cidade = valorDe(r, "geo_cidade"); }),
+        campo("geo_estado", "imp.ficha.estado", nullptr, [](const Resultado& r, SobreMaterial& s) { s.geoPadrao.estado = valorDe(r, "geo_estado"); }),
+        campo("geo_pais", "imp.ficha.pais", nullptr, [](const Resultado& r, SobreMaterial& s) { s.geoPadrao.pais = valorDe(r, "geo_pais"); }),
+        campo("geo_coord", "imp.ficha.coord", "imp.ficha.coord.dica", [](const Resultado& r, SobreMaterial& s) {
+            juce::StringArray partes;
+            partes.addTokens(juce::String::fromUTF8(valorDe(r, "geo_coord").c_str()).replaceCharacters(";", ","), ", ", "");
+            partes.removeEmptyStrings();
+            if (partes.size() < 2) return;
+            const double lat = partes[0].getDoubleValue(), lng = partes[1].getDoubleValue();
+            if (std::abs(lat) <= 90.0 && std::abs(lng) <= 180.0 && (lat != 0.0 || lng != 0.0)) { s.geoPadrao.lat = lat; s.geoPadrao.lng = lng; }
+        }),
+    };
+}
+
+PainelOverlay::BotaoGrupo botaoGet() {
+    return { t("imp.ficha.geo"), t("imp.ficha.geo.get"), [](PainelOverlay& o) { obterLocalizacao(o); } };
+}
+
+void juntarGeo(Ficha& f) {
+    for (auto& c : cGeo()) f.campos.push_back(std::move(c));
+    f.botoesGrupo.push_back(botaoGet());
+}
+
+// ── capa do container (vinil, fita) ───────────────────────────────────────────────────────────────────────
+
+void juntarCapa(Ficha& f) {
+    const juce::String grupo = t("imp.ficha.capa");
+    Campo c;
+    c.def = { "capa", t("imp.ficha.capa.arquivo"), "", t("imp.ficha.capa.dica"), {}, false, "", "", "", "", grupo };
+    c.aplica = [](const Resultado& r, SobreMaterial& s) { s.capaContainer = valorDe(r, "capa"); };
+    f.campos.push_back(std::move(c));
+    f.botoesGrupo.push_back({ grupo, t("imp.ficha.capa.botao"), [](PainelOverlay& overlay) {
+        auto seletor = std::make_shared<juce::FileChooser>(t("imp.ficha.capa.titulo"), juce::File(), "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.gif;*.webp");
+        juce::Component::SafePointer<PainelOverlay> seguro(&overlay);
+        seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                             [seguro, seletor](const juce::FileChooser& fc) {
+                                 const auto escolhido = fc.getResult();
+                                 if (seguro != nullptr && escolhido.existsAsFile()) seguro->definirValorCampo("capa", escolhido.getFullPathName());
+                             });
+    } });
+}
+
+// ── mostrar uma ficha ─────────────────────────────────────────────────────────────────────────────────────
+
+void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce::String& mensagem, Ficha ficha, AoConcluirFicha aoConcluir) {
+    PainelOverlay::Config cfg;
+    cfg.titulo = titulo;
+    cfg.mensagem = mensagem;
+    cfg.trilha = t("moldura.trilha.adicionar");
+    cfg.larguraCartao = 620;
+    for (const auto& c : ficha.campos) cfg.campos.push_back(c.def);
+    cfg.botoesGrupo = ficha.botoesGrupo;
+    cfg.botoes = {
+        { t("light.ui.common.cancel"), 0, false, true },
+        { t("imp.ficha.pular"), 2, false, false },
+        { t("imp.ficha.continuar"), 1, true, false },
+    };
+    // A ficha inteira (campos e regras) vive dentro do callback: nada aponta para fora dele.
+    auto dono = std::make_shared<Ficha>(std::move(ficha));
+    overlay.mostrar(cfg, [aoConcluir, dono](Resultado r) {
+        if (!aoConcluir) return;
+        if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
+        if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }  // PULAR: segue só com o que o card já implica
+        auto sobre = std::make_shared<SobreMaterial>();
+        for (const auto& c : dono->campos)
+            if (c.aplica) c.aplica(r, *sobre);
+        if (dono->depois) dono->depois(r, *sobre);
+        aoConcluir(true, sobre->vazio() && sobre->capaContainer.empty() ? nullptr : sobre);
+    });
+}
+
+Campo cNotas() { return cTexto("notas", "Notes", "Observações", "Anything worth remembering about this material", "Qualquer coisa que valha lembrar sobre este material"); }
+Campo cContexto() { return cTexto("context", "Context / Additional Details", "Contexto / Detalhes adicionais"); }
+Campo cIdentificacao() {
+    return cTexto("media_id", "Card, CD or tape ID", "ID do cartão, CD ou fita", "Label, number or name written on it", "Etiqueta, número ou nome escrito nele");
 }
 
 // "Outro" e "Personalizado": o usuário diz do que se trata (vira o SUBJECT dos arquivos e entra nas notas).
@@ -119,334 +305,333 @@ bool ehOutro(const std::string& id) {
     return id == "other.custom" || (id.size() > 6 && id.compare(id.size() - 6, 6, ".other") == 0);
 }
 
-PainelOverlay::CampoTexto campoOutro() {
-    return { "outro", t("imp.ficha.outro"), "", t("imp.ficha.outro.dica"), {} };
+Campo cOutro() {
+    return cTexto("outro", "What is this about?", "Do que se trata?", "Describe what you are importing — it becomes the SUBJECT",
+                  "Descreva o que você está importando — vira o ASSUNTO (SUBJECT)",
+                  [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); });
 }
 
-void aplicarOutro(matriz::ingest::SobreMaterial& sobre, const std::string& oQue) {
-    if (oQue.empty()) return;
-    sobre.subject = sobre.subject.empty() ? oQue : oQue + ", " + sobre.subject;
-    sobre.descricao = (sobre.descricao.empty() ? std::string() : sobre.descricao + "\n") + "What it is: " + oQue;
+// ── VÍDEO ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+Ficha fichaVideo(bool comOutro) {
+    // O formato de origem é pergunta da ficha, não um card: o mesmo material pode ter começado numa fita e estar hoje
+    // num arquivo digital ou num link.
+    auto formatos = formatosDoVocabulario({ "VIDEO", "OPTICAL", "FILM" }, true, { "MiniDisc (MD)", "Audio CD / CD-R / CD-RW" });
+    Ficha f;
+    if (comOutro) f.campos.push_back(cOutro());
+    f.campos.push_back(cFormato(formatos));
+    f.campos.push_back(cNotas());
+    return f;
 }
 
-void mostrarFichaOutro(PainelOverlay& overlay, std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
-    PainelOverlay::Config cfg;
-    cfg.titulo = t("imp.ficha.outro.titulo");
-    cfg.mensagem = t("imp.ficha.outro.msg");
-    cfg.trilha = t("moldura.trilha.adicionar");
-    cfg.larguraCartao = 620;
-    cfg.campos = { campoOutro(), { "notas", t("imp.ficha.notas"), "", t("imp.ficha.notas.dica"), {} } };
-    cfg.botoes = {
-        { t("light.ui.common.cancel"), 0, false, true },
-        { t("imp.ficha.pular"), 2, false, false },
-        { t("imp.ficha.continuar"), 1, true, false },
-    };
-    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
-        if (!aoConcluir) return;
-        if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
-        if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }
-        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
-        sobre->descricao = valorDe(r, "notas");
-        aplicarOutro(*sobre, valorDe(r, "outro"));
-        aoConcluir(true, sobre->vazio() ? nullptr : sobre);
-    });
-}
+// ── ÁUDIO ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-void mostrarFichaVideo(PainelOverlay& overlay, bool comOutro,
-                       std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
-    // O formato de origem é pergunta da ficha (e vira SOURCE MEDIUM de cada arquivo), não um card: o mesmo material
-    // pode ter começado numa fita e estar hoje num arquivo digital ou num link.
-    const auto opcoes = opcoesFormato({ "VIDEO", "OPTICAL", "FILM" });
-    PainelOverlay::Config cfg;
-    cfg.titulo = t("imp.ficha.videos.titulo");
-    cfg.mensagem = t("imp.ficha.videos.msg");
-    cfg.trilha = t("moldura.trilha.adicionar");
-    cfg.larguraCartao = 620;
-    if (comOutro) cfg.campos.push_back(campoOutro());
-    cfg.campos.push_back({ "formato", t("imp.ficha.formato"), "", t("imp.ficha.formato.dica"), opcoes });
-    cfg.campos.push_back({ "notas", t("imp.ficha.notas"), "", t("imp.ficha.notas.dica"), {} });
-    cfg.botoes = {
-        { t("light.ui.common.cancel"), 0, false, true },
-        { t("imp.ficha.pular"), 2, false, false },
-        { t("imp.ficha.continuar"), 1, true, false },
-    };
-    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
-        if (!aoConcluir) return;
-        if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
-        if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }  // PULAR: segue sem o que a ficha perguntaria
-        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
-        gravarFormato(*sobre, juce::String(valorDe(r, "formato")));
-        sobre->descricao = valorDe(r, "notas");
-        aplicarOutro(*sobre, valorDe(r, "outro"));
-        aoConcluir(true, sobre->vazio() ? nullptr : sobre);
-    });
-}
-
-void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
-                       std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
-    const fs::Tipo* tipoPtr = tipoDaFolha(folha);
-    if (tipoPtr == nullptr) { if (aoConcluir) aoConcluir(true, nullptr); return; }
-    fs::Tipo tipo = *tipoPtr;
-    // "Rip" só vale para CD e DVD: vinil e fita são transcrições.
-    if (std::string(tipo.id) == "vinyl_rip") { tipo.en = "Vinyl transcription"; tipo.pt = "Transcrição de vinil"; }
-    const bool pt = matriz::i18n::localeAtivo() == "pt_BR";
-    const auto rotulo = [pt](const char* en, const char* ptb) { return juce::String::fromUTF8(pt ? ptb : en); };
-    const bool producao = std::string(tipo.id) == "music_production";
-    const bool ddp = std::string(tipo.id) == "ddp_master";
-
-    // Campos do tipo; o "formato de origem" único substitui a "mídia de gravação" da produção e a "origem" comum do Mini.
-    std::vector<const fs::Campo*> campos;
-    for (const auto& c : tipo.campos)
-        if (std::string(c.id) != "recording_medium") campos.push_back(&c);
-    const auto& comuns = fs::comuns();  // [0] origem (substituída), [1] identificação do cartão/CD/fita, [2] contexto
-    if (!producao && !ddp) campos.push_back(&comuns[1]);
-    if (!producao) campos.push_back(&comuns[2]);  // a produção musical já tem a própria Descrição
-
-    const auto opcoesDoFormato = opcoesFormato({ "AUDIO", "OPTICAL" });
-    const std::vector<juce::String> dawsLista = { "Pro Tools", "Logic Pro", "Reaper", "Ableton Live", "FL Studio", "Audacity", "Other" };
-
-    PainelOverlay::Config cfg;
-    cfg.titulo = t("imp.ficha.audio.titulo") + juce::String::fromUTF8(" \xe2\x80\xba ") + rotulo(tipo.en, tipo.pt);
-    cfg.mensagem = t(ddp ? "imp.ficha.ddp.msg" : "imp.ficha.audio.msg");
-    cfg.trilha = t("moldura.trilha.adicionar");
-    cfg.larguraCartao = 620;
-    const bool comOutro = ehOutro(folha);
-    if (comOutro) cfg.campos.push_back(campoOutro());
-    if (producao) cfg.campos.push_back({ "daw", t("imp.ficha.daw"), "", "", dawsLista });
-    std::vector<std::vector<juce::String>> opcoesPorCampo;
-    for (const auto* c : campos) {
-        std::vector<juce::String> ops;
-        for (const auto& o : c->opcoes) ops.push_back(rotulo(o.en, o.pt));
-        opcoesPorCampo.push_back(ops);
-        cfg.campos.push_back({ juce::String("f") + juce::String(static_cast<int>(opcoesPorCampo.size() - 1)), rotulo(c->labelEn, c->labelPt),
-                               "", rotulo(c->dicaEn, c->dicaPt), ops });
-    }
-    // Posição do formato: depois dos campos do tipo, antes de identificação/contexto.
-    {
-        size_t depoisDoTipo = (producao ? 1 : 0) + (comOutro ? 1 : 0);
-        for (const auto* c : campos) {
-            if (c == &comuns[1] || c == &comuns[2]) break;
-            ++depoisDoTipo;
+// Campos de um tipo do Mini (FichasSomDados.h), copiados para dados próprios da ficha.
+Campos camposDoTipoMini(const std::string& tipoId, const std::set<std::string>& ignorar = {}) {
+    static const std::set<std::string> idsDeAssunto = { "artist", "artist_album", "pack_name", "book_title", "project" };
+    Campos out;
+    for (const auto& tp : fs::tipos()) {
+        if (tipoId != tp.id) continue;
+        for (const auto& c : tp.campos) {
+            const std::string id = c.id;
+            if (ignorar.count(id)) continue;
+            if (c.entrada == 1) {
+                std::vector<Op> ops;
+                for (const auto& o : c.opcoes) ops.push_back({ o.id, o.en, o.pt });
+                std::function<void(SobreMaterial&, const Op&)> extra;
+                if (id == "stage")  // etapa de produção -> campo de cada arquivo (REC / MIX / MSTR / FINAL)
+                    extra = [](SobreMaterial& s, const Op& op) {
+                        const char* codigo = op.id == "recording" ? "REC" : op.id == "mixing" ? "MIX" : op.id == "mastering" ? "MSTR" : op.id == "final" ? "FINAL" : "";
+                        if (codigo[0] != 0) s.campos.push_back({ "etapa_producao", codigo });
+                    };
+                out.push_back(cEscolha(id, c.labelEn, c.labelPt, ops, true, extra, c.dicaEn, c.dicaPt));
+            } else {
+                std::function<void(SobreMaterial&, const std::string&)> extra;
+                if (idsDeAssunto.count(id))
+                    extra = [](SobreMaterial& s, const std::string& v) { if (s.subject.empty()) s.subject = v; };
+                out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, extra));
+            }
         }
+    }
+    return out;
+}
+
+void juntar(Ficha& f, Campos cs) {
+    for (auto& c : cs) f.campos.push_back(std::move(c));
+}
+
+const std::vector<std::string>& microfones() {
+    static const std::vector<std::string> v = {
+        "Sennheiser MKH 416", "Sennheiser MKH 418-S", "Binaural", "Contact Microphone", "Sennheiser MKH 8060", "Schoeps CMIT 5U",
+        "DPA 4017B", "Sanken CS-3e", "Rode NTG3", "Neumann KMR 81i", "Sennheiser MKH 8040", "Sennheiser MKH 8020", "Schoeps CMC6 MK41",
+        "Sennheiser MKH 30", "Sennheiser MKH 50", "DPA 4060", "LOM Usi Pro", "Sony PCM-D100 (integrated capsules)", "Audio-Technica BP4025",
+        "Sanken CO-100K", "Sennheiser Ambeo VR Mic", "Jez Riley French JrF C-Series (hydrophone / contact)", "Line Audio CM4", "Other" };
+    return v;
+}
+
+const std::vector<std::string>& gravadores() {
+    static const std::vector<std::string> v = {
+        "Sound Devices MixPre-3 II", "Sound Devices MixPre-6 II", "Sound Devices MixPre-10 II", "Sound Devices 833", "Sound Devices 888",
+        "Sound Devices Scorpio", "Sound Devices 702T", "Sound Devices 744T", "Sound Devices 633", "Zoom F8n Pro", "Zoom F6", "Zoom F3",
+        "Zoom H4n Pro", "Zoom H5", "Zoom H6", "Sony PCM-D100", "Sony PCM-A10", "Tascam Portacapture X8", "Tascam DR-100mkIII", "Nagra Seven", "Other" };
+    return v;
+}
+
+std::vector<Op> opsDe(const std::vector<std::string>& nomes) {
+    std::vector<Op> ops;
+    for (const auto& n : nomes) ops.push_back({ n, n, n });
+    return ops;
+}
+
+// Formatos de origem de uma gravação de campo (a lista é fixa; o que o vocabulário não tem vai como "Other" + nota).
+std::vector<FormatoOp> formatosDeCampo() {
+    return {
+        { "Native Digital", "Digital nativo", "Native Digital", "" },
+        { "PCM", "PCM", "Other", "PCM" },
+        { "Tape", "Fita", "Other", "Tape" },
+        { "Digital Tape", "Fita digital", "Other", "Digital Tape" },
+        { "CD", "CD", "Audio CD / CD-R / CD-RW", "" },
+        { "MD - Mini Disc", "MD - Mini Disc", "MiniDisc (MD)", "" },
+        { "Smartphone", "Smartphone", "Internal Storage / Smartphone", "" },
+        { "Camera", "Câmera", "Other", "Camera" },
+    };
+}
+
+Ficha fichaAudio(const std::string& folha) {
+    Ficha f;
+    const auto formatoPadrao = [] { return cFormato(formatosDoVocabulario({ "AUDIO", "OPTICAL" })); };
+
+    if (folha == "audio.production.project") {
+        const std::vector<std::string> daws = { "Pro Tools", "Logic Pro", "Reaper", "Ableton Live", "FL Studio", "Audacity", "Other" };
+        f.campos.push_back(cEscolha("daw", "DAW used", "DAW usada", opsDe(daws)));
+        juntar(f, camposDoTipoMini("music_production", { "recording_medium" }));
+        f.campos.push_back(formatoPadrao());
+    } else if (folha == "audio.production.samples") {
+        juntar(f, camposDoTipoMini("sample_pack"));
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.production.midi") {
+        juntar(f, camposDoTipoMini("midi"));
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.production.tools") {
+        f.campos.push_back(cEscolha("asset_kind", "Kind", "Tipo",
+                                    { { "instrument", "Virtual instrument", "Instrumento virtual" }, { "preset", "Preset", "Preset" },
+                                      { "ir", "Impulse response (IR)", "Resposta ao impulso (IR)" }, { "plugin", "Plugin", "Plugin" }, { "other", "Other", "Outro" } }));
+        f.campos.push_back(cTexto("asset_name", "Name or vendor", "Nome ou fabricante"));
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.preservation.ddp") {
         // DDP é a master que fabrica o CD industrial: a origem é sempre essa, então não se pergunta o formato.
-        if (!ddp)
-            cfg.campos.insert(cfg.campos.begin() + static_cast<std::ptrdiff_t>(depoisDoTipo),
-                              PainelOverlay::CampoTexto{ "formato", t("imp.ficha.formato"), "", t("imp.ficha.formato.dica.audio"), opcoesDoFormato });
+        juntar(f, camposDoTipoMini("ddp_master"));
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.preservation.vinyl") {
+        f.campos.push_back(cTexto("artist_album", "Artist and album", "Artista e álbum", "", "", [](SobreMaterial& s, const std::string& v) { if (s.subject.empty()) s.subject = v; }));
+        f.campos.push_back(cEscolha("side", "Side", "Lado", { { "both", "Both", "Ambos" }, { "a", "Side A", "Lado A" }, { "b", "Side B", "Lado B" } }));
+        const std::vector<Op> velocidades = { { "33", "33 1/3 RPM", "33 1/3 RPM" }, { "45", "45 RPM", "45 RPM" }, { "78", "78 RPM", "78 RPM" } };
+        const std::vector<Op> tamanhos = { { "7", "7\"", "7\"" }, { "10", "10\"", "10\"" }, { "12", "12\"", "12\"" }, { "16", "16\"", "16\"" } };
+        f.campos.push_back(cEscolha("speed", "Speed (RPM)", "Rotação (RPM)", velocidades, false));
+        f.campos.push_back(cEscolha("condition", "Record condition", "Estado do disco", { { "good", "Good", "Bom" }, { "noisy", "Noisy", "Chiado" }, { "scratched", "Scratched", "Riscado" } }));
+        f.campos.push_back(cEscolha("tamanho", "Disc size", "Tamanho do disco", tamanhos, false));
+        f.campos.push_back(cContexto());
+        // Tamanho e rotação formam o SOURCE MEDIUM do vinil (ex.: 12" Vinyl, 33 1/3 RPM).
+        f.depois = [velocidades, tamanhos](const Resultado& r, SobreMaterial& s) {
+            const auto escolhido = [&r](const std::string& campo, const std::vector<Op>& ops) -> const Op* {
+                const std::string v = valorDe(r, campo);
+                for (const auto& op : ops)
+                    if (v == rot(op.en, op.pt).toStdString()) return &op;
+                return nullptr;
+            };
+            const Op* tamanho = escolhido("tamanho", tamanhos);
+            const Op* velocidade = escolhido("speed", velocidades);
+            if (tamanho == nullptr && velocidade == nullptr) return;
+            OriginalSourceMediumInfo info;
+            info.medium = tamanho != nullptr ? tamanho->id + "\" Vinyl" : "Other";
+            if (tamanho == nullptr) info.customNote = "Vinyl";
+            if (velocidade != nullptr) info.speed = velocidade->en;
+            s.campos.push_back({ "source_media", info.serialize() });
+        };
+        juntarCapa(f);
+    } else if (folha == "audio.preservation.tape") {
+        f.campos.push_back(cTexto("artist_title", "Artist and title", "Artista e título", "", "", [](SobreMaterial& s, const std::string& v) { if (s.subject.empty()) s.subject = v; }));
+        f.campos.push_back(cEscolha("condition", "Tape condition", "Estado da fita", { { "good", "Good", "Boa" }, { "worn", "Worn", "Desgastada" }, { "damaged", "Damaged", "Danificada" } }));
+        f.campos.push_back(cEscolha("noise_reduction", "Noise reduction", "Redução de ruído",
+                                    { { "none", "None", "Nenhuma" }, { "dolby_b", "Dolby B", "Dolby B" }, { "dolby_c", "Dolby C", "Dolby C" }, { "dbx", "dbx", "dbx" } }));
+        f.campos.push_back(cFormato(formatosPorNome({ "1\" Tape", "2\" Tape", "1/4\" Tape", "1/2\" Tape", "Cassette Tape", "8-Track Cartridge" })));
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+        juntarCapa(f);
+    } else if (folha == "audio.general.soundtrack") {
+        juntar(f, camposDoTipoMini("soundtrack"));
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.general.film_sound") {
+        f.campos.push_back(cTexto("project", "Film or project", "Filme ou projeto", "", "", [](SobreMaterial& s, const std::string& v) { if (s.subject.empty()) s.subject = v; }));
+        f.campos.push_back(cEscolha("sound_kind", "Sound type", "Tipo de som",
+                                    { { "dialogue", "Dialogue", "Diálogo" }, { "foley", "Foley", "Foley" }, { "ambience", "Ambience", "Ambiência" },
+                                      { "sfx", "Sound effects", "Efeitos sonoros" }, { "adr", "ADR", "ADR" }, { "mix", "Mix / stems", "Mix / stems" } }));
+        f.campos.push_back(cTexto("scene", "Scene or reel", "Cena ou rolo"));
+        juntarGeo(f);
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.general.audiobook") {
+        juntar(f, camposDoTipoMini("audiobook"));
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.general.field") {
+        // Local, logo abaixo a geolocalização; depois data, o que foi gravado, equipamento (microfone e gravador), canais e formato.
+        f.campos.push_back(cTexto("place", "Place", "Local"));
+        juntarGeo(f);
+        f.campos.push_back(cTexto("date_time", "Date and time", "Data e hora"));
+        f.campos.push_back(cTexto("what_recorded", "What was recorded", "O que foi gravado"));
+        f.campos.push_back(cEscolha("microfone", "Microphone setup", "Setup de microfone", opsDe(microfones()), false));
+        f.campos.push_back(cEscolha("gravador", "Recorder", "Gravador", opsDe(gravadores()), false, [](SobreMaterial& s, const Op& op) {
+            s.campos.push_back({ "recording_device", op.en });
+        }));
+        const juce::String grupoCanais = t("imp.ficha.canais");
+        const std::vector<std::pair<std::string, std::string>> canais = { { "Mono", "Mono" }, { "Stereo", "Estéreo" }, { "Binaural", "Binaural" }, { "M/S", "M/S" }, { "Multitracks", "Multipistas" } };
+        for (const auto& [en, pt] : canais) f.campos.push_back(cInterruptor("canal_" + en, en, pt, grupoCanais));
+        f.campos.push_back(cFormato(formatosDeCampo()));
+        f.campos.push_back(cTexto("log_notes", "Log Notes", "Notas de registro"));
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+        f.depois = [canais](const Resultado& r, SobreMaterial& s) {
+            std::string marcados;
+            for (const auto& [en, pt] : canais)
+                if (valorDe(r, "canal_" + en) == "1") marcados += (marcados.empty() ? "" : ", ") + en;
+            linhaDeNota(s, "Channel configuration", marcados);
+        };
+    } else if (folha == "audio.general.voice_over") {
+        juntar(f, camposDoTipoMini("voice_over"));
+        // Locução: no lugar do formato de origem, a descrição do setup de microfone.
+        f.campos.push_back(cTexto("mic_desc", "Microphone setup description", "Descrição do setup de microfone"));
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.general.voice_notes") {
+        juntar(f, camposDoTipoMini("voice_memo"));
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
+    } else if (folha == "audio.general.other") {
+        f.campos.push_back(cOutro());
+        f.campos.push_back(formatoPadrao());
+        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cContexto());
     }
-    cfg.botoes = {
-        { t("light.ui.common.cancel"), 0, false, true },
-        { t("imp.ficha.pular"), 2, false, false },
-        { t("imp.ficha.continuar"), 1, true, false },
-    };
-
-    overlay.mostrar(cfg, [aoConcluir, tipo, campos, opcoesPorCampo, producao, dawsLista, comOutro, ddp](PainelOverlay::Resultado r) {
-        if (!aoConcluir) return;
-        if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
-        if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }  // PULAR: segue só com o que o card já implica
-
-        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
-        const std::string tipoEn = tipo.en;
-        std::vector<std::string> tags;
-        if (std::string(tipo.id) != "other_audio") tags.push_back(tipoEn);
-        std::string desc = tipoEn.empty() ? std::string() : "Audio: " + tipoEn;
-        std::string assunto;
-        for (size_t k = 0; k < campos.size(); ++k) {
-            const auto* c = campos[k];
-            const std::string valor = valorDe(r, "f" + std::to_string(k));
-            if (valor.empty()) continue;
-            std::string mostrado = valor;
-            std::string opcaoId;
-            if (c->entrada == 1) {  // escolha: grava o rótulo em inglês
-                const int o = indiceDe(opcoesPorCampo[k], juce::String::fromUTF8(valor.c_str()));
-                if (o < 0) continue;
-                mostrado = c->opcoes[static_cast<size_t>(o)].en;
-                opcaoId = c->opcoes[static_cast<size_t>(o)].id;
-                tags.push_back(mostrado);
-            }
-            desc += std::string(desc.empty() ? "" : "\n") + c->labelEn + ": " + mostrado;
-            const std::string id = c->id;
-            if (id == "stage") {  // etapa de produção -> campo de cada arquivo (REC / MIX / MSTR / FINAL)
-                const char* codigo = opcaoId == "recording" ? "REC" : opcaoId == "mixing" ? "MIX" : opcaoId == "mastering" ? "MSTR" : opcaoId == "final" ? "FINAL" : "";
-                if (codigo[0] != 0) sobre->campos.push_back({ "etapa_producao", codigo });
-            }
-            if (assunto.empty() && (id == "artist" || id == "artist_album" || id == "artist_title" || id == "pack_name" || id == "book_title" || id == "project"))
-                assunto = mostrado;
-        }
-        if (producao) {
-            const int d = indiceDe(dawsLista, juce::String(valorDe(r, "daw")));
-            if (d >= 0) {
-                tags.push_back(dawsLista[static_cast<size_t>(d)].toStdString());
-                desc += "\nDAW: " + dawsLista[static_cast<size_t>(d)].toStdString();
-            }
-        }
-        if (!ddp) gravarFormato(*sobre, juce::String(valorDe(r, "formato")));
-        sobre->subject = assunto;
-        sobre->descricao = desc == ("Audio: " + tipoEn) ? std::string() : desc;  // só o rótulo do tipo não é informação nova
-        sobre->tags = tags;
-        if (comOutro) aplicarOutro(*sobre, valorDe(r, "outro"));
-        aoConcluir(true, sobre->vazio() ? nullptr : sobre);
-    });
+    return f;
 }
 
-// ── Fichas simples: fotos, arquivos, documentos, multimídia e redes sociais ──────────────────────────────────
-
-juce::String porLocale(const char* en, const char* ptb) {
-    return juce::String::fromUTF8(matriz::i18n::localeAtivo() == "pt_BR" ? ptb : en);
+bool folhaDeAudioTemFicha(const std::string& id) {
+    static const std::set<std::string> folhas = {
+        "audio.production.project", "audio.production.samples", "audio.production.midi", "audio.production.tools",
+        "audio.preservation.ddp", "audio.preservation.vinyl", "audio.preservation.tape",
+        "audio.general.soundtrack", "audio.general.film_sound", "audio.general.audiobook", "audio.general.field",
+        "audio.general.voice_over", "audio.general.voice_notes", "audio.general.other" };
+    return folhas.count(id) > 0;
 }
 
-using AoConcluirFicha = std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)>;
-using AplicarFicha = std::function<void(const PainelOverlay::Resultado&, matriz::ingest::SobreMaterial&)>;
+// ── FOTOS, ARQUIVOS, DOCUMENTOS, MULTIMÍDIA, REDES, DESIGN ────────────────────────────────────────────────
 
-// Linha "Rótulo: valor" nas notas (NOTES) de cada arquivo.
-void linhaDeNota(matriz::ingest::SobreMaterial& sobre, const char* rotulo, const std::string& valor) {
-    if (valor.empty()) return;
-    sobre.descricao += (sobre.descricao.empty() ? std::string() : std::string("\n")) + rotulo + ": " + valor;
+Ficha fichaFotos() {
+    Ficha f;
+    f.campos.push_back(cAssunto("assunto", "What is in these photos?", "O que há nestas fotos?"));
+    f.campos.push_back(cFormato(formatosDoVocabulario({ "IMAGE" })));
+    f.campos.push_back(cTexto("ano", "Year", "Ano", "Only fills files that carry no date of their own", "Só preenche arquivos que não têm data própria",
+                              [](SobreMaterial& s, const std::string& v) { s.campos.push_back({ "ano", v }); }, false));
+    f.campos.push_back(cNotas());
+    juntarGeo(f);
+    return f;
 }
 
-PainelOverlay::CampoTexto campoTexto(const char* id, const char* chave, const char* chaveDica = nullptr) {
-    return { id, t(chave), "", chaveDica != nullptr ? t(chaveDica) : juce::String(), {} };
+Ficha fichaArquivos(const std::string& folha) {
+    auto formatos = folha == "files.optical" ? formatosDoVocabulario({ "OPTICAL" }, false, semOpticosRaros())
+                                             : formatosDoVocabulario({ "SOLID STATE", "OPTICAL" }, true, semOpticosRaros());
+    simplificarOpticos(formatos);
+    Ficha f;
+    f.campos.push_back(cAssunto("assunto", "What is inside?", "O que há dentro?"));
+    f.campos.push_back(cFormato(formatos));
+    if (folha != "files.computer_folder")
+        f.campos.push_back(cTexto("rotulo", "Name or label on the drive / disc", "Nome ou etiqueta no drive / disco", "Written on it, or the name of the volume",
+                                  "Escrito nele, ou o nome do volume"));
+    f.campos.push_back(cNotas());
+    return f;
 }
 
-PainelOverlay::CampoTexto campoEscolha(const char* id, const char* chave, const std::vector<juce::String>& opcoes, const char* chaveDica = nullptr) {
-    return { id, t(chave), "", chaveDica != nullptr ? t(chaveDica) : juce::String(), opcoes };
+Ficha fichaDocumentos(const std::string& folha) {
+    const std::vector<Op> formatosDeDocumento = opsDe({ "PDF", "Word (.doc)", "Word (.docx)", "Text (.txt)", "RTF", "Excel (.xls)", "Excel (.xlsx)",
+                                                        "PowerPoint (.ppt / .pptx)", "OpenDocument (.odt / .ods)", "Pages / Numbers / Keynote",
+                                                        "Markdown", "HTML", "CSV", "EPUB", "Other" });
+    Ficha f;
+    if (folha == "documents.web")
+        f.campos.push_back(cTexto("url", "Address (URL)", "Endereço (URL)", "Where the page or site lived, if known", "Onde a página ou o site ficava, se souber",
+                                  [](SobreMaterial& s, const std::string& v) { s.campos.push_back({ "dc_source", v }); }));
+    f.campos.push_back(cAssunto("assunto", "What are these documents?", "O que são estes documentos?"));
+    f.campos.push_back(cEscolha("formato_doc", "Format", "Formato", formatosDeDocumento, true, [](SobreMaterial& s, const Op& op) {
+        s.campos.push_back({ "dc_format", op.en });  // não sobrescreve o formato que o arquivo já traz
+    }));
+    if (folha == "documents.scanned") f.campos.push_back(cFormato(formatosDoVocabulario({ "DOCUMENT", "IMAGE" }, false)));
+    f.campos.push_back(cNotas());
+    return f;
 }
 
-// Campo dentro do cartão "GEO LOCATION" (cidade, estado e país ficam lado a lado).
-PainelOverlay::CampoTexto campoGeo(const char* id, const char* chave) {
-    return { id, t(chave), "", "", {}, false, "", "", "", "", t("imp.ficha.geo") };
+Ficha fichaMultimidia(const std::string& folha) {
+    Ficha f;
+    f.campos.push_back(cAssunto("titulo", "Title / name", "Título / nome"));
+    if (folha == "other.multimedia.interactive")
+        f.campos.push_back(cEscolha("tipo", "Kind", "Tipo",
+                                    { { "game", "Game", "Jogo" }, { "presentation", "Presentation", "Apresentação" }, { "elearning", "E-learning", "E-learning" },
+                                      { "kiosk", "Kiosk or installation", "Quiosque ou instalação" }, { "other", "Other", "Outro" } }));
+    f.campos.push_back(cTexto("plataforma", "Platform / system", "Plataforma / sistema", "e.g. Windows 98, Mac OS 9, DOS", "ex.: Windows 98, Mac OS 9, DOS"));
+    f.campos.push_back(cFormato(formatosDoVocabulario({ "OPTICAL", "SOLID STATE" })));
+    f.campos.push_back(cNotas());
+    return f;
 }
 
-void mostrarFichaSimples(PainelOverlay& overlay, const char* chaveTitulo, std::vector<PainelOverlay::CampoTexto> campos,
-                         AplicarFicha aplicar, AoConcluirFicha aoConcluir) {
-    PainelOverlay::Config cfg;
-    cfg.titulo = t(chaveTitulo);
-    cfg.mensagem = t("imp.ficha.msg.opcional");
-    cfg.trilha = t("moldura.trilha.adicionar");
-    cfg.larguraCartao = 620;
-    cfg.campos = std::move(campos);
-    cfg.botoes = {
-        { t("light.ui.common.cancel"), 0, false, true },
-        { t("imp.ficha.pular"), 2, false, false },
-        { t("imp.ficha.continuar"), 1, true, false },
-    };
-    overlay.mostrar(cfg, [aoConcluir, aplicar](PainelOverlay::Resultado r) {
-        if (!aoConcluir) return;
-        if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
-        if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }
-        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
-        aplicar(r, *sobre);
-        aoConcluir(true, sobre->vazio() ? nullptr : sobre);
-    });
-}
-
-void fichaFotos(PainelOverlay& overlay, AoConcluirFicha aoConcluir) {
-    mostrarFichaSimples(overlay, "imp.ficha.fotos.titulo", {
-        campoTexto("assunto", "imp.ficha.assunto.fotos"),
-        campoEscolha("formato", "imp.ficha.formato", opcoesFormato({ "IMAGE" }), "imp.ficha.formato.dica.generico"),
-        campoTexto("ano", "imp.ficha.ano", "imp.ficha.ano.dica"),
-        campoTexto("notas", "imp.ficha.notas", "imp.ficha.notas.dica"),
-        campoGeo("cidade", "imp.ficha.cidade"), campoGeo("estado", "imp.ficha.estado"), campoGeo("pais", "imp.ficha.pais"),
-    }, [](const PainelOverlay::Resultado& r, matriz::ingest::SobreMaterial& s) {
-        s.subject = valorDe(r, "assunto");
-        gravarFormato(s, juce::String(valorDe(r, "formato")));
-        const std::string ano = valorDe(r, "ano");
-        if (!ano.empty()) s.campos.push_back({ "ano", ano });
-        s.descricao = valorDe(r, "notas");
-        s.geoPadrao.cidade = valorDe(r, "cidade");
-        s.geoPadrao.estado = valorDe(r, "estado");
-        s.geoPadrao.pais = valorDe(r, "pais");
-    }, std::move(aoConcluir));
-}
-
-void fichaArquivos(PainelOverlay& overlay, const std::string& folha, AoConcluirFicha aoConcluir) {
-    const auto formatos = folha == "files.optical" ? opcoesFormato({ "OPTICAL" }) : opcoesFormato({ "SOLID STATE", "OPTICAL" });
-    std::vector<PainelOverlay::CampoTexto> campos = {
-        campoTexto("assunto", "imp.ficha.assunto.arquivos"),
-        campoEscolha("formato", "imp.ficha.formato", formatos, "imp.ficha.formato.dica.generico"),
-    };
-    if (folha != "files.computer_folder") campos.push_back(campoTexto("rotulo", "imp.ficha.rotulo", "imp.ficha.rotulo.dica"));
-    campos.push_back(campoTexto("notas", "imp.ficha.notas", "imp.ficha.notas.dica"));
-    mostrarFichaSimples(overlay, "imp.ficha.arquivos.titulo", std::move(campos),
-                        [](const PainelOverlay::Resultado& r, matriz::ingest::SobreMaterial& s) {
-        s.subject = valorDe(r, "assunto");
-        gravarFormato(s, juce::String(valorDe(r, "formato")));
-        s.descricao = valorDe(r, "notas");
-        linhaDeNota(s, "Label", valorDe(r, "rotulo"));
-    }, std::move(aoConcluir));
-}
-
-void fichaDocumentos(PainelOverlay& overlay, const std::string& folha, AoConcluirFicha aoConcluir) {
-    std::vector<PainelOverlay::CampoTexto> campos;
-    if (folha == "documents.web") campos.push_back(campoTexto("url", "imp.ficha.url", "imp.ficha.url.dica"));
-    campos.push_back(campoTexto("assunto", "imp.ficha.assunto.docs"));
-    if (folha == "documents.scanned")
-        campos.push_back(campoEscolha("formato", "imp.ficha.formato", opcoesFormato({ "DOCUMENT", "IMAGE" }, false), "imp.ficha.formato.dica.generico"));
-    campos.push_back(campoTexto("notas", "imp.ficha.notas", "imp.ficha.notas.dica"));
-    mostrarFichaSimples(overlay, "imp.ficha.docs.titulo", std::move(campos),
-                        [](const PainelOverlay::Resultado& r, matriz::ingest::SobreMaterial& s) {
-        s.subject = valorDe(r, "assunto");
-        gravarFormato(s, juce::String(valorDe(r, "formato")));
-        s.descricao = valorDe(r, "notas");
-        const std::string url = valorDe(r, "url");
-        if (!url.empty()) {
-            s.campos.push_back({ "dc_source", url });  // endereço de onde a página/o site vivia
-            linhaDeNota(s, "URL", url);
-        }
-    }, std::move(aoConcluir));
-}
-
-void fichaMultimidia(PainelOverlay& overlay, const std::string& folha, AoConcluirFicha aoConcluir) {
-    std::vector<juce::String> tipos = { porLocale("Game", "Jogo"), porLocale("Presentation", "Apresentação"), porLocale("E-learning", "E-learning"),
-                                        porLocale("Kiosk or installation", "Quiosque ou instalação"), porLocale("Other", "Outro") };
-    std::vector<PainelOverlay::CampoTexto> campos = { campoTexto("titulo", "imp.ficha.titulo.app") };
-    if (folha == "other.multimedia.interactive") campos.push_back(campoEscolha("tipo", "imp.ficha.tipo.interativo", tipos));
-    campos.push_back(campoTexto("plataforma", "imp.ficha.plataforma", "imp.ficha.plataforma.dica"));
-    campos.push_back(campoEscolha("formato", "imp.ficha.formato", opcoesFormato({ "OPTICAL", "SOLID STATE" }), "imp.ficha.formato.dica.generico"));
-    campos.push_back(campoTexto("notas", "imp.ficha.notas", "imp.ficha.notas.dica"));
-    mostrarFichaSimples(overlay, "imp.ficha.multimidia.titulo", std::move(campos),
-                        [tipos](const PainelOverlay::Resultado& r, matriz::ingest::SobreMaterial& s) {
-        s.subject = valorDe(r, "titulo");
-        gravarFormato(s, juce::String(valorDe(r, "formato")));
-        s.descricao = valorDe(r, "notas");
-        linhaDeNota(s, "Platform", valorDe(r, "plataforma"));
-        const std::string tipo = valorDe(r, "tipo");
-        if (!tipo.empty() && indiceDe(tipos, juce::String::fromUTF8(tipo.c_str())) >= 0) {
-            s.tags.push_back(tipo);
-            linhaDeNota(s, "Kind", tipo);
-        }
-    }, std::move(aoConcluir));
-}
-
-void fichaRedeSocial(PainelOverlay& overlay, const std::string& folha, AoConcluirFicha aoConcluir) {
+Ficha fichaRedeSocial(const std::string& folha) {
     static const std::map<std::string, std::string> redes = { { "other.social.instagram", "Instagram" }, { "other.social.facebook", "Facebook" },
                                                               { "other.social.tiktok", "TikTok" }, { "other.social.x", "Twitter / X" } };
     const auto rede = redes.find(folha);
     const std::string nomeDaRede = rede != redes.end() ? rede->second : std::string();
-    std::vector<PainelOverlay::CampoTexto> campos;
-    if (nomeDaRede.empty()) campos.push_back(campoTexto("rede", "imp.ficha.rede"));  // "Outra rede": o usuário diz qual
-    campos.push_back(campoTexto("usuario", "imp.ficha.usuario"));
-    campos.push_back(campoTexto("link", "imp.ficha.link"));
-    campos.push_back(campoTexto("notas", "imp.ficha.notas", "imp.ficha.notas.dica"));
-    mostrarFichaSimples(overlay, "imp.ficha.rede.titulo", std::move(campos),
-                        [nomeDaRede](const PainelOverlay::Resultado& r, matriz::ingest::SobreMaterial& s) {
-        const std::string nome = nomeDaRede.empty() ? valorDe(r, "rede") : nomeDaRede;
-        s.subject = nome;
-        if (nomeDaRede.empty() && !nome.empty()) s.tags.push_back(nome);
-        s.descricao = valorDe(r, "notas");
-        linhaDeNota(s, "Network", nome);
-        const std::string usuario = valorDe(r, "usuario"), link = valorDe(r, "link");
-        if (!usuario.empty()) s.tags.push_back(usuario);
-        linhaDeNota(s, "User", usuario);
-        if (!link.empty()) s.campos.push_back({ "dc_source", link });
-        linhaDeNota(s, "Link", link);
-    }, std::move(aoConcluir));
+    Ficha f;
+    if (nomeDaRede.empty())  // "Outra rede": o usuário diz qual
+        f.campos.push_back(cTexto("rede", "Network name", "Nome da rede", "", "", [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); s.tags.push_back(v); }));
+    f.campos.push_back(cTexto("usuario", "Account / username", "Conta / usuário", "", "", [](SobreMaterial& s, const std::string& v) { s.tags.push_back(v); }));
+    f.campos.push_back(cTexto("link", "Link", "Link", "", "", [](SobreMaterial& s, const std::string& v) { s.campos.push_back({ "dc_source", v }); }));
+    f.campos.push_back(cNotas());
+    if (!nomeDaRede.empty()) f.depois = [nomeDaRede](const Resultado&, SobreMaterial& s) { somarAssunto(s, nomeDaRede); };
+    return f;
+}
+
+Ficha fichaDesign() {
+    Ficha f;
+    f.campos.push_back(cAssunto("projeto", "Project name", "Nome do projeto"));
+    f.campos.push_back(cEscolha("software", "Software", "Software",
+                                opsDe({ "CorelDRAW", "Adobe InDesign", "Adobe Illustrator", "Adobe Photoshop", "AutoCAD", "3ds Max", "Maya", "Blender",
+                                        "Cinema 4D", "SketchUp", "SolidWorks", "Other" })));
+    f.campos.push_back(cEscolha("tipo", "Kind", "Tipo",
+                                { { "2d", "2D graphic", "Gráfico 2D" }, { "layout", "Layout / print", "Diagramação / impressão" }, { "3d", "3D model", "Modelo 3D" },
+                                  { "cad", "CAD / technical drawing", "CAD / desenho técnico" }, { "animation", "Animation", "Animação" }, { "other", "Other", "Outro" } }));
+    f.campos.push_back(cNotas());
+    return f;
+}
+
+Ficha fichaOutro() {
+    Ficha f;
+    f.campos.push_back(cOutro());
+    f.campos.push_back(cNotas());
+    return f;
 }
 
 } // namespace
 
-std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(const std::string& id) {
+std::shared_ptr<const SobreMaterial> contextoDaFolhaImportar(const std::string& id) {
     // Valores no vocabulário canônico (em inglês) do CONTENT e do SOURCE MEDIUM do Matriz. Só entra o que o card
-    // afirma com certeza; o resto (tamanho do vinil, formato do vídeo...) vem das fichas de cada categoria.
+    // afirma com certeza; o resto (formato, tamanho do vinil...) vem das fichas de cada categoria.
     struct Linha { const char* id; const char* content; const char* medium; std::vector<const char*> tags; };
     static const std::vector<Linha> tabela = {
         { "files.external_drive", "", "External Hard Drive (HDD)", {} },
@@ -471,6 +656,7 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(con
         { "documents.web", "", "", { "Web" } },
         { "other.multimedia.apps", "", "", { "App / software" } },
         { "other.multimedia.interactive", "", "", { "Interactive multimedia" } },
+        { "other.design", "", "", { "Design project" } },
         { "other.social.instagram", "", "", { "Social media", "Instagram" } },
         { "other.social.facebook", "", "", { "Social media", "Facebook" } },
         { "other.social.tiktok", "", "", { "Social media", "TikTok" } },
@@ -479,7 +665,7 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(con
     };
     for (const auto& l : tabela) {
         if (id != l.id) continue;
-        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
+        auto sobre = std::make_shared<SobreMaterial>();
         sobre->collectionType = l.content;
         for (const char* tag : l.tags) sobre->tags.push_back(tag);
         if (std::string(l.medium).size() > 0) {
@@ -490,16 +676,17 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(con
         // Conjuntos que entram juntos e realizam uma ação viram CONTAINER no Intake (ver MainComponent::processarLoteEmBackground).
         if (id == "audio.production.project") sobre->containerOrigem = "production";
         if (id == "audio.preservation.ddp") sobre->containerOrigem = "ddp";
+        if (id == "audio.preservation.vinyl") sobre->containerOrigem = "vinyl";
+        if (id == "audio.preservation.tape") sobre->containerOrigem = "tape";
         return sobre;
     }
     return nullptr;
 }
 
-std::shared_ptr<const matriz::ingest::SobreMaterial> mesclarContextosImportar(
-    std::shared_ptr<const matriz::ingest::SobreMaterial> base, std::shared_ptr<const matriz::ingest::SobreMaterial> extra) {
+std::shared_ptr<const SobreMaterial> mesclarContextosImportar(std::shared_ptr<const SobreMaterial> base, std::shared_ptr<const SobreMaterial> extra) {
     if (extra == nullptr) return base;
     if (base == nullptr) return extra;
-    auto r = std::make_shared<matriz::ingest::SobreMaterial>(*base);
+    auto r = std::make_shared<SobreMaterial>(*base);
     if (!extra->collectionType.empty()) r->collectionType = extra->collectionType;
     if (!extra->subject.empty()) r->subject = r->subject.empty() ? extra->subject : r->subject + ", " + extra->subject;
     if (!extra->descricao.empty()) r->descricao = r->descricao.empty() ? extra->descricao : r->descricao + "\n\n" + extra->descricao;
@@ -513,6 +700,7 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> mesclarContextosImportar(
     }
     if (!extra->sufixoTitulo.empty()) r->sufixoTitulo = extra->sufixoTitulo;
     if (!extra->containerOrigem.empty()) r->containerOrigem = extra->containerOrigem;
+    if (!extra->capaContainer.empty()) r->capaContainer = extra->capaContainer;
     if (!extra->geoPadrao.vazio()) r->geoPadrao = extra->geoPadrao;
     return r;
 }
@@ -520,24 +708,51 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> mesclarContextosImportar(
 bool folhaImportarTemFicha(const std::string& id) {
     if (id == "videos.digital" || id == "videos.other") return true;
     if (id.rfind("other.social.", 0) == 0 || id.rfind("other.multimedia.", 0) == 0) return id != "other.multimedia.cdrom";
+    if (id == "other.design") return true;
     if (id == "files.computer_folder" || id == "files.external_drive" || id == "files.optical") return true;
     if (id == "photos.folder" || id == "photos.camera_card") return true;
     if (id == "documents.native" || id == "documents.scanned" || id == "documents.web") return true;
-    if (ehOutro(id)) return true;
-    return id.rfind("audio.", 0) == 0 && tipoDaFolha(id) != nullptr;
+    if (folhaDeAudioTemFicha(id)) return true;
+    return ehOutro(id);
 }
 
-void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
-                          std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
+void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::function<void(bool, std::shared_ptr<const SobreMaterial>)> aoConcluir) {
     if (!folhaImportarTemFicha(id)) { if (aoConcluir) aoConcluir(true, nullptr); return; }
-    if (id.rfind("audio.", 0) == 0) mostrarFichaAudio(overlay, id, std::move(aoConcluir));
-    else if (id.rfind("videos.", 0) == 0) mostrarFichaVideo(overlay, id == "videos.other", std::move(aoConcluir));
-    else if (id.rfind("photos.", 0) == 0) fichaFotos(overlay, std::move(aoConcluir));
-    else if (id.rfind("documents.", 0) == 0) fichaDocumentos(overlay, id, std::move(aoConcluir));
-    else if (id.rfind("other.social.", 0) == 0) fichaRedeSocial(overlay, id, std::move(aoConcluir));
-    else if (id.rfind("other.multimedia.", 0) == 0) fichaMultimidia(overlay, id, std::move(aoConcluir));
-    else if (id == "files.computer_folder" || id == "files.external_drive" || id == "files.optical") fichaArquivos(overlay, id, std::move(aoConcluir));
-    else mostrarFichaOutro(overlay, std::move(aoConcluir));  // files.other, other.custom
+
+    juce::String titulo, mensagem = t("imp.ficha.msg.opcional");
+    Ficha ficha;
+    if (id.rfind("audio.", 0) == 0) {
+        titulo = t("imp.ficha.audio.titulo") + juce::String::fromUTF8(" \xe2\x80\xba ") + t("imp.node." + id);
+        if (id == "audio.preservation.ddp") mensagem = t("imp.ficha.ddp.msg");
+        ficha = fichaAudio(id);
+    } else if (id.rfind("videos.", 0) == 0) {
+        titulo = t("imp.ficha.videos.titulo");
+        mensagem = t("imp.ficha.videos.msg");
+        ficha = fichaVideo(id == "videos.other");
+    } else if (id.rfind("photos.", 0) == 0) {
+        titulo = t("imp.ficha.fotos.titulo");
+        ficha = fichaFotos();
+    } else if (id.rfind("documents.", 0) == 0) {
+        titulo = t("imp.ficha.docs.titulo");
+        ficha = fichaDocumentos(id);
+    } else if (id.rfind("other.social.", 0) == 0) {
+        titulo = t("imp.ficha.rede.titulo");
+        ficha = fichaRedeSocial(id);
+    } else if (id.rfind("other.multimedia.", 0) == 0) {
+        titulo = t("imp.ficha.multimidia.titulo");
+        ficha = fichaMultimidia(id);
+    } else if (id == "other.design") {
+        titulo = t("imp.ficha.design.titulo");
+        ficha = fichaDesign();
+    } else if (id.rfind("files.", 0) == 0 && id != "files.other") {
+        titulo = t("imp.ficha.arquivos.titulo");
+        ficha = fichaArquivos(id);
+    } else {  // files.other, other.custom
+        titulo = t("imp.ficha.outro.titulo");
+        mensagem = t("imp.ficha.outro.msg");
+        ficha = fichaOutro();
+    }
+    mostrarFicha(overlay, titulo, mensagem, std::move(ficha), std::move(aoConcluir));
 }
 
 } // namespace matriz::ui

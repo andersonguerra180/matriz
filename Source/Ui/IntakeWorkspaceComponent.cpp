@@ -74,7 +74,11 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     static const juce::Image whatsapp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::whatsapp_png, AssetsBinaryData::whatsapp_pngSize);
     static const juce::Image ddp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_ddp_master_png, AssetsBinaryData::ci_aud_ddp_master_pngSize);
     static const juce::Image producao = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_music_production_png, AssetsBinaryData::ci_aud_music_production_pngSize);
+    static const juce::Image vinil = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_vinyl_rip_png, AssetsBinaryData::ci_aud_vinyl_rip_pngSize);
+    static const juce::Image fita = juce::ImageFileFormat::loadFrom(AssetsBinaryData::Tape_Cassette_Rip_png, AssetsBinaryData::Tape_Cassette_Rip_pngSize);
     static const juce::Image vazio;
+    if (origem == "vinyl") return vinil;
+    if (origem == "tape") return fita;
     if (origem == "ddp") return ddp;
     if (origem == "production") return producao;
     if (origem == "gallery") return galeria;
@@ -1405,6 +1409,13 @@ public:
         noThumbnail_.clear();
     }
 
+    // Capa de container (vinil, fita) chega depois do item: a miniatura já guardada (forma de onda da 1ª faixa) é refeita.
+    void esquecerMiniaturaDoItem(const std::string& itemId) {
+        const juce::ScopedLock sl(lock_);
+        cache_.erase(itemId);
+        noThumbnail_.erase(itemId);
+    }
+
     bool temMiniaturaEmCache(const std::string& itemId) const {
         const juce::ScopedLock sl(lock_);
         return cache_.count(itemId) > 0;
@@ -1421,7 +1432,9 @@ public:
         ProjetoAberto* proj = &owner_.projeto_;
 
         poolThumbnails_.addJob([safeThis, proj, itemId]() mutable {
-            auto caminho = proj->caminhoMiniaturaPrincipal(itemId);
+            // Container com capa própria (vinil, fita): a capa escolhida na ficha vale como miniatura dele.
+            auto caminho = proj->capaImagemDoContainer(itemId);
+            if (!caminho) caminho = proj->caminhoMiniaturaPrincipal(itemId);
             juce::Image img;
             if (caminho) img = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
             bool temCaminho = caminho.has_value();
@@ -2769,6 +2782,10 @@ void IntakeWorkspaceComponent::recarregar() {
             self->snapshotPendente_ = false;
             if (self->gridComponent_) self->gridComponent_->esquecerSemMiniatura();
             self->aplicarItensQuarentena(std::move(quarentena));
+            if (self->gridComponent_)
+                for (const auto& it : self->todosItens_)
+                    if (self->itemEhContainer(it) && (it.containerOrigem == "vinyl" || it.containerOrigem == "tape"))
+                        self->gridComponent_->esquecerMiniaturaDoItem(it.id);
             if (self->recarregarAoTerminarSnapshot_) {
                 self->recarregarAoTerminarSnapshot_ = false;
                 self->recarregar();
