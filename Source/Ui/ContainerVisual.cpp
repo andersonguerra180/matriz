@@ -21,7 +21,7 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     static const juce::Image ddp = tirarFundoBrancoDasBordas(juce::ImageFileFormat::loadFrom(AssetsBinaryData::DDP_png, AssetsBinaryData::DDP_pngSize));
     static const juce::Image producao = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_music_production_png, AssetsBinaryData::ci_aud_music_production_pngSize);
     static const juce::Image vinil = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_vinyl_rip_png, AssetsBinaryData::ci_aud_vinyl_rip_pngSize);
-    static const juce::Image fita = juce::ImageFileFormat::loadFrom(AssetsBinaryData::Tape_Cassette_Rip_png, AssetsBinaryData::Tape_Cassette_Rip_pngSize);
+    static const juce::Image fita = tirarFundoBrancoDasBordas(juce::ImageFileFormat::loadFrom(AssetsBinaryData::Tape_Cassette_Rip_png, AssetsBinaryData::Tape_Cassette_Rip_pngSize));
     static const juce::Image youtube = juce::ImageFileFormat::loadFrom(AssetsBinaryData::youtube_png, AssetsBinaryData::youtube_pngSize);
     static const juce::Image vazio;
     if (origem == "youtube") return youtube;

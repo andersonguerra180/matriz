@@ -153,11 +153,18 @@ private:
         bool selecionado = false;
         bool ehConversaWhatsapp = false;
         int nestTotal = 0;  // >1: este arquivo solto é a capa de um NEST
+        // CONTAINER de importação (nest com origem): solto no canvas como container, só com porta de ENTRADA (esquerda).
+        bool ehContainer = false;
+        std::string nestId, containerOrigem, containerIcone, containerCapa;  // capa = caminho absoluto ("" = sem capa)
     };
 
     ProjetoAberto& projeto_;
     std::vector<FolderNode> nodes_;
     std::vector<LooseFileNode> looseFiles_;
+    // Containers recém-aprovados no Intake, ainda sem posição: vão para o canto superior esquerdo da vista DEPOIS do
+    // enquadramento inicial (que muda pan/zoom). Ver posicionarContainersNovos().
+    std::set<std::string> containersSemPosicao_;
+    void posicionarContainersNovos();
     int nodeDragIndice_ = -1;
     int looseFileDragIndice_ = -1;
     int nodeHoverDrop_ = -1;

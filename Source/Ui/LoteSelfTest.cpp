@@ -2977,6 +2977,92 @@ int rodarLoteSelfTest() {
     }
     raizBloco.deleteRecursively();
 
+    // ------------------------- Folder Map: containers soltos (canto superior esquerdo, só entrada, arrastar para pasta)
+    std::cout << "\n-- Folder Map: loose containers --\n";
+    juce::File raizCont = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_folder_container_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizCont.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "FolderContainers";
+        params.prefixoNomenclatura = "FCT";
+        auto projeto = matriz::model::Project::criar(raizCont.getChildFile("MAIN"), params);
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string projId = pa.projeto().projetoId();
+        std::vector<std::string> vinil, fita;
+        for (int i = 0; i < 3; ++i) vinil.push_back(inserirItem(reg, projId, "FCV" + std::to_string(i), false));
+        for (int i = 0; i < 2; ++i) fita.push_back(inserirItem(reg, projId, "FCT" + std::to_string(i), false));
+        const std::string solto = inserirItem(reg, projId, "FCSOLTO", false);
+        const std::string nestVinil = pa.criarContainerImportacao(vinil, "vinyl");
+        const std::string nestFita = pa.criarContainerImportacao(fita, "tape");
+        checar(!nestVinil.empty() && !nestFita.empty(), "setup: two containers created");
+
+        const std::string mapaPadrao = pa.mapaAtivoPadrao();
+        const std::string pasta = pa.criarPastaAcervo("Destino", std::nullopt, mapaPadrao);
+        pa.atualizarPosicaoPastaAcervo(pasta, 900, 400);
+        pa.definirMapaAtivo(mapaPadrao);
+        ArvoreBackupComponent arvore(pa);
+        arvore.setSize(1400, 900);
+        arvore.recarregar();
+
+        int nConteiner = 0;
+        bool todosComTipo = true;
+        for (const auto& lf : arvore.looseFiles_) {
+            if (lf.ehContainer) ++nConteiner;
+            else if (lf.id == solto) todosComTipo = false;  // arquivo comum nao pode aparecer solto sozinho
+        }
+        checar(nConteiner == 2, "both containers appear loose on the canvas without any saved position (" + juce::String(nConteiner) + ")");
+        checar(todosComTipo, "an ordinary orphan file does NOT appear loose on the canvas (still goes to _NO FOLDER)");
+        checar(arvore.looseFiles_.size() >= 2 &&
+                   !arvore.looseFiles_[0].bounds.intersects(arvore.looseFiles_[1].bounds),
+               "stacked containers do not overlap");
+        const auto topoEsq = arvore.screenToCanvas(arvore.areaCanvas().getTopLeft() + juce::Point<int>(36, 36)).toInt();  // x da coluna
+        int proximos = 0;
+        for (const auto& lf : arvore.looseFiles_)
+            if (lf.ehContainer && lf.bounds.getX() == topoEsq.x) ++proximos;
+        checar(proximos == 2, "containers are placed in the top-left column of the canvas");
+        for (const auto& lf : arvore.looseFiles_)
+            if (lf.ehContainer) checar(arvore.layoutSalvo_.count(arvore.chaveLayout(lf.id)) == 1, "container position was persisted in the layout");
+
+        {
+            juce::File dir("./test-output");
+            dir.createDirectory();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream out(dir.getChildFile("foldermap_containers.png"));
+            if (out.openedOk()) { out.setPosition(0); out.truncate(); png.writeImageToStream(arvore.createComponentSnapshot(arvore.getLocalBounds()), out); }
+        }
+
+        // Arrastar o container para dentro da pasta: todos os arquivos do container vao juntos.
+        int idxV = -1;
+        for (size_t i = 0; i < arvore.looseFiles_.size(); ++i)
+            if (arvore.looseFiles_[i].nestId == nestVinil) idxV = static_cast<int>(i);
+        int idxPasta = -1;
+        for (size_t i = 0; i < arvore.nodes_.size(); ++i) if (arvore.nodes_[i].id == pasta) idxPasta = static_cast<int>(i);
+        checar(idxV >= 0 && idxPasta >= 0, "setup: container and destination folder on the canvas");
+        if (idxV >= 0 && idxPasta >= 0) {
+            arvore.looseFileDragIndice_ = idxV;
+            const auto centro = arvore.nodes_[static_cast<size_t>(idxPasta)].bounds.getCentre().toFloat();
+            arvore.looseFiles_[static_cast<size_t>(idxV)].bounds.setCentre(centro.toInt());
+            arvore.concluirArrastoDeArquivoSolto(centro);
+            int dentro = 0;
+            for (const auto& id : vinil) {
+                auto stmt = reg.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?");
+                stmt.bind(1, matriz::db::Value::of(id));
+                stmt.bind(2, matriz::db::Value::of(pasta));
+                if (stmt.step() && stmt.columnInt(0) > 0) ++dentro;
+            }
+            checar(dentro == 3, "dropping the container on a folder moves ALL its files into that folder (" + juce::String(dentro) + "/3)");
+            arvore.recarregar();
+            bool aindaSolto = false;
+            for (const auto& lf : arvore.looseFiles_) if (lf.nestId == nestVinil) aindaSolto = true;
+            checar(!aindaSolto, "the container leaves the canvas root after it is placed in a folder");
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder map containers selftest: ") + e.what());
+    }
+    raizCont.deleteRecursively();
+
     // ------------------------- Folder Map: atalhos C e D (item 9, 2026-09-29)
     std::cout << "\n-- Folder Map: C (Folder Color) / D (Disconnect) shortcuts --\n";
     juce::File raizCD = juce::File::getSpecialLocation(juce::File::tempDirectory)

@@ -14,6 +14,7 @@
 #include "PainelImportarWhatsapp.h"
 #include "ConversaWhatsappComponent.h"
 #include "Tablet.h"
+#include "ContainerVisual.h"
 #include "LogosTipoArquivo.h"
 #include "TrashWindow.h"
 #include "../Celular/ExistentesProjeto.h"
@@ -1480,15 +1481,26 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
         int looseY = looseStartY;
 
         const auto nests = ProjetoAberto::mapaDeNests(db);
+        containersSemPosicao_.clear();
         while (!soltos.empty() && stmt.step()) {
             if (soltos.count(stmt.columnText(0)) == 0) continue;
             int nestTotal = 0;
+            const ProjetoAberto::NestInfo* infoContainer = nullptr;
             if (auto nit = nests.find(stmt.columnText(0)); nit != nests.end()) {
                 if (nit->second.capaId != stmt.columnText(0)) continue;
                 nestTotal = nit->second.total;
+                if (!nit->second.origem.empty()) infoContainer = &nit->second;
             }
             LooseFileNode lf;
             lf.nestTotal = nestTotal;
+            if (infoContainer != nullptr) {
+                lf.ehContainer = true;
+                lf.nestId = infoContainer->nestId;
+                lf.containerOrigem = infoContainer->origem;
+                lf.containerIcone = infoContainer->icone;
+                if (!infoContainer->capaImagem.empty())
+                    lf.containerCapa = projeto_.projeto().pasta().getChildFile(juce::String(infoContainer->capaImagem)).getFullPathName().toStdString();
+            }
             lf.id = stmt.columnText(0);
             lf.titulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
             lf.tipoMidia = stmt.columnText(2);
@@ -1499,7 +1511,8 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             // Órfãos NÃO vão para o canvas por conta própria (milhares de arquivos soltos por erro de operador):
             // ficam guardados no card fixo _NO FOLDER. Só aparece solto o que o usuário posicionou de propósito
             // (posição salva) ou uma conversa de WhatsApp.
-            if (layoutSalvo_.find(chaveLayout(lf.id)) == layoutSalvo_.end() && !lf.ehConversaWhatsapp) continue;
+            // Container aprovado no Intake também aparece solto (canto superior esquerdo, empilhado) — como no Mini.
+            if (layoutSalvo_.find(chaveLayout(lf.id)) == layoutSalvo_.end() && !lf.ehConversaWhatsapp && !lf.ehContainer) continue;
             lf.bounds = juce::Rectangle<int>(looseX, looseY, 126, 138);
             looseY += 148;
             if (looseY > looseStartY + 420) {
@@ -1509,6 +1522,8 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             auto salvo = layoutSalvo_.find(chaveLayout(lf.id));
             if (salvo != layoutSalvo_.end()) {
                 lf.bounds.setPosition(salvo->second);
+            } else if (lf.ehContainer) {
+                containersSemPosicao_.insert(lf.id);  // posicionado por posicionarContainersNovos()
             } else if (lf.ehConversaWhatsapp) {
                 const auto canvasTopLeft = areaCanvas().getTopLeft();
                 auto posCanvas = screenToCanvas(canvasTopLeft + juce::Point<int>(36, 36));
@@ -1521,6 +1536,40 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
     } catch (const std::exception& e) {
         juce::Logger::writeToLog("recalcularNodes looseFiles erro: " + juce::String(e.what()));
     }
+    posicionarContainersNovos();
+}
+
+// Containers sem posição salva (acabaram de ser aprovados no Intake) entram empilhados no canto superior esquerdo
+// da vista, no primeiro lugar livre. Espera o enquadramento inicial e o tamanho do canvas para não gravar posição de uma vista provisória.
+void ArvoreBackupComponent::posicionarContainersNovos() {
+    if (containersSemPosicao_.empty()) return;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;  // ainda sem tamanho: resized() tenta de novo
+    if (enquadrarPendente_ && !nodes_.empty()) return;              // tentarEnquadrar() chama de volta
+    bool mudou = false;
+    std::set<std::string> pendentes = containersSemPosicao_;
+    for (auto& lf : looseFiles_) {
+        if (pendentes.count(lf.id) == 0) continue;
+        // Abaixo do card _trash, que fica fixo no canto superior esquerdo da vista.
+        const auto trash = boundsPastaTrash();
+        const int yTela = std::max(canvas.getY() + 36, trash.isEmpty() ? 0 : trash.getBottom() + 14);
+        auto pos = screenToCanvas({canvas.getX() + 36, yTela}).toInt();
+        for (int tentativa = 0; tentativa < 400; ++tentativa) {
+            const juce::Rectangle<int> r(pos.x, pos.y, 126, 138);
+            bool ocupado = false;
+            for (const auto& outro : looseFiles_)
+                if (&outro != &lf && !pendentes.count(outro.id) && r.intersects(outro.bounds)) { ocupado = true; break; }
+            if (!ocupado) for (const auto& n : nodes_) if (r.intersects(n.bounds)) { ocupado = true; break; }
+            if (!ocupado) break;
+            pos.y += 148;
+        }
+        lf.bounds.setPosition(pos);
+        layoutSalvo_[chaveLayout(lf.id)] = pos;
+        pendentes.erase(lf.id);
+        mudou = true;
+    }
+    containersSemPosicao_.clear();
+    if (mudou) { gravarLayoutSalvo(); repaint(); }
 }
 
 // Auto-arranjo completo dos nodes_ atuais: posições E tamanhos (por nível), respeitando o multiplicador
@@ -1603,8 +1652,8 @@ bool ArvoreBackupComponent::aplicarFocoPendente() {
 }
 
 void ArvoreBackupComponent::tentarEnquadrar() {
-    if (aplicarFocoPendente()) return;
-    if (!enquadrarPendente_ || nodes_.empty()) return;
+    if (aplicarFocoPendente()) { posicionarContainersNovos(); return; }
+    if (!enquadrarPendente_ || nodes_.empty()) { posicionarContainersNovos(); return; }
     const auto canvas = areaCanvas();
     if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;  // ainda sem tamanho: resized() tenta de novo
 
@@ -1618,6 +1667,7 @@ void ArvoreBackupComponent::tentarEnquadrar() {
     panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
                   static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
     enquadrarPendente_ = false;
+    posicionarContainersNovos();
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaBarraAbas() const {
@@ -2720,6 +2770,30 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.drawRoundedRectangle(b.reduced(1.0f), 14.0f, 2.0f);
         }
         const float lw = 56.0f, lh = 70.0f;
+        if (lf.ehContainer) {
+            // Container: ícone/capa do tipo + contagem + porta de ENTRADA à esquerda. Sem porta de saída: nada conecta nele.
+            const juce::Rectangle<float> area(b.getCentreX() - 48.0f, b.getY() + 2.0f, 96.0f, 96.0f);
+            matriz::ui::desenharContainerGrafico(g, area, juce::String(lf.containerOrigem), juce::String::fromUTF8(lf.containerIcone.c_str()),
+                                                 juce::String::fromUTF8(lf.containerCapa.c_str()));
+            if (lf.nestTotal > 0) {
+                const juce::String n(lf.nestTotal);
+                const float w = std::max(22.0f, 10.0f + 7.0f * static_cast<float>(n.length()));
+                const juce::Rectangle<float> pilula(area.getRight() - w, area.getBottom() - 16.0f, w, 16.0f);
+                g.setColour(juce::Colours::black.withAlpha(0.72f));
+                g.fillRoundedRectangle(pilula, 8.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
+                g.drawText(n, pilula.toNearestInt(), juce::Justification::centred, false);
+            }
+            const juce::Point<float> entrada(area.getX() + 4.0f, area.getCentreY());
+            g.setColour(tk.acento);
+            g.fillEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f);
+            g.setColour(tk.textoPrimario);
+            g.drawEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f, 1.2f);
+            g.setFont(fonteUi(11.5f, juce::Font::bold));
+            g.drawFittedText(lf.titulo, b.withTrimmedTop(100.0f).reduced(4.0f, 0.0f).toNearestInt(), juce::Justification::centredTop, 2, 0.85f);
+            continue;
+        }
         if (lf.ehConversaWhatsapp) {
             const auto bolha = matriz::ui::logoConversaWhatsapp(256);
             if (bolha.isValid()) {
@@ -3621,6 +3695,8 @@ void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
             sequenciaPreview_.clear();
             if (lf.ehConversaWhatsapp) {
                 abrirConversaWhatsapp(lf.id);
+            } else if (lf.ehContainer) {
+                matriz::ui::abrirContainerPorTipo(projeto_, lf.nestId, lf.containerOrigem);
             }
             return;
         }
