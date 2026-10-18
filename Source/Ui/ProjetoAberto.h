@@ -44,7 +44,8 @@ struct ItemResumo {
     std::string nestCapaId;
     int nestTotal = 0;
     bool nestCapa = false;
-    std::string nestOrigem;  // não vazio = nest é um CONTAINER de importação (gallery|drive|bridge|lightroom)
+    std::string nestOrigem;  // não vazio = nest é um CONTAINER de importação (gallery|drive|bridge|lightroom|ddp|production|vinyl|tape)
+    std::string nestCapaImagem;  // caminho absoluto da capa do container (vinil/fita), vazio se não tem
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
 
     // Só preenchido pra tipo_midia="release" (campos release.artista_principal
@@ -880,6 +881,7 @@ public:
     struct NestInfo {
         std::string nestId, capaId;
         std::string origem;  // container de importação do Intake; vazio = nest comum
+        std::string capaImagem;  // caminho relativo da capa (nest.capa_imagem); vazio = sem capa própria
         int total = 0;
     };
     // item -> nest (só nests com 2+ membros). Uma consulta, usada ao montar a lista da grade.

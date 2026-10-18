@@ -72,7 +72,7 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     static const juce::Image bridge = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
     static const juce::Image lightroom = juce::ImageFileFormat::loadFrom(AssetsBinaryData::lrlogo_png, AssetsBinaryData::lrlogo_pngSize);
     static const juce::Image whatsapp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::whatsapp_png, AssetsBinaryData::whatsapp_pngSize);
-    static const juce::Image ddp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_ddp_master_png, AssetsBinaryData::ci_aud_ddp_master_pngSize);
+    static const juce::Image ddp = tirarFundoBrancoDasBordas(juce::ImageFileFormat::loadFrom(AssetsBinaryData::DDP_png, AssetsBinaryData::DDP_pngSize));
     static const juce::Image producao = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_music_production_png, AssetsBinaryData::ci_aud_music_production_pngSize);
     static const juce::Image vinil = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_vinyl_rip_png, AssetsBinaryData::ci_aud_vinyl_rip_pngSize);
     static const juce::Image fita = juce::ImageFileFormat::loadFrom(AssetsBinaryData::Tape_Cassette_Rip_png, AssetsBinaryData::Tape_Cassette_Rip_pngSize);
@@ -87,6 +87,11 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     if (origem == "lightroom") return lightroom;
     if (origem == "whatsapp") return whatsapp;
     return vazio;
+}
+
+// Containers que o Intake desenha como container (ícone grande ou capa), não como o primeiro arquivo com um selo.
+bool ehContainerGrafico(const juce::String& origem) {
+    return origem == "ddp" || origem == "production" || origem == "vinyl" || origem == "tape";
 }
 
 juce::String rotuloDaOrigem(const juce::String& origem) {
@@ -1421,7 +1426,7 @@ public:
         return cache_.count(itemId) > 0;
     }
 
-    void pedirMiniatura(const std::string& itemId) {
+    void pedirMiniatura(const std::string& itemId, const juce::String& capaContainer = {}) {
         {
             const juce::ScopedLock sl(lock_);
             if (loading_.count(itemId) || cache_.count(itemId) || noThumbnail_.count(itemId)) return;
@@ -1431,9 +1436,10 @@ public:
         juce::Component::SafePointer<ThumbnailsGridComponent> safeThis(this);
         ProjetoAberto* proj = &owner_.projeto_;
 
-        poolThumbnails_.addJob([safeThis, proj, itemId]() mutable {
+        poolThumbnails_.addJob([safeThis, proj, itemId, capaContainer]() mutable {
             // Container com capa própria (vinil, fita): a capa escolhida na ficha vale como miniatura dele.
-            auto caminho = proj->capaImagemDoContainer(itemId);
+            std::optional<juce::String> caminho;
+            if (capaContainer.isNotEmpty() && juce::File(capaContainer).existsAsFile()) caminho = capaContainer;
             if (!caminho) caminho = proj->caminhoMiniaturaPrincipal(itemId);
             juce::Image img;
             if (caminho) img = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
@@ -1519,7 +1525,19 @@ public:
                     if (it != cache_.end()) img = it->second;
                 }
 
-                if (img.isValid()) {
+                if (ehContainerGrafico(item.containerOrigem)) {
+                    // Container de verdade: ícone do tipo (DDP, produção, vinil, fita) ou a capa escolhida na ficha.
+                    g.setColour(tk.painelAlt);
+                    g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
+                    g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
+                    if (item.containerCapaCaminho.isNotEmpty() && img.isValid()) {
+                        g.drawImage(img, thumbArea.reduced(10).toFloat(), juce::RectanglePlacement::centred);
+                    } else {
+                        if (item.containerCapaCaminho.isNotEmpty()) pedirMiniatura(item.id, item.containerCapaCaminho);
+                        const auto& icone = logoDaOrigem(item.containerOrigem);
+                        if (icone.isValid()) g.drawImage(icone, thumbArea.reduced(10).toFloat(), juce::RectanglePlacement::centred);
+                    }
+                } else if (img.isValid()) {
                     g.setColour(tk.painelAlt);
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
                     g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
@@ -1566,7 +1584,9 @@ public:
             // Container de importação / conversa de WhatsApp: logo da origem (+ contagem) no canto inferior direito.
             if (item.containerOrigem.isNotEmpty()) {
                 juce::Rectangle<int> selo(thumbArea.getRight() - 32, thumbArea.getBottom() - 32, 28, 28);
-                desenharSeloContainer(g, selo, item.containerOrigem, 0);
+                // O ícone grande do container já diz o que ele é; o selo só aparece quando a capa é uma imagem qualquer.
+                if (!ehContainerGrafico(item.containerOrigem) || item.containerCapaCaminho.isNotEmpty())
+                    desenharSeloContainer(g, selo, item.containerOrigem, 0);
                 if (item.containerTotal > 0) {
                     const juce::String n(item.containerTotal);
                     const int w = juce::jmax(22, juce::GlyphArrangement::getStringWidthInt(font10Bold, n) + 10);
@@ -2465,6 +2485,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
             it.containerOrigem = juce::String::fromUTF8(item.nestOrigem.c_str());
             it.containerTotal = item.nestTotal;
             it.containerNestId = item.nestId;
+            it.containerCapaCaminho = juce::String::fromUTF8(item.nestCapaImagem.c_str());
             if (item.nestOrigem != "whatsapp") it.nomeArquivo = rotuloDaOrigem(it.containerOrigem) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
                              i18n::t("intake.container_arquivos").replace("{n}", juce::String(item.nestTotal));
             it.titulo = it.nomeArquivo;
@@ -4264,26 +4285,39 @@ void IntakeWorkspaceComponent::resized() {
     }
 }
 
-void IntakeWorkspaceComponent::abrirMenuImportar() {
+// `caminho`: grupos até onde a janela deve abrir (o VOLTAR de uma ficha reabre o menu no mesmo lugar).
+void IntakeWorkspaceComponent::abrirMenuImportar(std::vector<std::string> caminho) {
     if (overlayAtual_ != nullptr) return;
     overlayAtual_ = std::make_unique<PainelOverlay>();
     addAndMakeVisible(*overlayAtual_);
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
-    mostrarMenuImportar(*overlayAtual_, [seguro](std::optional<std::string> id) {
-        juce::MessageManager::callAsync([seguro, id] {
+    mostrarMenuImportar(*overlayAtual_, [seguro](std::optional<std::string> id, std::vector<std::string> caminhoAteAqui) {
+        juce::MessageManager::callAsync([seguro, id, caminhoAteAqui] {
             if (seguro == nullptr) return;
             seguro->overlayAtual_.reset();
             seguro->resized();
-            if (id.has_value()) seguro->tratarEscolhaImportar(*id);
+            if (id.has_value()) seguro->tratarEscolhaImportar(*id, caminhoAteAqui);
         });
-    });
+    }, std::move(caminho));
     resized();
 }
 
 // O que cada card da janela IMPORT faz. Os fluxos que já existiam (celular, Drive, Lightroom, Bridge) seguem iguais;
 // as demais folhas ainda usam o seletor de arquivos e pastas de sempre (as fichas de contexto entram por categoria).
-void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id) {
-    if (id == "phone") { abrirReceberDoCelular(); return; }
+void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id, const std::vector<std::string>& caminho) {
+    if (id == "phone") {
+        juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+        abrirReceberDoCelular([seguro, caminho] {  // VOLTAR do card do celular: reabre a janela IMPORT no mesmo lugar
+            juce::MessageManager::callAsync([seguro, caminho] {
+                if (seguro == nullptr) return;
+                seguro->overlayAtual_.reset();
+                seguro->escolhaImportacaoAtual_.reset();
+                seguro->resized();
+                seguro->abrirMenuImportar(caminho);
+            });
+        });
+        return;
+    }
     if (id == "drive") {
         // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
         juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
@@ -4307,12 +4341,12 @@ void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id) {
     }
     if (id == "photos.lightroom") { if (aoIngerirDeLightroom) aoIngerirDeLightroom(); return; }
     if (id == "photos.bridge") { if (aoIngerirDeBridge) aoIngerirDeBridge(); return; }
-    if (folhaImportarTemFicha(id)) { abrirFichaDeImportacao(id); return; }
+    if (folhaImportarTemFicha(id)) { abrirFichaDeImportacao(id, caminho); return; }
     abrirSeletorDeImportacao(id);
 }
 
 // Ficha de contexto da folha (ex.: formato de origem do vídeo) antes do seletor de arquivos.
-void IntakeWorkspaceComponent::abrirFichaDeImportacao(const std::string& id) {
+void IntakeWorkspaceComponent::abrirFichaDeImportacao(const std::string& id, const std::vector<std::string>& caminho) {
     if (overlayAtual_ != nullptr) return;
     overlayAtual_ = std::make_unique<PainelOverlay>();
     addAndMakeVisible(*overlayAtual_);
@@ -4323,6 +4357,13 @@ void IntakeWorkspaceComponent::abrirFichaDeImportacao(const std::string& id) {
             seguro->overlayAtual_.reset();
             seguro->resized();
             if (continuar) seguro->abrirSeletorDeImportacao(id, daFicha);
+        });
+    }, [seguro, caminho] {  // VOLTAR: reabre a janela IMPORT no grupo de onde a ficha veio
+        juce::MessageManager::callAsync([seguro, caminho] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            seguro->abrirMenuImportar(caminho);
         });
     });
     resized();
@@ -4347,7 +4388,7 @@ void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id, s
                          });
 }
 
-void IntakeWorkspaceComponent::abrirReceberDoCelular() {
+void IntakeWorkspaceComponent::abrirReceberDoCelular(std::function<void()> aoVoltar) {
     if (overlayAtual_ != nullptr) return;
     overlayAtual_ = std::make_unique<PainelOverlay>();
     addAndMakeVisible(*overlayAtual_);
@@ -4360,7 +4401,7 @@ void IntakeWorkspaceComponent::abrirReceberDoCelular() {
             seguro->resized();
             if (modo.has_value()) seguro->iniciarReceberDoCelular(*modo);
         });
-    }, &escolhaImportacaoAtual_);
+    }, &escolhaImportacaoAtual_, std::move(aoVoltar));
     resized();
 }
 

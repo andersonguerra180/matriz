@@ -108,9 +108,12 @@ private:
 // Segunda tela do WHATSAPP: ANDROID segue o fluxo do WhatsApp de hoje; IPHONE abre o mesmo QR code da GALLERY
 // (o iPhone exporta o .zip da conversa e o envia pelo QR como se fosse uma foto).
 enum class SistemaCelular { Android, IPhone };
-void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std::optional<SistemaCelular>)> aoConcluir);
+// `aoVoltar` (opcional): ganha o botão VOLTAR, que chama este callback em vez de concluir.
+void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std::optional<SistemaCelular>)> aoConcluir,
+                                  std::function<void()> aoVoltar = nullptr);
 
 void mostrarEscolhaImportacaoCelular(PainelOverlay& overlay, std::function<void(std::optional<ModoImportacaoCelular>)> aoConcluir,
-                                     std::weak_ptr<EscolhaImportacaoCelular>* devolver = nullptr);
+                                     std::weak_ptr<EscolhaImportacaoCelular>* devolver = nullptr,
+                                     std::function<void()> aoVoltar = nullptr);
 
 } // namespace matriz::ui

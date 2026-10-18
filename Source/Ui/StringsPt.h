@@ -2279,6 +2279,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"light.cel.importarSub", "Galeria ou WhatsApp"},
         {"light.ui.imp.none", "(nenhum)"},
         {"imp.titulo", "IMPORTAR"},
+        {"imp.ficha.midi.msg", "Conte sobre estes arquivos MIDI. Tudo é opcional — PULAR importa como estão."},
         {"imp.node.audio.preservation.tape", "Transcrição de fita"},
         {"imp.node.other.design", "Design / 3D / CAD"},
         {"imp.sub.other", "Web, multimídia, redes, design, personalizado"},

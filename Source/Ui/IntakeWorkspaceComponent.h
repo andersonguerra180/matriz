@@ -128,6 +128,7 @@ private:
         juce::String containerOrigem;
         int containerTotal = 0;
         std::string containerNestId;
+        juce::String containerCapaCaminho;  // imagem da capa do container (vinil, fita); vazio = sem capa própria
     };
     bool itemEhContainer(const ItemIntake& it) const { return it.containerNestId.size() > 0; }
     void abrirGridDoContainer(const std::string& itemId);
@@ -256,11 +257,11 @@ private:
     std::unique_ptr<PainelOverlay> overlayAtual_;
     std::weak_ptr<PainelReceberCelular> painelCelularAtual_;
     std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
-    void abrirMenuImportar();
-    void tratarEscolhaImportar(const std::string& id);
+    void abrirMenuImportar(std::vector<std::string> caminho = {});
+    void tratarEscolhaImportar(const std::string& id, const std::vector<std::string>& caminho);
     void abrirSeletorDeImportacao(const std::string& id, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha = nullptr);
-    void abrirFichaDeImportacao(const std::string& id);
-    void abrirReceberDoCelular();
+    void abrirFichaDeImportacao(const std::string& id, const std::vector<std::string>& caminho);
+    void abrirReceberDoCelular(std::function<void()> aoVoltar = nullptr);
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;
     bool hasParentCatalog_ = false;

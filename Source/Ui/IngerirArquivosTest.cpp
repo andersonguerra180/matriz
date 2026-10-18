@@ -7,6 +7,7 @@
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "ImportarMenu.h"
+#include "IntakeWorkspaceComponent.h"
 #include "OriginalSourceMedium.h"
 #include "../Ingest/LightroomImporter.h"
 
@@ -1170,6 +1171,25 @@ int rodarTestImportarComContexto() {
                    "capaImagemDoContainer devolve a imagem para o item-capa");
         }
 
+        // Foto do Intake (miniaturas) com os containers 'ddp' e 'vinyl' já criados — para olhar como o container aparece.
+        {
+            IntakeWorkspaceComponent intake(*mainComponent.projetoAberto());
+            intake.setBounds(0, 0, 1500, 900);
+            intake.definirModoVisao(IntakeWorkspaceComponent::ModoVisao::Icones);
+            intake.recarregar();
+            const auto t0 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t0 < 4000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            intake.createComponentSnapshot(intake.getLocalBounds());  // 1ª pintura pede as miniaturas
+            const auto t1 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t1 < 6000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            juce::Image img = intake.createComponentSnapshot(intake.getLocalBounds());
+            juce::File png = juce::File::getCurrentWorkingDirectory().getChildFile("test-output/intake_containers.png");
+            png.getParentDirectory().createDirectory();
+            png.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(png.createOutputStream())) juce::PNGImageFormat().writeImageToStream(img, *out);
+            std::cout << "  ..  foto do Intake: " << png.getFullPathName() << "\n";
+        }
+
         ingerir(neutro, nullptr);
         checar(coluna("neutro", "collection_type").empty() && coluna("neutro", "source_media").empty(),
                "sem contexto (card neutro / arrastar) o item entra como antes: sem CONTENT nem SOURCE MEDIUM");
@@ -1207,7 +1227,7 @@ int rodarTestImportarVisual() {
     overlay.setBounds(0, 0, 1100, 760);
     std::optional<std::string> escolha;
     bool terminou = false;
-    mostrarMenuImportar(overlay, [&](std::optional<std::string> id) { escolha = id; terminou = true; });
+    mostrarMenuImportar(overlay, [&](std::optional<std::string> id, std::vector<std::string>) { escolha = id; terminou = true; });
     girar(100);
     salvar(overlay, "imp_01_raiz");
 
@@ -1280,7 +1300,9 @@ int rodarTestImportarVisual() {
                                            { "audio.preservation.vinyl", "imp_19_ficha_vinil" }, { "audio.preservation.tape", "imp_20_ficha_fita" },
                                            { "audio.general.field", "imp_21_ficha_campo" }, { "audio.general.film_sound", "imp_22_ficha_film_sound" },
                                            { "audio.general.voice_over", "imp_23_ficha_locucao" }, { "documents.scanned", "imp_24_ficha_docs_escaneado" },
-                                           { "other.design", "imp_25_ficha_design" }, { "files.optical", "imp_14_ficha_arquivos_optico" } };
+                                           { "other.design", "imp_25_ficha_design" }, { "files.optical", "imp_14_ficha_arquivos_optico" },
+                                           { "audio.production.midi", "imp_26_ficha_midi" }, { "audio.production.tools", "imp_27_ficha_tools" },
+                                           { "photos.camera_card", "imp_28_ficha_cartao_camera" } };
         for (const auto& fv : fichasVisuais) {
             PainelOverlay o;
             o.setBounds(0, 0, 1100, 760);
@@ -1309,6 +1331,49 @@ int rodarTestImportarVisual() {
             const bool ok = total > 0 && total == concluiram;
             std::cout << (ok ? "  OK   " : "  FAIL ") << "todas as fichas concluem com CONTINUE e PULAR (" << concluiram << "/" << total << ")\n";
             if (!ok) ++falhas;
+        }
+
+        // VOLTAR: a escolha de uma folha devolve o caminho de grupos, e reabrir com esse caminho cai no mesmo nível.
+        {
+            std::string idRecebido;
+            std::vector<std::string> caminhoRecebido;
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarMenuImportar(o, [&](std::optional<std::string> id, std::vector<std::string> caminho) {
+                if (id.has_value()) idRecebido = *id;
+                caminhoRecebido = caminho;
+            });
+            girar(50);
+            o.concluirExterno(105); girar(80);  // Audio
+            o.concluirExterno(101); girar(80);  // Preservation
+            o.concluirExterno(102); girar(80);  // Vinyl transcription
+            const std::vector<std::string> esperado = { "audio", "audio.preservation" };
+            const bool caminhoOk = idRecebido == "audio.preservation.vinyl" && caminhoRecebido == esperado;
+            std::cout << (caminhoOk ? "  OK   " : "  FAIL ") << "a folha escolhida devolve o caminho de grupos (" << idRecebido << ")\n";
+            if (!caminhoOk) ++falhas;
+
+            PainelOverlay o2;
+            o2.setBounds(0, 0, 1100, 760);
+            mostrarMenuImportar(o2, [](std::optional<std::string>, std::vector<std::string>) {}, caminhoRecebido);
+            girar(80);
+            const bool reabriu = o2.tituloParaTeste().containsIgnoreCase("preservation") && o2.totalBotoesParaTeste() == 2;
+            std::cout << (reabriu ? "  OK   " : "  FAIL ") << "reabrir com o caminho volta ao mesmo card, com VOLTAR (" << o2.tituloParaTeste() << ")\n";
+            if (!reabriu) ++falhas;
+
+            // Toda ficha ganha VOLTAR quando há para onde voltar, e ele chama o retorno em vez de concluir.
+            bool voltou = false, concluiu = false;
+            PainelOverlay o3;
+            o3.setBounds(0, 0, 1100, 760);
+            mostrarFichaImportar(o3, "audio.preservation.vinyl", [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) { concluiu = true; },
+                                 [&] { voltou = true; });
+            girar(50);
+            const bool quatroBotoes = o3.totalBotoesParaTeste() == 4;
+            salvar(o3, "imp_29_ficha_com_voltar");
+            o3.concluirExterno(3);
+            girar(50);
+            const bool fichaOk = quatroBotoes && voltou && !concluiu;
+            std::cout << (fichaOk ? "  OK   " : "  FAIL ") << "a ficha tem VOLTAR (4 botoes) e ele nao conclui a importacao\n";
+            if (!fichaOk) ++falhas;
         }
 
         PainelOverlay overlayDdp;

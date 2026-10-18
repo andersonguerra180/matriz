@@ -20,8 +20,11 @@
 //   other.web | other.multimedia.* | other.social.* | other.custom
 namespace matriz::ui {
 
-// `aoConcluir` roda UMA vez: id da folha escolhida, ou nullopt se o usuário cancelou.
-void mostrarMenuImportar(PainelOverlay& overlay, std::function<void(std::optional<std::string>)> aoConcluir);
+// `aoConcluir` roda UMA vez: id da folha escolhida e o caminho de grupos até ela (ex.: {"audio", "audio.preservation"}),
+// ou nullopt se o usuário cancelou. `caminhoInicial` abre a janela direto nesse grupo (usado pelo VOLTAR das fichas).
+void mostrarMenuImportar(PainelOverlay& overlay,
+                         std::function<void(std::optional<std::string>, std::vector<std::string>)> aoConcluir,
+                         std::vector<std::string> caminhoInicial = {});
 
 // Contexto que a escolha do card já implica (CONTENT, source medium, tags), aplicado a cada arquivo importado por ele.
 // Nulo = o card não implica nada (ex.: "Pasta do computador", "Outro").
@@ -36,8 +39,14 @@ bool folhaImportarTemFicha(const std::string& id);
 
 // Mostra a ficha da folha. `aoConcluir(continuar, contexto)`: continuar=false = cancelou tudo; contexto nulo = o
 // usuário pulou ou não respondeu nada.
+// `aoVoltar` (opcional): quando existe a ficha ganha o botão VOLTAR, que chama este callback em vez de concluir.
 void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
-                          std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir);
+                          std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir,
+                          std::function<void()> aoVoltar = nullptr);
+
+// Ícone com fundo branco opaco (alguns de Assets/Icons) -> o branco ligado às bordas vira transparente. Devolve a mesma
+// imagem se ela já é transparente.
+juce::Image tirarFundoBrancoDasBordas(const juce::Image& original);
 
 // Para o self-test: mostra a lista de contas do Drive com contas de mentira (a máquina de teste pode não ter nenhuma).
 void mostrarListaDeContasParaTeste(PainelOverlay& overlay);

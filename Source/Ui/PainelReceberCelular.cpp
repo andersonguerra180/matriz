@@ -346,7 +346,7 @@ void EscolhaImportacaoCelular::paint(juce::Graphics& g) {
 }
 
 void mostrarEscolhaImportacaoCelular(PainelOverlay& overlay, std::function<void(std::optional<ModoImportacaoCelular>)> aoConcluir,
-                                     std::weak_ptr<EscolhaImportacaoCelular>* devolver) {
+                                     std::weak_ptr<EscolhaImportacaoCelular>* devolver, std::function<void()> aoVoltar) {
     auto conteudo = std::make_shared<EscolhaImportacaoCelular>();
     if (devolver != nullptr) *devolver = conteudo;
 
@@ -356,28 +356,37 @@ void mostrarEscolhaImportacaoCelular(PainelOverlay& overlay, std::function<void(
     cfg.conteudo = conteudo;
     cfg.larguraCartao = 620;
     cfg.alturaConteudo = 300;
-    cfg.botoes = {{t("light.ui.common.cancel"), 0, false, true}};
+    if (aoVoltar) cfg.botoes.push_back({t("imp.voltar"), 9, false, false});
+    cfg.botoes.push_back({t("light.ui.common.cancel"), 0, false, true});
     juce::Component::SafePointer<EscolhaImportacaoCelular> seguro(conteudo.get());
     cfg.aoTecla = [seguro](const juce::KeyPress& k) { return seguro != nullptr && seguro->tratarTecla(k); };
     juce::Component::SafePointer<PainelOverlay> pOverlay(&overlay);
-    overlay.mostrar(cfg, [aoConcluir, pOverlay](PainelOverlay::Resultado r) {
+    overlay.mostrar(cfg, [aoConcluir, pOverlay, aoVoltar, devolver](PainelOverlay::Resultado r) {
+        if (r.botaoId == 9) { if (aoVoltar) aoVoltar(); return; }
         if (!aoConcluir) return;
         if (r.botaoId == 1) aoConcluir(ModoImportacaoCelular::Galeria);
         else if (r.botaoId == 2) {
             // WHATSAPP abre a segunda tela: ANDROID = fluxo do WhatsApp de hoje; IPHONE = QR code da GALLERY.
             // Adiado: este callback roda de dentro do mouseUp do card que o overlay vai substituir.
-            juce::MessageManager::callAsync([aoConcluir, pOverlay] {
+            juce::MessageManager::callAsync([aoConcluir, pOverlay, aoVoltar] {
                 if (pOverlay == nullptr) { aoConcluir(std::nullopt); return; }
+                // VOLTAR da segunda tela (Android/iPhone) reabre esta (Gallery/WhatsApp).
                 mostrarEscolhaSistemaCelular(*pOverlay, [aoConcluir](std::optional<SistemaCelular> s) {
                     if (!s.has_value()) aoConcluir(std::nullopt);
                     else aoConcluir(*s == SistemaCelular::Android ? ModoImportacaoCelular::WhatsApp : ModoImportacaoCelular::Galeria);
+                }, [pOverlay, aoConcluir, aoVoltar] {
+                    juce::MessageManager::callAsync([pOverlay, aoConcluir, aoVoltar] {
+                        if (pOverlay == nullptr) { aoConcluir(std::nullopt); return; }
+                        mostrarEscolhaImportacaoCelular(*pOverlay, aoConcluir, nullptr, aoVoltar);
+                    });
                 });
             });
         } else aoConcluir(std::nullopt);
     });
 }
 
-void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std::optional<SistemaCelular>)> aoConcluir) {
+void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std::optional<SistemaCelular>)> aoConcluir,
+                                  std::function<void()> aoVoltar) {
     auto conteudo = std::make_shared<EscolhaImportacaoCelular>(true);
 
     PainelOverlay::Config cfg;
@@ -386,10 +395,12 @@ void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std
     cfg.conteudo = conteudo;
     cfg.larguraCartao = 620;
     cfg.alturaConteudo = 300;
-    cfg.botoes = {{t("light.ui.common.cancel"), 0, false, true}};
+    if (aoVoltar) cfg.botoes.push_back({t("imp.voltar"), 9, false, false});
+    cfg.botoes.push_back({t("light.ui.common.cancel"), 0, false, true});
     juce::Component::SafePointer<EscolhaImportacaoCelular> seguro(conteudo.get());
     cfg.aoTecla = [seguro](const juce::KeyPress& k) { return seguro != nullptr && seguro->tratarTecla(k); };
-    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
+    overlay.mostrar(cfg, [aoConcluir, aoVoltar](PainelOverlay::Resultado r) {
+        if (r.botaoId == 9) { if (aoVoltar) aoVoltar(); return; }
         if (!aoConcluir) return;
         if (r.botaoId == 1) aoConcluir(SistemaCelular::Android);
         else if (r.botaoId == 2) aoConcluir(SistemaCelular::IPhone);

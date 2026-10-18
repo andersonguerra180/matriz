@@ -2,6 +2,7 @@
 
 #include <AssetsBinaryData.h>
 
+#include <algorithm>
 #include <map>
 
 #include "../I18n/Strings.h"
@@ -129,7 +130,7 @@ std::vector<No> montarArvore() {
                   folha("audio.production.tools", IconeUi::Sound, "Tools_png") }),
           grupo("audio.preservation", IconeUi::Disco, "ci_aud_vinyl_rip_png",
                 { folha("audio.preservation.cd_rip", IconeUi::Disco, "ci_aud_cd_rip_png", true),
-                  folha("audio.preservation.ddp", IconeUi::Disco, "ci_aud_ddp_master_png"),
+                  folha("audio.preservation.ddp", IconeUi::Disco, "DDP_png"),
                   folha("audio.preservation.vinyl", IconeUi::Disco, "ci_aud_vinyl_rip_png"),
                   folha("audio.preservation.tape", IconeUi::Cassete, "Tape_Cassette_Rip_png") }),
           grupo("audio.general", IconeUi::Sound, "ci_aud_field_recording_png",
@@ -177,37 +178,6 @@ void coletarFolhas(const std::vector<No>& nos, std::vector<std::string>& saida) 
         if (n.filhos.empty()) saida.push_back(n.id);
         else coletarFolhas(n.filhos, saida);
     }
-}
-
-// Alguns ícones de Assets/Icons vêm com fundo branco opaco (os demais são transparentes): o branco ligado às bordas
-// vira transparente (preenchimento a partir das bordas, então o branco de dentro do desenho fica como está).
-juce::Image tirarFundoBrancoDasBordas(const juce::Image& original) {
-    juce::Image img = original.convertedToFormat(juce::Image::ARGB);
-    const int w = img.getWidth(), h = img.getHeight();
-    juce::Image::BitmapData px(img, juce::Image::BitmapData::readWrite);
-    const auto brancoOpaco = [&](int x, int y) {
-        const auto c = px.getPixelColour(x, y);
-        return c.getAlpha() > 250 && c.getRed() >= 240 && c.getGreen() >= 240 && c.getBlue() >= 240;
-    };
-    if (!brancoOpaco(0, 0)) return original;  // já transparente (ou sem fundo branco): nada a fazer
-    std::vector<juce::Point<int>> pilha;
-    std::vector<char> visto(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
-    const auto empurrar = [&](int x, int y) {
-        if (x < 0 || y < 0 || x >= w || y >= h) return;
-        const size_t i = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
-        if (visto[i] || !brancoOpaco(x, y)) return;
-        visto[i] = 1;
-        pilha.push_back({ x, y });
-    };
-    for (int x = 0; x < w; ++x) { empurrar(x, 0); empurrar(x, h - 1); }
-    for (int y = 0; y < h; ++y) { empurrar(0, y); empurrar(w - 1, y); }
-    while (!pilha.empty()) {
-        const auto p = pilha.back();
-        pilha.pop_back();
-        px.setPixelColour(p.x, p.y, juce::Colours::transparentBlack);
-        empurrar(p.x + 1, p.y); empurrar(p.x - 1, p.y); empurrar(p.x, p.y + 1); empurrar(p.x, p.y - 1);
-    }
-    return img;
 }
 
 // Ícone embutido (Assets/Icons): vazio se o recurso não existe.
@@ -456,28 +426,45 @@ private:
     int sobre_ = -1;
 };
 
-using AoConcluir = std::function<void(std::optional<std::string>)>;
+using AoConcluir = std::function<void(std::optional<std::string>, std::vector<std::string>)>;
 
-void mostrarNivel(PainelOverlay& overlay, std::vector<No> nos, juce::String titulo, const std::string& chaveDica,
-                  std::function<void()> voltar, AoConcluir aoConcluir, bool emLista = false) {
-    const bool ehSub = voltar != nullptr;
-    const juce::String dica = t(chaveDica.empty() ? (ehSub ? "imp.dica.sub" : "imp.dica.raiz") : chaveDica);
+// Um nível da janela (a raiz ou um grupo aberto) e o estado da navegação: o botão VOLTAR de cada nível reabre o anterior,
+// e a escolha de uma folha devolve também o caminho de grupos até ela (para a ficha poder voltar ao mesmo lugar).
+struct NivelDescr {
+    std::vector<No> nos;
+    juce::String titulo;
+    std::string chaveDica;
+    bool emLista = false;
+    std::string idGrupo;
+};
+
+struct EstadoMenu {
+    juce::Component::SafePointer<PainelOverlay> overlay;
+    std::vector<NivelDescr> niveis;
+    AoConcluir aoConcluir;
+};
+
+void mostrarNivelEm(std::shared_ptr<EstadoMenu> st, size_t indice) {
+    if (st->overlay == nullptr) { st->aoConcluir(std::nullopt, {}); return; }
+    const NivelDescr nivel = st->niveis[indice];
+    const bool ehSub = indice > 0;
+    const juce::String dica = t(nivel.chaveDica.empty() ? (ehSub ? "imp.dica.sub" : "imp.dica.raiz") : nivel.chaveDica);
 
     PainelOverlay::Config cfg;
-    cfg.titulo = titulo;
+    cfg.titulo = nivel.titulo;
     cfg.trilha = t("moldura.trilha.adicionar");
     if (ehSub) cfg.botoes.push_back({ t("imp.voltar"), 1, false, false });
     cfg.botoes.push_back({ t("light.ui.common.cancel"), 0, false, true });
-    if (emLista) {
-        auto lista = std::make_shared<ListaImportar>(nos, dica);
+    if (nivel.emLista) {
+        auto lista = std::make_shared<ListaImportar>(nivel.nos, dica);
         cfg.conteudo = lista;
         cfg.larguraCartao = 620;
-        cfg.alturaConteudo = ListaImportar::alturaIdeal(static_cast<int>(nos.size()));
+        cfg.alturaConteudo = ListaImportar::alturaIdeal(static_cast<int>(nivel.nos.size()));
         juce::Component::SafePointer<ListaImportar> seguroLista(lista.get());
         cfg.aoTecla = [seguroLista](const juce::KeyPress& k) { return seguroLista != nullptr && seguroLista->tratarTecla(k); };
     } else {
-        auto conteudo = std::make_shared<GradeImportar>(nos, dica);
-        const auto tam = GradeImportar::tamanhoIdeal(static_cast<int>(nos.size()));
+        auto conteudo = std::make_shared<GradeImportar>(nivel.nos, dica);
+        const auto tam = GradeImportar::tamanhoIdeal(static_cast<int>(nivel.nos.size()));
         cfg.conteudo = conteudo;
         cfg.larguraCartao = tam.x + 2 * PainelOverlay::kMargem + 8;
         cfg.alturaConteudo = tam.y;
@@ -485,53 +472,121 @@ void mostrarNivel(PainelOverlay& overlay, std::vector<No> nos, juce::String titu
         cfg.aoTecla = [seguroGrade](const juce::KeyPress& k) { return seguroGrade != nullptr && seguroGrade->tratarTecla(k); };
     }
 
-    juce::Component::SafePointer<PainelOverlay> seguroOverlay(&overlay);
-    overlay.mostrar(cfg, [seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, emLista](PainelOverlay::Resultado r) {
+    st->overlay->mostrar(cfg, [st, indice](PainelOverlay::Resultado r) {
         if (r.botaoId >= 100) {
+            const std::vector<No>& nos = st->niveis[indice].nos;
             const size_t idx = static_cast<size_t>(r.botaoId - 100);
-            if (idx >= nos.size()) { aoConcluir(std::nullopt); return; }
+            if (idx >= nos.size()) { st->aoConcluir(std::nullopt, {}); return; }
             const No no = nos[idx];
-            if (no.filhos.empty()) { aoConcluir(no.id); return; }
+            if (no.filhos.empty()) {
+                std::vector<std::string> caminho;
+                for (size_t k = 1; k <= indice; ++k) caminho.push_back(st->niveis[k].idGrupo);
+                st->aoConcluir(no.id, caminho);
+                return;
+            }
             // Adiado: este callback roda de dentro do mouseUp do card que o overlay vai substituir.
-            juce::MessageManager::callAsync([seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, no, emLista] {
-                if (seguroOverlay == nullptr) { aoConcluir(std::nullopt); return; }
-                const juce::String nomeNo = no.rotuloLiteral.isNotEmpty() ? no.rotuloLiteral : t("imp.node." + no.id);
-                const juce::String tituloSub = titulo + juce::String::fromUTF8(" \xe2\x80\xba ") + nomeNo;
-                mostrarNivel(*seguroOverlay, no.filhos, tituloSub, no.chaveDica,
-                             [seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, emLista] {
-                                 mostrarNivel(*seguroOverlay, nos, titulo, chaveDica, voltar, aoConcluir, emLista);
-                             },
-                             aoConcluir, no.filhosEmLista);
+            juce::MessageManager::callAsync([st, indice, no] {
+                if (st->overlay == nullptr) { st->aoConcluir(std::nullopt, {}); return; }
+                NivelDescr novo;
+                novo.nos = no.filhos;
+                novo.titulo = st->niveis[indice].titulo + juce::String::fromUTF8(" \xe2\x80\xba ") +
+                              (no.rotuloLiteral.isNotEmpty() ? no.rotuloLiteral : t("imp.node." + no.id));
+                novo.chaveDica = no.chaveDica;
+                novo.emLista = no.filhosEmLista;
+                novo.idGrupo = no.id;
+                st->niveis.resize(indice + 1);
+                st->niveis.push_back(std::move(novo));
+                mostrarNivelEm(st, indice + 1);
             });
-        } else if (r.botaoId == 1 && voltar) {
-            juce::MessageManager::callAsync([seguroOverlay, voltar, aoConcluir] {
-                if (seguroOverlay == nullptr) { aoConcluir(std::nullopt); return; }
-                voltar();
-            });
+        } else if (r.botaoId == 1 && indice > 0) {
+            juce::MessageManager::callAsync([st, indice] { mostrarNivelEm(st, indice - 1); });
         } else {
-            aoConcluir(std::nullopt);
+            st->aoConcluir(std::nullopt, {});
         }
     });
 }
 
 } // namespace
 
-void mostrarMenuImportar(PainelOverlay& overlay, std::function<void(std::optional<std::string>)> aoConcluir) {
-    mostrarNivel(overlay, montarArvore(), t("imp.titulo"), "", nullptr, std::move(aoConcluir));
+// Alguns ícones de Assets/Icons vêm com fundo branco opaco (os demais são transparentes): o branco ligado às bordas
+// vira transparente (preenchimento a partir das bordas, então o branco de dentro do desenho fica como está).
+juce::Image tirarFundoBrancoDasBordas(const juce::Image& original) {
+    juce::Image img = original.convertedToFormat(juce::Image::ARGB);
+    const int w = img.getWidth(), h = img.getHeight();
+    juce::Image::BitmapData px(img, juce::Image::BitmapData::readWrite);
+    const auto brancoOpaco = [&](int x, int y) {
+        const auto c = px.getPixelColour(x, y);
+        return c.getAlpha() > 250 && c.getRed() >= 240 && c.getGreen() >= 240 && c.getBlue() >= 240;
+    };
+    if (!brancoOpaco(0, 0)) return original;  // já transparente (ou sem fundo branco): nada a fazer
+    std::vector<juce::Point<int>> pilha;
+    std::vector<char> visto(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
+    const auto empurrar = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= w || y >= h) return;
+        const size_t i = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+        if (visto[i] || !brancoOpaco(x, y)) return;
+        visto[i] = 1;
+        pilha.push_back({ x, y });
+    };
+    for (int x = 0; x < w; ++x) { empurrar(x, 0); empurrar(x, h - 1); }
+    for (int y = 0; y < h; ++y) { empurrar(0, y); empurrar(w - 1, y); }
+    while (!pilha.empty()) {
+        const auto p = pilha.back();
+        pilha.pop_back();
+        px.setPixelColour(p.x, p.y, juce::Colours::transparentBlack);
+        empurrar(p.x + 1, p.y); empurrar(p.x - 1, p.y); empurrar(p.x, p.y + 1); empurrar(p.x, p.y - 1);
+    }
+    return img;
+}
+
+void mostrarMenuImportar(PainelOverlay& overlay,
+                         std::function<void(std::optional<std::string>, std::vector<std::string>)> aoConcluir,
+                         std::vector<std::string> caminhoInicial) {
+    auto st = std::make_shared<EstadoMenu>();
+    st->overlay = &overlay;
+    st->aoConcluir = std::move(aoConcluir);
+    NivelDescr raiz;
+    raiz.nos = montarArvore();
+    raiz.titulo = t("imp.titulo");
+    st->niveis.push_back(std::move(raiz));
+    // Abre direto no grupo pedido (volta de uma ficha): desce pelos ids do caminho enquanto eles existirem.
+    for (const auto& idGrupo : caminhoInicial) {
+        const NivelDescr atual = st->niveis.back();
+        const auto it = std::find_if(atual.nos.begin(), atual.nos.end(), [&](const No& n) { return n.id == idGrupo && !n.filhos.empty(); });
+        if (it == atual.nos.end()) break;
+        NivelDescr novo;
+        novo.nos = it->filhos;
+        novo.titulo = atual.titulo + juce::String::fromUTF8(" \xe2\x80\xba ") + (it->rotuloLiteral.isNotEmpty() ? it->rotuloLiteral : t("imp.node." + it->id));
+        novo.chaveDica = it->chaveDica;
+        novo.emLista = it->filhosEmLista;
+        novo.idGrupo = it->id;
+        st->niveis.push_back(std::move(novo));
+    }
+    mostrarNivelEm(st, st->niveis.size() - 1);
 }
 
 void mostrarListaDeContasParaTeste(PainelOverlay& overlay) {
-    std::vector<No> contas;
+    auto st = std::make_shared<EstadoMenu>();
+    st->overlay = &overlay;
+    st->aoConcluir = [](std::optional<std::string>, std::vector<std::string>) {};
+    NivelDescr raiz;
+    raiz.titulo = t("imp.titulo");
+    st->niveis.push_back(raiz);
+    NivelDescr lista;
     for (const char* email : { "anderson@exemplo.com", "estudio@exemplo.com.br", "arquivo-antigo@exemplo.com (old copy)" }) {
         No c;
-        c.id = "drive." + std::to_string(contas.size());
+        c.id = "drive." + std::to_string(lista.nos.size());
         c.arquivoIcone = "googledrive_png";
         c.rotuloLiteral = email;
         c.detalhe = juce::String("/Users/exemplo/Library/CloudStorage/GoogleDrive-") + email + "/My Drive";
-        contas.push_back(std::move(c));
+        lista.nos.push_back(std::move(c));
     }
-    mostrarNivel(overlay, std::move(contas), t("imp.titulo") + juce::String::fromUTF8(" \xe2\x80\xba Google Drive"), "imp.dica.drive",
-                 [] {}, [](std::optional<std::string>) {}, true);
+    lista.titulo = t("imp.titulo") + juce::String::fromUTF8(" \xe2\x80\xba Google Drive");
+    lista.chaveDica = "imp.dica.drive";
+    lista.emLista = true;
+    lista.idGrupo = "drive";
+    st->niveis.push_back(std::move(lista));
+    mostrarNivelEm(st, 1);
 }
 
 std::vector<std::string> idsDasFolhasDoMenuImportar() {

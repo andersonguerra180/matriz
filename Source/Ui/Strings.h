@@ -2256,6 +2256,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"light.cel.importarSub", "Gallery or WhatsApp"},
         {"light.ui.imp.none", "(none)"},
         {"imp.titulo", "IMPORT"},
+        {"imp.ficha.midi.msg", "Tell us about these MIDI files. Everything is optional — SKIP imports them as they are."},
         {"imp.node.audio.preservation.tape", "Tape transcription"},
         {"imp.node.other.design", "Design / 3D / CAD"},
         {"imp.sub.other", "Web, multimedia, social, design, custom"},

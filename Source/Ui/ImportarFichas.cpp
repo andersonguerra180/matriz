@@ -73,9 +73,10 @@ void somarAssunto(SobreMaterial& s, const std::string& valor) {
 
 Campo cTexto(const std::string& id, const std::string& en, const std::string& pt, const std::string& dicaEn = "",
              const std::string& dicaPt = "", std::function<void(SobreMaterial&, const std::string&)> extra = nullptr,
-             bool comoNota = true) {
+             bool comoNota = true, int linhas = 1) {
     Campo c;
     c.def = { juce::String(id), rot(en, pt), "", rot(dicaEn, dicaPt), {} };
+    c.def.linhas = linhas;
     c.aplica = [id, en, extra, comoNota](const Resultado& r, SobreMaterial& s) {
         const std::string v = valorDe(r, id);
         if (v.empty()) return;
@@ -267,7 +268,8 @@ void juntarCapa(Ficha& f) {
 
 // ── mostrar uma ficha ─────────────────────────────────────────────────────────────────────────────────────
 
-void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce::String& mensagem, Ficha ficha, AoConcluirFicha aoConcluir) {
+void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce::String& mensagem, Ficha ficha, AoConcluirFicha aoConcluir,
+                  std::function<void()> aoVoltar) {
     PainelOverlay::Config cfg;
     cfg.titulo = titulo;
     cfg.mensagem = mensagem;
@@ -275,14 +277,14 @@ void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce
     cfg.larguraCartao = 620;
     for (const auto& c : ficha.campos) cfg.campos.push_back(c.def);
     cfg.botoesGrupo = ficha.botoesGrupo;
-    cfg.botoes = {
-        { t("light.ui.common.cancel"), 0, false, true },
-        { t("imp.ficha.pular"), 2, false, false },
-        { t("imp.ficha.continuar"), 1, true, false },
-    };
+    if (aoVoltar) cfg.botoes.push_back({ t("imp.voltar"), 3, false, false });
+    cfg.botoes.push_back({ t("light.ui.common.cancel"), 0, false, true });
+    cfg.botoes.push_back({ t("imp.ficha.pular"), 2, false, false });
+    cfg.botoes.push_back({ t("imp.ficha.continuar"), 1, true, false });
     // A ficha inteira (campos e regras) vive dentro do callback: nada aponta para fora dele.
     auto dono = std::make_shared<Ficha>(std::move(ficha));
-    overlay.mostrar(cfg, [aoConcluir, dono](Resultado r) {
+    overlay.mostrar(cfg, [aoConcluir, dono, aoVoltar](Resultado r) {
+        if (r.botaoId == 3) { if (aoVoltar) aoVoltar(); return; }  // VOLTAR: reabre o card anterior, sem importar nada
         if (!aoConcluir) return;
         if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
         if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }  // PULAR: segue só com o que o card já implica
@@ -412,17 +414,41 @@ Ficha fichaAudio(const std::string& folha) {
         f.campos.push_back(cIdentificacao());
         f.campos.push_back(cContexto());
     } else if (folha == "audio.production.midi") {
-        juntar(f, camposDoTipoMini("midi"));
-        f.campos.push_back(formatoPadrao());
-        f.campos.push_back(cIdentificacao());
-        f.campos.push_back(cContexto());
+        // Lote / pasta de MIDIs: coleção, categoria do conteúdo, ecossistema de destino, origem física e notas de roteamento.
+        f.campos.push_back(cAssunto("colecao", "Collection / Project Name", "Coleção / Nome do projeto",
+                                    "e.g., Album Demos 2024, Drum Grooves Pack, Project X Stems", "ex.: Demos do Álbum 2024, Pacote de Grooves de Bateria, Stems do Projeto X"));
+        f.campos.push_back(cEscolha("categoria", "Content Category", "Categoria de conteúdo",
+                                    { { "full", "Full Song Arrangements (Multi-track)", "Arranjos completos de música (multipista)" },
+                                      { "drums", "Drum Grooves / Percussive Loops", "Grooves de bateria / loops percussivos" },
+                                      { "chords", "Chord Progressions / Harmonies", "Progressões de acordes / harmonias" },
+                                      { "melodies", "Melodies / Basslines / Riffs", "Melodias / linhas de baixo / riffs" },
+                                      { "controller", "Controller / Automation / SysEx Dumps", "Controlador / automação / dumps SysEx" },
+                                      { "mixed", "Mixed Session Files (Various parts)", "Arquivos de sessão mistos (várias partes)" } }));
+        f.campos.push_back(cTexto("ecossistema", "Target Ecosystem / Sound Sources", "Ecossistema de destino / Fontes sonoras",
+                                  "e.g., Logic Pro Session, Superior Drummer 3, Roland Juno-106, General MIDI",
+                                  "ex.: Sessão do Logic Pro, Superior Drummer 3, Roland Juno-106, General MIDI"));
+        f.campos.push_back(cTexto("origem_hw", "Origin / Hardware Dump (optional)", "Origem / Dump de hardware (opcional)",
+                                  "e.g., Akai MPC2000 Floppy #04, Old Mac Mini HD, Splice Pack",
+                                  "ex.: Disquete #04 do Akai MPC2000, HD do Mac Mini antigo, pacote do Splice"));
+        f.campos.push_back(cTexto("context", "Context / Routing Notes", "Contexto / Notas de roteamento",
+                                  "e.g., Unquantized live takes, mapped for Addictive Drums, exported at 120 BPM.",
+                                  "ex.: Takes ao vivo sem quantizar, mapeado para Addictive Drums, exportado a 120 BPM.", nullptr, true, 3));
     } else if (folha == "audio.production.tools") {
+        // Ferramentas: SUBJECT = Tools, LIST = tipo; função e nome/fabricante viram tags; as notas de contexto são o campo grande.
         f.campos.push_back(cEscolha("asset_kind", "Kind", "Tipo",
                                     { { "instrument", "Virtual instrument", "Instrumento virtual" }, { "preset", "Preset", "Preset" },
-                                      { "ir", "Impulse response (IR)", "Resposta ao impulso (IR)" }, { "plugin", "Plugin", "Plugin" }, { "other", "Other", "Outro" } }));
-        f.campos.push_back(cTexto("asset_name", "Name or vendor", "Nome ou fabricante"));
-        f.campos.push_back(formatoPadrao());
-        f.campos.push_back(cContexto());
+                                      { "ir", "Impulse response (IR)", "Resposta ao impulso (IR)" }, { "plugin", "Plugin", "Plugin" }, { "other", "Other", "Outro" } },
+                                    false, [](SobreMaterial& s, const Op& op) { s.campos.push_back({ "lista", op.en }); }));
+        f.campos.push_back(cTexto("tool_function", "Tool Function", "Função da ferramenta", "e.g., Reverb, Synth, Sampler, EQ", "ex.: Reverb, Synth, Sampler, EQ",
+                                  [](SobreMaterial& s, const std::string& v) {
+                                      juce::StringArray partes;
+                                      partes.addTokens(juce::String::fromUTF8(v.c_str()), ",;", "");
+                                      for (auto& p : partes) if (p.trim().isNotEmpty()) s.tags.push_back(p.trim().toStdString());
+                                  }, false));
+        f.campos.push_back(cTexto("asset_name", "Name or vendor", "Nome ou fabricante", "", "",
+                                  [](SobreMaterial& s, const std::string& v) { s.tags.push_back(v); }, false));
+        f.campos.push_back(cTexto("context", "Context Notes", "Notas de contexto", "", "", nullptr, true, 5));
+        f.depois = [](const Resultado&, SobreMaterial& s) { somarAssunto(s, "Tools"); };
     } else if (folha == "audio.preservation.ddp") {
         // DDP é a master que fabrica o CD industrial: a origem é sempre essa, então não se pergunta o formato.
         juntar(f, camposDoTipoMini("ddp_master"));
@@ -537,10 +563,13 @@ bool folhaDeAudioTemFicha(const std::string& id) {
 
 // ── FOTOS, ARQUIVOS, DOCUMENTOS, MULTIMÍDIA, REDES, DESIGN ────────────────────────────────────────────────
 
-Ficha fichaFotos() {
+Ficha fichaFotos(bool cartaoDeCamera) {
     Ficha f;
     f.campos.push_back(cAssunto("assunto", "What is in these photos?", "O que há nestas fotos?"));
     f.campos.push_back(cFormato(formatosDoVocabulario({ "IMAGE" })));
+    if (cartaoDeCamera)
+        f.campos.push_back(cTexto("cartao", "Card name / number", "Nome / número do cartão", "Written on the card, or the label you gave it",
+                                  "Escrito no cartão, ou a etiqueta que você deu"));
     f.campos.push_back(cTexto("ano", "Year", "Ano", "Only fills files that carry no date of their own", "Só preenche arquivos que não têm data própria",
                               [](SobreMaterial& s, const std::string& v) { s.campos.push_back({ "ano", v }); }, false));
     f.campos.push_back(cNotas());
@@ -716,7 +745,8 @@ bool folhaImportarTemFicha(const std::string& id) {
     return ehOutro(id);
 }
 
-void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::function<void(bool, std::shared_ptr<const SobreMaterial>)> aoConcluir) {
+void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::function<void(bool, std::shared_ptr<const SobreMaterial>)> aoConcluir,
+                          std::function<void()> aoVoltar) {
     if (!folhaImportarTemFicha(id)) { if (aoConcluir) aoConcluir(true, nullptr); return; }
 
     juce::String titulo, mensagem = t("imp.ficha.msg.opcional");
@@ -724,6 +754,7 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::fu
     if (id.rfind("audio.", 0) == 0) {
         titulo = t("imp.ficha.audio.titulo") + juce::String::fromUTF8(" \xe2\x80\xba ") + t("imp.node." + id);
         if (id == "audio.preservation.ddp") mensagem = t("imp.ficha.ddp.msg");
+        if (id == "audio.production.midi") mensagem = t("imp.ficha.midi.msg");
         ficha = fichaAudio(id);
     } else if (id.rfind("videos.", 0) == 0) {
         titulo = t("imp.ficha.videos.titulo");
@@ -731,7 +762,7 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::fu
         ficha = fichaVideo(id == "videos.other");
     } else if (id.rfind("photos.", 0) == 0) {
         titulo = t("imp.ficha.fotos.titulo");
-        ficha = fichaFotos();
+        ficha = fichaFotos(id == "photos.camera_card");
     } else if (id.rfind("documents.", 0) == 0) {
         titulo = t("imp.ficha.docs.titulo");
         ficha = fichaDocumentos(id);
@@ -752,7 +783,7 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::fu
         mensagem = t("imp.ficha.outro.msg");
         ficha = fichaOutro();
     }
-    mostrarFicha(overlay, titulo, mensagem, std::move(ficha), std::move(aoConcluir));
+    mostrarFicha(overlay, titulo, mensagem, std::move(ficha), std::move(aoConcluir), std::move(aoVoltar));
 }
 
 } // namespace matriz::ui

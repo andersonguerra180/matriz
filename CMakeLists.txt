@@ -109,6 +109,7 @@ juce_add_binary_data(MatrizAssets
         "Assets/Icons/Film Sound.png"
         "Assets/Icons/Tape Cassette Rip.png"
         Assets/Icons/Other.png
+        Assets/Icons/DDP.png
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
         "Assets/adobeaftereffects.png"

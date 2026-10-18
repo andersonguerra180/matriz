@@ -53,6 +53,8 @@ public:
         juce::String desabilitaCampoId;
         // Campos com o mesmo `grupo` formam um cartão próprio (título = grupo), com dois campos por linha.
         juce::String grupo;
+        // Altura do campo de texto em linhas (1 = uma linha). Mais de 1 vira texto de várias linhas (ex.: notas de contexto).
+        int linhas = 1;
     };
 
     // Botão no cabeçalho do cartão de um grupo (ex.: "Get location" no cartão de geolocalização).

@@ -125,8 +125,9 @@ PainelOverlay::PlanoCampos PainelOverlay::planejarCampos(int largura) const {
         if (!campoVisivel(i)) { ++i; continue; }
         const auto& grupo = config_.campos[i].grupo;
         if (grupo.isEmpty()) {
-            plano.campos.push_back({ i, { 0, y, largura, 18 }, { 0, y + 18, largura, kAlturaLinha } });
-            y += 18 + kAlturaLinha + gap;
+            const int altura = kAlturaLinha + (juce::jmax(1, config_.campos[i].linhas) - 1) * 20;
+            plano.campos.push_back({ i, { 0, y, largura, 18 }, { 0, y + 18, largura, altura } });
+            y += 18 + altura + gap;
             ++i;
             continue;
         }
@@ -269,6 +270,10 @@ void PainelOverlay::mostrar(Config config, std::function<void(Resultado)> aoConc
             else addAndMakeVisible(*cw.combo);
         } else {
             cw.editor = std::make_unique<juce::TextEditor>();
+            if (cf.linhas > 1) {
+                cw.editor->setMultiLine(true, true);
+                cw.editor->setReturnKeyStartsNewLine(true);
+            }
             cw.editor->setText(cf.valorInicial, juce::dontSendNotification);
             cw.editor->setTextToShowWhenEmpty(cf.dica, tema().textoTerciario);
             if (containerCampos_) containerCampos_->addAndMakeVisible(*cw.editor);
