@@ -315,8 +315,6 @@ public:
     // Clique duplo abre o preview no mesmo espaço (§3.4) — clique único só
     // seleciona (permite Shift/Cmd sem entrar em preview no meio do gesto).
     std::function<void(const std::string& itemId)> aoAbrirPreview;
-    // Duplo clique num CONTAINER (nest com origem): devolve true se abriu o player próprio dele (ex.: DDP).
-    std::function<bool(const std::string& nestId, const std::string& origem)> aoAbrirContainer;
     // Double click on offline item opens relink dialog instead of normal preview player
     std::function<void(const std::string& itemId)> aoAbrirRelinkOffline;
     // Estado vazio inteiro é clicável, além de alvo de drop (§3.2) — abre o

@@ -661,19 +661,21 @@ Ficha fichaDesign() {
 // YouTube Production: os dados de UM vídeo (nome, categoria, descrição, miniatura, tags); a pasta de produção vem depois.
 Ficha fichaYoutube() {
     Ficha f;
-    f.campos.push_back(cAssunto("nome", "Video name", "Nome do vídeo"));
+    // Nome e descrição vão para a ficha Dublin Core do arquivo de vídeo (dc_title, dc_description), não para as notas.
+    f.campos.push_back(cTexto("nome", "Video name", "Nome do vídeo", "", "",
+                              [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); s.camposDoVideo.push_back({ "dc_title", v }); }, false));
     f.campos.push_back(cEscolha("categoria", "Category", "Categoria",
                                 { { "vlog", "Vlog", "Vlog" }, { "short", "Short", "Short" }, { "tutorial", "Tutorial", "Tutorial" }, { "review", "Review", "Review" },
                                   { "interview", "Interview", "Entrevista" }, { "music", "Music video", "Videoclipe" }, { "live", "Livestream", "Transmissão ao vivo" },
                                   { "documentary", "Documentary", "Documentário" }, { "other", "Other", "Outro" } }));
-    f.campos.push_back(cTexto("descricao", "Description", "Descrição", "", "", nullptr, true, 4));
+    f.campos.push_back(cTexto("descricao", "Description", "Descrição", "", "",
+                              [](SobreMaterial& s, const std::string& v) { s.camposDoVideo.push_back({ "dc_description", v }); }, false, 4));
     f.campos.push_back(cTexto("tags", "Tags", "Tags", "Separated by commas", "Separadas por vírgula",
                               [](SobreMaterial& s, const std::string& v) {
                                   juce::StringArray partes;
                                   partes.addTokens(juce::String::fromUTF8(v.c_str()), ",;", "");
                                   for (auto& p : partes) if (p.trim().isNotEmpty()) s.tags.push_back(p.trim().toStdString());
                               }, false));
-    juntarCapa(f, "imp.ficha.thumb", "imp.ficha.thumb.arquivo", "imp.ficha.thumb.dica", "imp.ficha.thumb.botao");
     return f;
 }
 
@@ -767,6 +769,54 @@ std::shared_ptr<const SobreMaterial> mesclarContextosImportar(std::shared_ptr<co
     if (!extra->iconeContainer.empty()) r->iconeContainer = extra->iconeContainer;
     if (!extra->geoPadrao.vazio()) r->geoPadrao = extra->geoPadrao;
     return r;
+}
+
+void mostrarArquivosYoutube(PainelOverlay& overlay, const juce::String& aviso, std::function<void(int, ArquivosYoutube)> aoConcluir) {
+    PainelOverlay::Config cfg;
+    cfg.titulo = t("imp.ficha.youtube.arquivos.titulo");
+    cfg.mensagem = aviso.isNotEmpty() ? aviso : t("imp.ficha.youtube.arquivos.msg");
+    cfg.trilha = t("moldura.trilha.adicionar");
+    cfg.larguraCartao = 620;
+    struct Slot { const char* id; const char* chaveGrupo; const char* chaveArquivo; const char* chaveBotao; const char* chaveTitulo; const char* filtro; };
+    static const Slot slots[] = {
+        { "video", "imp.ficha.youtube.video", "imp.ficha.youtube.video.arquivo", "imp.ficha.youtube.video.botao", "imp.ficha.youtube.video.titulo",
+          "*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v;*.mpg;*.mpeg;*.wmv;*.mts;*.m2ts;*.mxf;*.flv;*.3gp;*.ogv;*.vob" },
+        { "thumb", "imp.ficha.thumb", "imp.ficha.thumb.arquivo", "imp.ficha.thumb.botao", "imp.ficha.thumb.titulo",
+          "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.gif;*.webp;*.heic" },
+        { "roteiro", "imp.ficha.youtube.roteiro", "imp.ficha.youtube.roteiro.arquivo", "imp.ficha.youtube.roteiro.botao", "imp.ficha.youtube.roteiro.titulo",
+          "*.txt;*.md;*.rtf;*.doc;*.docx;*.odt;*.pdf;*.pages;*.xls;*.xlsx;*.csv" },
+    };
+    for (const auto& s : slots) {
+        const juce::String grupo = t(s.chaveGrupo);
+        cfg.campos.push_back({ s.id, t(s.chaveArquivo), "", "", {}, false, "", "", "", "", grupo });
+        const juce::String idCampo = s.id, tituloSeletor = t(s.chaveTitulo), filtro = s.filtro;
+        cfg.botoesGrupo.push_back({ grupo, t(s.chaveBotao), [idCampo, tituloSeletor, filtro](PainelOverlay& o) {
+            auto seletor = std::make_shared<juce::FileChooser>(tituloSeletor, juce::File(), filtro);
+            juce::Component::SafePointer<PainelOverlay> seguro(&o);
+            seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                 [seguro, seletor, idCampo](const juce::FileChooser& fc) {
+                                     const auto escolhido = fc.getResult();
+                                     if (seguro != nullptr && escolhido.existsAsFile()) seguro->definirValorCampo(idCampo, escolhido.getFullPathName());
+                                 });
+        } });
+    }
+    cfg.botoes = {
+        { t("imp.voltar"), 3, false, false },
+        { t("light.ui.common.cancel"), 0, false, true },
+        { t("imp.ficha.continuar"), 1, true, false },
+    };
+    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
+        if (!aoConcluir) return;
+        ArquivosYoutube a;
+        const auto arquivo = [&r](const char* id) {
+            const auto it = r.valores.find(id);
+            return it == r.valores.end() || it->second.trim().isEmpty() ? juce::File() : juce::File(it->second.trim());
+        };
+        a.video = arquivo("video");
+        a.thumbnail = arquivo("thumb");
+        a.roteiro = arquivo("roteiro");
+        aoConcluir(r.botaoId, a);
+    });
 }
 
 void mostrarPerguntaOutroYoutube(PainelOverlay& overlay, const juce::String& nomeDoVideo, int totalCadastrados, std::function<void(int)> aoEscolher) {

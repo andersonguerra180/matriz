@@ -135,6 +135,17 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
             upsertCampoHumano(db, itemId, "collection_type", sm.collectionType, true);
         }
 
+        if (!sm.camposDoVideo.empty() && lerColuna(db, itemId, "tipo_midia") == "digital_video") {
+            for (const auto& [campo, valor] : sm.camposDoVideo) {
+                if (valor.empty()) continue;
+                if (campo == "dc_title" || campo == "dc_description")  // Dublin Core do próprio item
+                    db.run("UPDATE item SET " + campo + " = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                           {Value::of(valor), Value::of(agora), Value::of(itemId)});
+                else
+                    upsertCampoHumano(db, itemId, campo, valor, true);
+            }
+        }
+
         for (const auto& [campo, valor] : sm.campos) {
             if (campo.empty() || valor.empty()) continue;
             if (campo == "source_media") {  // mídia de origem: coluna do próprio item (JSON)

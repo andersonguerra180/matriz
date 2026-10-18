@@ -6,6 +6,7 @@
 
 #include "../I18n/Strings.h"
 #include "ImportarMenu.h"
+#include "JanelaContainerDdp.h"
 #include "JanelaPlayerDdp.h"
 #include "ProjetoAberto.h"
 
@@ -83,9 +84,14 @@ void abrirContainerDdp(ProjetoAberto& projeto, const std::string& nestId) {
         if (auto c = projeto.caminhoDeOrigem(id)) origens.emplace_back(*c);
     juce::String erro;
     const auto pastaDdp = JanelaPlayerDdp::acharPastaDdp(origens);
-    if (pastaDdp == juce::File() || !JanelaPlayerDdp::abrir(pastaDdp, erro))
+    if (pastaDdp == juce::File() || !JanelaContainerDdp::abrir(projeto, nestId, pastaDdp, erro))
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, i18n::t("ddp.title"),
                                                erro.isNotEmpty() ? erro : i18n::t("ddp.err.notFound"));
+}
+
+bool abrirContainerPorTipo(ProjetoAberto& projeto, const std::string& nestId, const std::string& origem) {
+    if (origem == "ddp") { abrirContainerDdp(projeto, nestId); return true; }
+    return false;  // os demais abrem o preview do arquivo que representa o container (ex.: o vídeo do YouTube)
 }
 
 } // namespace matriz::ui

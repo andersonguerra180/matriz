@@ -27,6 +27,10 @@ struct SobreMaterial {
     // "ano" (só preenche se o arquivo não trouxe data) e qualquer outro campo_id (item_campo, fonte 'humano').
     std::vector<std::pair<std::string, std::string>> campos;
 
+    // Campos que só valem para o arquivo de VÍDEO do lote (ex.: dc_title e dc_description do YouTube Production), gravados na
+    // ficha de metadados (Dublin Core) do vídeo e não repetidos na thumbnail e no roteiro.
+    std::vector<std::pair<std::string, std::string>> camposDoVideo;
+
     // "Single file" da ficha de importação: sufixo somado ao título de cada arquivo.
     std::string sufixoTitulo;
 
@@ -58,7 +62,7 @@ struct SobreMaterial {
 
     bool vazio() const {
         return collectionType.empty() && subject.empty() && descricao.empty() && pessoas.empty() && tags.empty() &&
-               campos.empty() && sufixoTitulo.empty() && geoPadrao.vazio();
+               campos.empty() && camposDoVideo.empty() && sufixoTitulo.empty() && geoPadrao.vazio();
     }
 };
 

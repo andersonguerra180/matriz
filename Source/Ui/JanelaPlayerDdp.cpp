@@ -58,8 +58,8 @@ bool JanelaPlayerDdp::abrir(const juce::File& pastaDdp, juce::String& erro) {
     return true;
 }
 
-JanelaPlayerDdp::JanelaPlayerDdp(const juce::File& pastaDdp) : pasta_(pastaDdp) {
-    setSize(moldura::tamanhoComMargem(kLargura), moldura::tamanhoComMargem(kAltura));
+JanelaPlayerDdp::JanelaPlayerDdp(const juce::File& pastaDdp, bool embutido) : pasta_(pastaDdp), embutido_(embutido) {
+    if (!embutido_) setSize(moldura::tamanhoComMargem(kLargura), moldura::tamanhoComMargem(kAltura));
     carregado_ = bkr::DdpParser::parseFolder(pasta_, disco_, erro_) && disco_.isValid;
     if (!carregado_) return;
 
@@ -166,7 +166,7 @@ void JanelaPlayerDdp::fechar() {
 }
 
 void JanelaPlayerDdp::mouseDown(const juce::MouseEvent& e) {
-    if (moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false).botaoFechar.contains(e.getPosition())) fechar();
+    if (!embutido_ && moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false).botaoFechar.contains(e.getPosition())) fechar();
 }
 
 void JanelaPlayerDdp::paintRowBackground(juce::Graphics& g, int row, int, int, bool sel) {
@@ -201,9 +201,11 @@ void JanelaPlayerDdp::cellClicked(int row, int, const juce::MouseEvent& e) {
 
 void JanelaPlayerDdp::paint(juce::Graphics& g) {
     const auto pal = moldura::paleta();
-    g.fillAll(pal.fundo);
-    const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false);
-    moldura::desenhar(g, geo, moldura::Secao::Auto, t("ddp.trail"), t("ddp.title"), false);
+    if (!embutido_) {
+        g.fillAll(pal.fundo);
+        const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false);
+        moldura::desenhar(g, geo, moldura::Secao::Auto, t("ddp.trail"), t("ddp.title"), false);
+    }
     if (!carregado_) return;
 
     // Dados do disco (poço à esquerda) + visor tipo CD à direita
@@ -250,9 +252,14 @@ void JanelaPlayerDdp::paint(juce::Graphics& g) {
     g.drawText(f.title.isNotEmpty() ? f.title : t("ddp.untitled"), d, juce::Justification::topLeft, true);
 }
 
+// Corpo do player: o corpo da moldura (janela própria) ou a área toda (embutido numa janela de container).
+juce::Rectangle<int> JanelaPlayerDdp::areaCorpo() const {
+    if (embutido_) return getLocalBounds().reduced(4);
+    return moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false).corpo.reduced(moldura::kMargemCorpo);
+}
+
 void JanelaPlayerDdp::resized() {
-    const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false);
-    auto corpo = geo.corpo.reduced(moldura::kMargemCorpo);
+    auto corpo = areaCorpo();
     auto topo = corpo.removeFromTop(176);
     areaDisplay_ = topo.removeFromRight(230);
     topo.removeFromRight(12);

@@ -4693,7 +4693,7 @@ bool ProjetoAberto::definirIconeDoContainer(const std::string& nestId, const std
     return true;
 }
 
-bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nestId) {
+bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame) {
     if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
     juce::File video;
     double duracao = 0.0;
@@ -4723,6 +4723,12 @@ bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nes
         }
     } catch (...) { return false; }
     if (!video.existsAsFile()) return false;
+    if (!gerarFrame) {  // a capa já foi escolhida: só o vídeo vira o item que representa o container
+        if (itemDoVideo.empty()) return false;
+        try { projeto_->registro().run("UPDATE nest SET capa_item_id = ? WHERE id = ?", {matriz::db::Value::of(itemDoVideo), matriz::db::Value::of(nestId)}); }
+        catch (...) { return false; }
+        return true;
+    }
     try {
         const juce::File tmp = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("matriz_capa_" + juce::String(nestId));
         auto frames = matriz::ingest::gerarKeyframesVideo(video, duracao, 1, tmp, "capa", 640, false, 0.35, 0.65);

@@ -44,6 +44,14 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
                           std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir,
                           std::function<void()> aoVoltar = nullptr);
 
+// YouTube Production: os arquivos de UM vídeo — o vídeo (obrigatório), a thumbnail e o roteiro (documento, PDF, texto...).
+struct ArquivosYoutube {
+    juce::File video, thumbnail, roteiro;
+};
+// `aviso` (opcional) troca a mensagem do topo (ex.: "escolha o vídeo"). `aoConcluir(botao, arquivos)`: 1 = continuar,
+// 3 = voltar, 0 = cancelar.
+void mostrarArquivosYoutube(PainelOverlay& overlay, const juce::String& aviso, std::function<void(int, ArquivosYoutube)> aoConcluir);
+
 // Depois de cadastrar um vídeo do YouTube Production: `aoEscolher(0)` cancela tudo, `(1)` segue com a importação,
 // `(2)` cadastra outro vídeo. Mostra no mesmo overlay.
 void mostrarPerguntaOutroYoutube(PainelOverlay& overlay, const juce::String& nomeDoVideo, int totalCadastrados,

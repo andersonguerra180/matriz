@@ -943,11 +943,6 @@ void MainComponent::reconstruirLayoutProjeto() {
     mosaico_ = std::make_unique<MosaicoComponent>(*projetoAberto_);
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
     mosaico_->aoAbrirPreview = [this](const std::string& itemId) { abrirPreview(itemId); };
-    mosaico_->aoAbrirContainer = [this](const std::string& nestId, const std::string& origem) {
-        if (origem != "ddp" || !projetoAberto_) return false;  // por enquanto só o DDP tem player próprio
-        abrirContainerDdp(*projetoAberto_, nestId);
-        return true;
-    };
     mosaico_->aoAbrirRelinkOffline = [this](const std::string& itemId) { abrirDialogoRelinkOffline(itemId); };
     mosaico_->aoClicarEstadoVazio = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
     mosaico_->aoMudarSelecao = [this] {
@@ -4200,7 +4195,8 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                     const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
                     if (!nestId.empty() && !iconeDoContainer.empty()) proj->definirIconeDoContainer(nestId, iconeDoContainer);
                     if (!nestId.empty() && !capaDoContainer.empty()) proj->definirCapaDoContainer(nestId, juce::File(capaDoContainer));
-                    else if (!nestId.empty() && capaFrameDoVideo) proj->definirCapaDoContainerComFrameDeVideo(nestId);
+                    // YouTube Production: o vídeo representa o container (preview ao abrir) e, sem thumbnail, dá o frame da capa.
+                    if (!nestId.empty() && capaFrameDoVideo) proj->definirCapaDoContainerComFrameDeVideo(nestId, capaDoContainer.empty());
                 } catch (...) {}
                 juce::MessageManager::callAsync([seguroContainer, proj] {
                     if (!seguroContainer || seguroContainer->projetoAberto_.get() != proj) return;

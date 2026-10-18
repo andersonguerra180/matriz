@@ -899,7 +899,8 @@ public:
     // Ícone do container escolhido na ficha (nome do recurso embutido). Fora da message thread.
     bool definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso);
     // Sem capa escolhida: usa um frame sorteado do meio do maior vídeo do container (YouTube Production). Fora da message thread.
-    bool definirCapaDoContainerComFrameDeVideo(const std::string& nestId);
+    // O vídeo passa a ser o item que representa o container; `gerarFrame` = também usa um frame dele como capa.
+    bool definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame = true);
     // Agrupamento temático de importação (Lightroom, Bridge, sample pack...): um NEST sem origem. Fora da message thread,
     // sem eventos (quem chama recarrega a tela). Itens que já estão num nest ficam de fora. Devolve o id ("" se nada a fazer).
     std::string criarNestDeImportacao(const std::vector<std::string>& itemIds);

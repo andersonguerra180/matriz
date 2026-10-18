@@ -2213,7 +2213,7 @@ void MosaicoComponent::mouseDoubleClick(const juce::MouseEvent& e) {
     }
 
     // Container com player próprio (DDP = player de CD): abre o player em vez do preview do 1º arquivo.
-    if (item.nestTotal > 1 && !item.nestOrigem.empty() && aoAbrirContainer && aoAbrirContainer(item.nestId, item.nestOrigem)) return;
+    if (item.nestTotal > 1 && !item.nestOrigem.empty() && abrirContainerPorTipo(projeto_, item.nestId, item.nestOrigem)) return;
 
     if (aoAbrirPreview) aoAbrirPreview(item.id);
 }

@@ -14,13 +14,16 @@ namespace matriz::ui {
 // (baseado no BKR DDP Check, no layout da moldura do Matriz).
 class JanelaPlayerDdp : public juce::Component, private juce::Timer, private juce::TableListBoxModel {
 public:
-    explicit JanelaPlayerDdp(const juce::File& pastaDdp);
+    // `embutido`: o player vive dentro de outra janela (JanelaContainerDdp) — sem moldura própria; quem hospeda define o tamanho.
+    explicit JanelaPlayerDdp(const juce::File& pastaDdp, bool embutido = false);
     ~JanelaPlayerDdp() override;
 
     // Abre a janela; devolve false (com `erro`) se a pasta não for um DDP legível.
     static bool abrir(const juce::File& pastaDdp, juce::String& erro);
     // Auto-teste: imprime disco/faixas lidos e grava um PNG da janela.
     static bool autoTeste(const juce::File& pastaDdp, const juce::File& png);
+    bool carregado() const { return carregado_; }
+    const juce::String& erro() const { return erro_; }
     // Procura entre os arquivos de origem a pasta que contém o DDPID.
     static juce::File acharPastaDdp(const std::vector<juce::File>& arquivos);
 
@@ -37,7 +40,10 @@ private:
     void atualizarBotoes();
     void fechar();
 
+    juce::Rectangle<int> areaCorpo() const;
+
     juce::File pasta_;
+    bool embutido_ = false;
     bkr::DdpDisc disco_;
     bool carregado_ = false;
     juce::String erro_;

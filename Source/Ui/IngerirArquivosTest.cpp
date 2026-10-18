@@ -7,6 +7,7 @@
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "ImportarMenu.h"
+#include "JanelaContainerDdp.h"
 #include "MosaicoComponent.h"
 #include "IntakeWorkspaceComponent.h"
 #include "OriginalSourceMedium.h"
@@ -1172,34 +1173,49 @@ int rodarTestImportarComContexto() {
                    "capaImagemDoContainer devolve a imagem para o item-capa");
         }
 
-        // YouTube Production: pasta com um vídeo + arquivos de produção vira UM container 'youtube'; sem thumbnail escolhida,
-        // a capa é um frame do meio do vídeo.
+        // YouTube Production: vídeo + thumbnail + roteiro entram juntos e viram UM container 'youtube'. A thumbnail é a capa, o vídeo
+        // representa o container e só ele recebe título e descrição (Dublin Core).
         {
-            juce::File pasta = tmpRoot.getChildFile("producao_youtube");
-            pasta.createDirectory();
+            juce::File dir = tmpRoot.getChildFile("youtube_arquivos");
+            dir.createDirectory();
             gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=10:duration=4",
-                             "-pix_fmt", "yuv420p", pasta.getChildFile("video_final.mp4").getFullPathName()});
-            pasta.getChildFile("roteiro.txt").replaceWithText("roteiro do video");
-            pasta.getChildFile("tags.txt").replaceWithText("tag1, tag2");
-            const auto ctxYt = contextoDaFolhaImportar("videos.youtube");
-            checar(ctxYt != nullptr && ctxYt->containerOrigem == "youtube" && ctxYt->capaFrameDoVideo, "videos.youtube pede container 'youtube' com frame do video");
-            mainComponent.ingerirArquivos({pasta}, true, ctxYt);
+                             "-pix_fmt", "yuv420p", dir.getChildFile("video_final.mp4").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=purple:s=640x360", "-frames:v", "1",
+                             dir.getChildFile("thumb.png").getFullPathName()});
+            dir.getChildFile("roteiro.txt").replaceWithText("roteiro do video");
+            auto ctxYt = std::make_shared<matriz::ingest::SobreMaterial>(*contextoDaFolhaImportar("videos.youtube"));
+            checar(ctxYt->containerOrigem == "youtube" && ctxYt->capaFrameDoVideo, "videos.youtube pede container 'youtube' com o video como representante");
+            ctxYt->capaContainer = dir.getChildFile("thumb.png").getFullPathName().toStdString();
+            ctxYt->camposDoVideo = { { "dc_title", "Meu vlog" }, { "dc_description", "Descricao do vlog" } };
+            mainComponent.ingerirArquivos({ dir.getChildFile("video_final.mp4"), dir.getChildFile("thumb.png"), dir.getChildFile("roteiro.txt") }, true, ctxYt);
             const auto t0 = juce::Time::getMillisecondCounter();
             int containers = 0;
-            std::string capa;
+            std::string capa, itemCapa;
             while (juce::Time::getMillisecondCounter() - t0 < 40000) {
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
                 if (mainComponent.ingestEmAndamento()) continue;
-                auto st = registro.prepare("SELECT COUNT(*), COALESCE(MAX(capa_imagem), '') FROM nest WHERE origem = 'youtube'");
+                auto st = registro.prepare("SELECT COUNT(*), COALESCE(MAX(capa_imagem), ''), COALESCE(MAX(capa_item_id), '') FROM nest WHERE origem = 'youtube'");
                 st.step();
                 containers = static_cast<int>(st.columnInt(0));
                 capa = st.columnText(1);
-                if (containers == 1 && !capa.empty()) break;
+                itemCapa = st.columnText(2);
+                if (containers == 1 && !capa.empty() && !itemCapa.empty()) {
+                    auto v = registro.prepare("SELECT tipo_midia FROM item WHERE id = ?");
+                    v.bind(1, matriz::db::Value::of(itemCapa));
+                    if (v.step() && v.columnText(0) == "digital_video") break;
+                }
             }
             esperarIngestTerminar(mainComponent);
-            checar(containers == 1, "pasta de producao vira 1 container 'youtube' (" + juce::String(containers) + ")");
-            checar(!capa.empty() && mainComponent.projetoAberto()->projeto().pasta().getChildFile(juce::String(capa)).existsAsFile(),
-                   "sem thumbnail, a capa do container e um frame do video (" + juce::String(capa) + ")");
+            checar(containers == 1, "video + thumbnail + roteiro viram 1 container 'youtube' (" + juce::String(containers) + ")");
+            checar(!capa.empty() && mainComponent.projetoAberto()->projeto().pasta().getChildFile(juce::String(capa)).existsAsFile(), "a thumbnail vira a capa do container");
+            auto v = registro.prepare("SELECT tipo_midia FROM item WHERE id = ?");
+            v.bind(1, matriz::db::Value::of(itemCapa));
+            checar(v.step() && v.columnText(0) == "digital_video", "o video e o item que representa o container (abre o preview dele)");
+            auto d = registro.prepare("SELECT dc_title, dc_description FROM item WHERE titulo = 'video_final'");
+            checar(d.step() && d.columnText(0) == "Meu vlog" && d.columnText(1) == "Descricao do vlog", "titulo e descricao entram na ficha Dublin Core do video");
+            auto n = registro.prepare("SELECT COUNT(*) FROM item WHERE titulo IN ('thumb', 'roteiro') AND dc_description IS NOT NULL AND dc_description <> ''");
+            n.step();
+            checar(n.columnInt(0) == 0, "a thumbnail e o roteiro nao recebem a descricao do video");
         }
 
         // NEST (e não container): arquivos com tema em comum (sample pack) ficam num nest sem origem.
@@ -1269,6 +1285,45 @@ int rodarTestImportarComContexto() {
             if (auto out = std::unique_ptr<juce::FileOutputStream>(png.createOutputStream())) juce::PNGImageFormat().writeImageToStream(img, *out);
             std::cout << "  ..  foto do Grid: " << png.getFullPathName() << "\n";
             registro.run("UPDATE item SET em_quarentena = 1", {});  // volta ao estado do INTAKE para o resto do teste
+        }
+
+        // Janela do container DDP: lista de arquivos à esquerda, player de CD no meio, metadados à direita. Sem um DDP de verdade aqui,
+        // usa uma pasta sintética (DDPID + IMAGE.DAT de silêncio) só para conferir o desenho e a lista.
+        {
+            juce::File ddp = tmpRoot.getChildFile("ddp_sintetico");
+            ddp.createDirectory();
+            ddp.getChildFile("DDPID").replaceWithText("DDP 2.00");
+            {
+                juce::MemoryBlock silencio(588 * 75 * 6);  // 6 s de CD (588 amostras estéreo por quadro, 4 bytes cada = 2352 bytes)
+                silencio.setSize(2352 * 75 * 6, true);
+                ddp.getChildFile("IMAGE.DAT").replaceWithData(silencio.getData(), silencio.getSize());
+            }
+            {  // PQDESCR em texto (DDP 2.00): faixa 1 aos 00:02:00, faixa 2 aos 00:03:00 e lead-out aos 00:06:00
+                const auto registro64 = [](const char* faixa, const char* indice, const char* msf) {
+                    std::string r = std::string("VVVS") + faixa + indice + "  " + msf;
+                    r.resize(64, ' ');
+                    return r;
+                };
+                const std::string pq = registro64("01", "01", "000200") + registro64("02", "01", "000300") + registro64("AA", "01", "000600");
+                ddp.getChildFile("PQDESCR").replaceWithData(pq.data(), pq.size());
+            }
+            auto stNest = registro.prepare("SELECT id FROM nest WHERE origem = 'ddp' LIMIT 1");
+            if (stNest.step()) {
+                JanelaContainerDdp janela(*mainComponent.projetoAberto(), stNest.columnText(0), ddp);
+                std::cout << "  ..  janela DDP: carregada=" << (janela.carregado() ? "sim" : "nao") << " erro=" << janela.erro() << "\n";
+                if (janela.carregado()) {
+                    checar(janela.numeroDeArquivosParaTeste() == 2, "a janela do DDP lista os 2 arquivos do container");
+                    janela.resized();
+                    const auto t0 = juce::Time::getMillisecondCounter();
+                    while (juce::Time::getMillisecondCounter() - t0 < 1500) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                    juce::Image img = janela.createComponentSnapshot(janela.getLocalBounds());
+                    juce::File png = juce::File::getCurrentWorkingDirectory().getChildFile("test-output/janela_ddp.png");
+                    png.getParentDirectory().createDirectory();
+                    png.deleteFile();
+                    if (auto out = std::unique_ptr<juce::FileOutputStream>(png.createOutputStream())) juce::PNGImageFormat().writeImageToStream(img, *out);
+                    std::cout << "  ..  foto da janela DDP: " << png.getFullPathName() << "\n";
+                }
+            }
         }
 
         // Foto do Intake (miniaturas) com os containers 'ddp' e 'vinyl' já criados — para olhar como o container aparece.
@@ -1482,6 +1537,14 @@ int rodarTestImportarVisual() {
             mostrarPerguntaOutroYoutube(o, "Meu vlog de domingo", 2, [](int) {});
             girar(80);
             salvar(o, "imp_31_youtube_outro");
+        }
+
+        {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarArquivosYoutube(o, {}, [](int, ArquivosYoutube) {});
+            girar(80);
+            salvar(o, "imp_32_youtube_arquivos");
         }
 
         PainelOverlay overlayDdp;

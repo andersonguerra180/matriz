@@ -31,4 +31,8 @@ void desenharContainerGrafico(juce::Graphics& g, juce::Rectangle<float> area, co
 // Master DDP: abre o player de CD com os arquivos do container (ou avisa que a pasta do DDP não foi achada).
 void abrirContainerDdp(ProjetoAberto& projeto, const std::string& nestId);
 
+// Duplo clique num container, igual no INTAKE, no METADATA e no folder map: abre o player próprio do tipo (DDP = CD com a
+// lista de arquivos e os metadados) e devolve true; false = o chamador abre o preview do arquivo que representa o container.
+bool abrirContainerPorTipo(ProjetoAberto& projeto, const std::string& nestId, const std::string& origem);
+
 } // namespace matriz::ui
