@@ -129,6 +129,7 @@ private:
         int containerTotal = 0;
         std::string containerNestId;
         juce::String containerCapaCaminho;  // imagem da capa do container (vinil, fita); vazio = sem capa própria
+        juce::String containerIcone;        // ícone escolhido na ficha (DAW da produção); vazio = ícone da origem
     };
     bool itemEhContainer(const ItemIntake& it) const { return it.containerNestId.size() > 0; }
     void abrirGridDoContainer(const std::string& itemId);

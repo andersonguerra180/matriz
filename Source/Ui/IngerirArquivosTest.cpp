@@ -7,6 +7,7 @@
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "ImportarMenu.h"
+#include "MosaicoComponent.h"
 #include "IntakeWorkspaceComponent.h"
 #include "OriginalSourceMedium.h"
 #include "../Ingest/LightroomImporter.h"
@@ -1225,6 +1226,49 @@ int rodarTestImportarComContexto() {
             auto membros = registro.prepare("SELECT COUNT(*) FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE n.origem IS NULL");
             membros.step();
             checar(membros.columnInt(0) == 2, "o nest tem os 2 arquivos");
+        }
+
+        // Music Production: a DAW da ficha vira o ícone do container (sem capa); com capa, vale a capa.
+        {
+            const auto base = contextoDaFolhaImportar("audio.production.project");
+            checar(base != nullptr && base->containerOrigem == "production", "audio.production.project pede container 'production'");
+            const auto comDaw = std::make_shared<matriz::ingest::SobreMaterial>(*base);
+            comDaw->iconeContainer = "ci_daw_pro_tools_png";
+            juce::File pasta = tmpRoot.getChildFile("sessao_pro_tools");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=150:duration=1", pasta.getChildFile("stem_1.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=170:duration=1", pasta.getChildFile("stem_2.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, comDaw);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            std::string icone;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT icone FROM nest WHERE origem = 'production' AND icone IS NOT NULL LIMIT 1");
+                if (st.step()) { icone = st.columnText(0); break; }
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(icone == "ci_daw_pro_tools_png", "a DAW escolhida vira o icone do container de producao (" + juce::String(icone) + ")");
+        }
+
+        // GRID: o container aprovado do INTAKE continua container (ícone/capa e contagem), não vira um NEST com "N".
+        {
+            registro.run("UPDATE item SET em_quarentena = 0", {});
+            MosaicoComponent mosaico(*mainComponent.projetoAberto());
+            mosaico.setBounds(0, 0, 1300, 800);
+            mosaico.recarregarSincrono();
+            const auto t0 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t0 < 3000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            mosaico.createComponentSnapshot(mosaico.getLocalBounds());
+            const auto t1 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t1 < 4000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            juce::Image img = mosaico.createComponentSnapshot(mosaico.getLocalBounds());
+            juce::File png = juce::File::getCurrentWorkingDirectory().getChildFile("test-output/grid_containers.png");
+            png.getParentDirectory().createDirectory();
+            png.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(png.createOutputStream())) juce::PNGImageFormat().writeImageToStream(img, *out);
+            std::cout << "  ..  foto do Grid: " << png.getFullPathName() << "\n";
+            registro.run("UPDATE item SET em_quarentena = 1", {});  // volta ao estado do INTAKE para o resto do teste
         }
 
         // Foto do Intake (miniaturas) com os containers 'ddp' e 'vinyl' já criados — para olhar como o container aparece.

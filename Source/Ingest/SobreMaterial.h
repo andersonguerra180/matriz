@@ -49,6 +49,10 @@ struct SobreMaterial {
     // Container sem capa escolhida: a miniatura dele é um frame sorteado do meio do vídeo principal (YouTube Production).
     bool capaFrameDoVideo = false;
 
+    // Ícone do container escolhido na ficha (nome do recurso embutido, ex.: "ci_daw_pro_tools_png" para a DAW da produção).
+    // Vale quando não há capa; sem os dois, o container usa o ícone da origem.
+    std::string iconeContainer;
+
     // Imagem escolhida na ficha (capa do disco/fita) para ser a miniatura do container. Só vale se o lote virar container.
     std::string capaContainer;
 

@@ -46,6 +46,7 @@ struct ItemResumo {
     bool nestCapa = false;
     std::string nestOrigem;  // não vazio = nest é um CONTAINER de importação (gallery|drive|bridge|lightroom|ddp|production|vinyl|tape)
     std::string nestCapaImagem;  // caminho absoluto da capa do container (vinil/fita), vazio se não tem
+    std::string nestIcone;       // recurso do ícone escolhido na ficha (ex.: ci_daw_pro_tools_png), vazio = ícone da origem
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
 
     // Só preenchido pra tipo_midia="release" (campos release.artista_principal
@@ -882,6 +883,7 @@ public:
         std::string nestId, capaId;
         std::string origem;  // container de importação do Intake; vazio = nest comum
         std::string capaImagem;  // caminho relativo da capa (nest.capa_imagem); vazio = sem capa própria
+        std::string icone;       // nest.icone; vazio = ícone da origem
         int total = 0;
     };
     // item -> nest (só nests com 2+ membros). Uma consulta, usada ao montar a lista da grade.
@@ -894,6 +896,8 @@ public:
     std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem);
     // Capa do container (vinil, fita): reduz a imagem, grava em .miniaturas e guarda o caminho no nest. Roda fora da message thread.
     bool definirCapaDoContainer(const std::string& nestId, const juce::File& imagem);
+    // Ícone do container escolhido na ficha (nome do recurso embutido). Fora da message thread.
+    bool definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso);
     // Sem capa escolhida: usa um frame sorteado do meio do maior vídeo do container (YouTube Production). Fora da message thread.
     bool definirCapaDoContainerComFrameDeVideo(const std::string& nestId);
     // Agrupamento temático de importação (Lightroom, Bridge, sample pack...): um NEST sem origem. Fora da message thread,

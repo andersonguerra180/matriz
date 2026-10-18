@@ -404,6 +404,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             r.nestOrigem = nit->second.origem;
             if (!nit->second.capaImagem.empty())
                 r.nestCapaImagem = pastaProjeto.getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
+            r.nestIcone = nit->second.icone;
         }
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -1081,6 +1082,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                     r.nestOrigem = nit->second.origem;
                     if (!nit->second.capaImagem.empty())
                         r.nestCapaImagem = projeto_->pasta().getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
+                    r.nestIcone = nit->second.icone;
                 }
                 out.push_back(std::move(r));
             }
@@ -4561,14 +4563,15 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             "SELECT ni.item_id, ni.nest_id, "
             "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
             "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)), "
-            "n.origem, n.capa_imagem "
+            "n.origem, n.capa_imagem, n.icone "
             "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
-        std::map<std::string, std::string> origemDe, capaImagemDe;
+        std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe;
         while (st.step()) {
             membros[st.columnText(1)].push_back(st.columnText(0));
             capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
             if (!st.columnIsNull(3)) origemDe[st.columnText(1)] = st.columnText(3);
             if (!st.columnIsNull(4)) capaImagemDe[st.columnText(1)] = st.columnText(4);
+            if (!st.columnIsNull(5)) iconeDe[st.columnText(1)] = st.columnText(5);
         }
         for (const auto& [nid, itens] : membros) {
             if (itens.size() < 2) continue;  // nest de um arquivo só não existe
@@ -4577,6 +4580,7 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             info.capaId = capaDe[nid];
             if (auto oit = origemDe.find(nid); oit != origemDe.end()) info.origem = oit->second;
             if (auto cit = capaImagemDe.find(nid); cit != capaImagemDe.end()) info.capaImagem = cit->second;
+            if (auto iit = iconeDe.find(nid); iit != iconeDe.end()) info.icone = iit->second;
             info.total = static_cast<int>(itens.size());
             for (const auto& id : itens) out[id] = info;
         }
@@ -4677,6 +4681,14 @@ bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce
     try {
         projeto_->registro().run("UPDATE nest SET capa_imagem = ? WHERE id = ?",
                                  {matriz::db::Value::of(relativo.toStdString()), matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    return true;
+}
+
+bool ProjetoAberto::definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || nomeDoRecurso.empty()) return false;
+    try {
+        projeto_->registro().run("UPDATE nest SET icone = ? WHERE id = ?", {matriz::db::Value::of(nomeDoRecurso), matriz::db::Value::of(nestId)});
     } catch (...) { return false; }
     return true;
 }

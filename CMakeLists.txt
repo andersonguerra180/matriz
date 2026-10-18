@@ -654,6 +654,7 @@ target_sources(matriz PRIVATE
     Source/Ui/PainelImportarWhatsapp.cpp
     Source/Ui/ImportarMenu.cpp
     Source/Ui/ImportarFichas.cpp
+    Source/Ui/ContainerVisual.cpp
     Source/Ui/JanelaPlayerDdp.cpp
     Source/Ddp/DdpModel.cpp
     Source/Ddp/DdpPlayback.cpp

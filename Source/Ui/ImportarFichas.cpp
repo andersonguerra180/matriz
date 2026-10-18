@@ -293,7 +293,7 @@ void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce
         for (const auto& c : dono->campos)
             if (c.aplica) c.aplica(r, *sobre);
         if (dono->depois) dono->depois(r, *sobre);
-        aoConcluir(true, sobre->vazio() && sobre->capaContainer.empty() ? nullptr : sobre);
+        aoConcluir(true, sobre->vazio() && sobre->capaContainer.empty() && sobre->iconeContainer.empty() ? nullptr : sobre);
     });
 }
 
@@ -406,9 +406,17 @@ Ficha fichaAudio(const std::string& folha) {
 
     if (folha == "audio.production.project") {
         const std::vector<std::string> daws = { "Pro Tools", "Logic Pro", "Reaper", "Ableton Live", "FL Studio", "Audacity", "Other" };
-        f.campos.push_back(cEscolha("daw", "DAW used", "DAW usada", opsDe(daws)));
+        // A DAW usada vira o ícone do container (se não houver capa); "Other" não tem ícone próprio.
+        f.campos.push_back(cEscolha("daw", "DAW used", "DAW usada", opsDe(daws), true, [](SobreMaterial& s, const Op& op) {
+            static const std::map<std::string, std::string> icones = {
+                { "Pro Tools", "ci_daw_pro_tools_png" }, { "Logic Pro", "ci_daw_logic_pro_png" }, { "Reaper", "ci_daw_reaper_png" },
+                { "Ableton Live", "ci_daw_ableton_live_png" }, { "FL Studio", "ci_daw_fl_studio_png" }, { "Audacity", "ci_daw_audacity_png" } };
+            const auto it = icones.find(op.en);
+            if (it != icones.end()) s.iconeContainer = it->second;
+        }));
         juntar(f, camposDoTipoMini("music_production", { "recording_medium" }));
         f.campos.push_back(formatoPadrao());
+        juntarCapa(f);
     } else if (folha == "audio.production.samples") {
         juntar(f, camposDoTipoMini("sample_pack"));
         f.campos.push_back(formatoPadrao());
@@ -756,6 +764,7 @@ std::shared_ptr<const SobreMaterial> mesclarContextosImportar(std::shared_ptr<co
     if (extra->agruparComoNest) r->agruparComoNest = true;
     if (extra->capaFrameDoVideo) r->capaFrameDoVideo = true;
     if (!extra->capaContainer.empty()) r->capaContainer = extra->capaContainer;
+    if (!extra->iconeContainer.empty()) r->iconeContainer = extra->iconeContainer;
     if (!extra->geoPadrao.vazio()) r->geoPadrao = extra->geoPadrao;
     return r;
 }

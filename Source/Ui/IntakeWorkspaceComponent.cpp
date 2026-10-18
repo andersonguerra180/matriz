@@ -24,6 +24,7 @@
 #include "LogosTipoArquivo.h"
 #include "PainelImportarWhatsapp.h"
 #include "ImportarMenu.h"
+#include "ContainerVisual.h"
 #include "JanelaPlayerDdp.h"
 #include "../Celular/ExistentesProjeto.h"
 #include "../Diag/Watchdog.h"
@@ -63,37 +64,6 @@ juce::Colour corParaCategoria(const juce::String& cat) {
     if (cat == "Document") return juce::Colour(0xff10b981); // Emerald
     if (cat == "Project") return juce::Colour(0xffec4899); // Pink
     return juce::Colour(0xff94a3b8); // Slate gray
-}
-
-// Logo da origem do container (galeria do celular, Drive, Bridge, Lightroom, WhatsApp).
-const juce::Image& logoDaOrigem(const juce::String& origem) {
-    static const juce::Image galeria = juce::ImageFileFormat::loadFrom(AssetsBinaryData::gallery_png, AssetsBinaryData::gallery_pngSize);
-    static const juce::Image drive = juce::ImageFileFormat::loadFrom(AssetsBinaryData::googledrive_png, AssetsBinaryData::googledrive_pngSize);
-    static const juce::Image bridge = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
-    static const juce::Image lightroom = juce::ImageFileFormat::loadFrom(AssetsBinaryData::lrlogo_png, AssetsBinaryData::lrlogo_pngSize);
-    static const juce::Image whatsapp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::whatsapp_png, AssetsBinaryData::whatsapp_pngSize);
-    static const juce::Image ddp = tirarFundoBrancoDasBordas(juce::ImageFileFormat::loadFrom(AssetsBinaryData::DDP_png, AssetsBinaryData::DDP_pngSize));
-    static const juce::Image producao = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_music_production_png, AssetsBinaryData::ci_aud_music_production_pngSize);
-    static const juce::Image vinil = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_vinyl_rip_png, AssetsBinaryData::ci_aud_vinyl_rip_pngSize);
-    static const juce::Image fita = juce::ImageFileFormat::loadFrom(AssetsBinaryData::Tape_Cassette_Rip_png, AssetsBinaryData::Tape_Cassette_Rip_pngSize);
-    static const juce::Image youtube = juce::ImageFileFormat::loadFrom(AssetsBinaryData::youtube_png, AssetsBinaryData::youtube_pngSize);
-    static const juce::Image vazio;
-    if (origem == "youtube") return youtube;
-    if (origem == "vinyl") return vinil;
-    if (origem == "tape") return fita;
-    if (origem == "ddp") return ddp;
-    if (origem == "production") return producao;
-    if (origem == "gallery") return galeria;
-    if (origem == "drive") return drive;
-    if (origem == "bridge") return bridge;
-    if (origem == "lightroom") return lightroom;
-    if (origem == "whatsapp") return whatsapp;
-    return vazio;
-}
-
-// Containers que o Intake desenha como container (ícone grande ou capa), não como o primeiro arquivo com um selo.
-bool ehContainerGrafico(const juce::String& origem) {
-    return origem == "ddp" || origem == "production" || origem == "vinyl" || origem == "tape" || origem == "youtube";
 }
 
 juce::String rotuloDaOrigem(const juce::String& origem) {
@@ -1531,14 +1501,7 @@ public:
                     // Container de verdade: ícone do tipo (DDP, produção, vinil, fita) ou a capa escolhida na ficha.
                     g.setColour(tk.painelAlt);
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
-                    g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
-                    if (item.containerCapaCaminho.isNotEmpty() && img.isValid()) {
-                        g.drawImage(img, thumbArea.reduced(10).toFloat(), juce::RectanglePlacement::centred);
-                    } else {
-                        if (item.containerCapaCaminho.isNotEmpty()) pedirMiniatura(item.id, item.containerCapaCaminho);
-                        const auto& icone = logoDaOrigem(item.containerOrigem);
-                        if (icone.isValid()) g.drawImage(icone, thumbArea.reduced(10).toFloat(), juce::RectanglePlacement::centred);
-                    }
+                    desenharContainerGrafico(g, thumbArea.toFloat(), item.containerOrigem, item.containerIcone, item.containerCapaCaminho);
                 } else if (img.isValid()) {
                     g.setColour(tk.painelAlt);
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
@@ -2488,6 +2451,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
             it.containerTotal = item.nestTotal;
             it.containerNestId = item.nestId;
             it.containerCapaCaminho = juce::String::fromUTF8(item.nestCapaImagem.c_str());
+            it.containerIcone = juce::String::fromUTF8(item.nestIcone.c_str());
             if (item.nestOrigem != "whatsapp") it.nomeArquivo = rotuloDaOrigem(it.containerOrigem) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
                              i18n::t("intake.container_arquivos").replace("{n}", juce::String(item.nestTotal));
             it.titulo = it.nomeArquivo;
@@ -3385,14 +3349,7 @@ void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
     for (const auto& it : todosItens_) {
         if (it.id != itemId || it.containerOrigem != "ddp") continue;
         // Master DDP: o duplo clique abre o player de CD (disco, faixas e reprodução), não a grade de miniaturas.
-        std::vector<juce::File> origens;
-        for (const auto& id : membros)
-            if (auto c = projeto_.caminhoDeOrigem(id)) origens.emplace_back(*c);
-        juce::String erro;
-        const auto pastaDdp = JanelaPlayerDdp::acharPastaDdp(origens);
-        if (pastaDdp == juce::File() || !JanelaPlayerDdp::abrir(pastaDdp, erro))
-            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, i18n::t("ddp.title"),
-                                                   erro.isNotEmpty() ? erro : i18n::t("ddp.err.notFound"));
+        abrirContainerDdp(projeto_, nestId);
         return;
     }
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);

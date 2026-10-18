@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "JanelaPastaFlutuante.h"
+#include "ContainerVisual.h"
 #include "../Model/Inbox.h"
 #include "../Consolidacao/BridgeXmp.h"
 #include "MainEditPanel.h"
@@ -942,6 +943,11 @@ void MainComponent::reconstruirLayoutProjeto() {
     mosaico_ = std::make_unique<MosaicoComponent>(*projetoAberto_);
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
     mosaico_->aoAbrirPreview = [this](const std::string& itemId) { abrirPreview(itemId); };
+    mosaico_->aoAbrirContainer = [this](const std::string& nestId, const std::string& origem) {
+        if (origem != "ddp" || !projetoAberto_) return false;  // por enquanto só o DDP tem player próprio
+        abrirContainerDdp(*projetoAberto_, nestId);
+        return true;
+    };
     mosaico_->aoAbrirRelinkOffline = [this](const std::string& itemId) { abrirDialogoRelinkOffline(itemId); };
     mosaico_->aoClicarEstadoVazio = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
     mosaico_->aoMudarSelecao = [this] {
@@ -4180,17 +4186,19 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         const std::string origem = origemDoLote;
         const std::string capaDoContainer = sobre != nullptr ? sobre->capaContainer : std::string();
         const bool capaFrameDoVideo = sobre != nullptr && sobre->capaFrameDoVideo;
+        const std::string iconeDoContainer = sobre != nullptr ? sobre->iconeContainer : std::string();
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
-        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo](const std::vector<std::string>& processados) {
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer](const std::vector<std::string>& processados) {
             if (!seguroContainer || !seguroContainer->projetoAberto_) return;
             std::vector<std::string> doContainer;
             for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
             if (doContainer.size() < 2) return;
             ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
-            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo] {
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer] {
                 try {
                     const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
+                    if (!nestId.empty() && !iconeDoContainer.empty()) proj->definirIconeDoContainer(nestId, iconeDoContainer);
                     if (!nestId.empty() && !capaDoContainer.empty()) proj->definirCapaDoContainer(nestId, juce::File(capaDoContainer));
                     else if (!nestId.empty() && capaFrameDoVideo) proj->definirCapaDoContainerComFrameDeVideo(nestId);
                 } catch (...) {}

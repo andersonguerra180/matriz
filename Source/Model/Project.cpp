@@ -811,6 +811,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "nest", "origem", "TEXT");
     // Capa escolhida na ficha de importação (vinil, fita): JPEG em .miniaturas, caminho relativo à pasta do projeto.
     garantirColuna(registro, "nest", "capa_imagem", "TEXT");
+    // Ícone do container escolhido na ficha (ex.: a DAW da produção): nome do recurso embutido (ci_daw_pro_tools_png).
+    garantirColuna(registro, "nest", "icone", "TEXT");
     garantirColuna(registro, "acervo_pasta", "proposta_id", "TEXT");
     garantirColuna(registro, "acervo_pasta", "origem_caminho", "TEXT");
     registro.exec(
