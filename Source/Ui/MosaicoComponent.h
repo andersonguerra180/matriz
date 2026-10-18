@@ -28,6 +28,7 @@ struct GrupoMosaico {
 };
 
 struct SubpastaInfo {
+    std::string id;
     juce::String nome;
     int quantidade = 0;
     std::set<std::string> itemIds;

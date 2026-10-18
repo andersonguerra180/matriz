@@ -693,7 +693,7 @@ void ArvoreComponent::notificarSelecao() {
         if (!aoMudarSubpastas) return;
         std::vector<SubpastaInfo> subs;
         for (auto& f : filhos)
-            subs.push_back({f.nome, static_cast<int>(f.itemIds.size()), f.itemIds});
+            subs.push_back({f.id, f.nome, static_cast<int>(f.itemIds.size()), f.itemIds});
         aoMudarSubpastas(std::move(subs));
     };
 

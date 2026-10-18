@@ -39,6 +39,9 @@ public:
     // Mesma coisa, na mesma pilha de chamada — só pro harness.
     void recarregarSincrono();
 
+    // Contagens só dos itens deste conjunto (janela de uma pasta). nullopt = o projeto todo. Vale do próximo recarregar em diante.
+    void definirEscopo(std::optional<std::set<std::string>> itemIds) { escopo_ = std::move(itemIds); }
+
     // A caixa de busca mora na barra de ferramentas superior, não mais
     // aqui: duas caixas de busca na mesma tela (uma no topo, outra na
     // coluna esquerda) deixavam ambíguo qual delas manda. Este callback é
@@ -105,6 +108,9 @@ private:
         std::vector<ProjetoAberto::ColecaoInteligente> salvas;
     };
     static DadosDoBanco coletarDoBanco(ProjetoAberto& projeto);
+    // Com escopo: as seis contagens saem dos itens em memória da grade que estão no conjunto.
+    static void restringirAoEscopo(DadosDoBanco& d, const std::vector<ItemResumo>& itens, const std::set<std::string>& escopo);
+    std::optional<std::set<std::string>> escopo_;
 
     void reconstruirLinhas();
     juce::Rectangle<int> boundsDaLinha(int indice) const;

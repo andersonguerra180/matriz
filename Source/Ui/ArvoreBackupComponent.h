@@ -156,6 +156,7 @@ private:
         // CONTAINER de importação (nest com origem): solto no canvas como container, só com porta de ENTRADA (esquerda).
         bool ehContainer = false;
         std::string nestId, containerOrigem, containerIcone, containerCapa;  // capa = caminho absoluto ("" = sem capa)
+        std::string pastaPaiId;  // pasta do mapa em que o container está ("" = solto na raiz): liga por uma linha, só na entrada
     };
 
     ProjetoAberto& projeto_;
@@ -164,6 +165,13 @@ private:
     // Containers recém-aprovados no Intake, ainda sem posição: vão para o canto superior esquerdo da vista DEPOIS do
     // enquadramento inicial (que muda pan/zoom). Ver posicionarContainersNovos().
     std::set<std::string> containersSemPosicao_;
+    // SHOW CONTAINERS AS FOLDERS: containers desenhados como pastas comuns (só com porta de entrada) em vez do ícone do tipo.
+    bool containersComoPastas_ = false;
+    std::unique_ptr<juce::ToggleButton> chkContainersComoPastas_;
+    juce::Point<float> portaEntradaDoContainer(const LooseFileNode& lf) const;
+    int containerSobre(juce::Point<float> canvas) const;
+    void moverContainersDaPasta(const std::string& pastaId, int dx, int dy);
+    void desconectarContainersSelecionados();
     void posicionarContainersNovos();
     int nodeDragIndice_ = -1;
     int looseFileDragIndice_ = -1;

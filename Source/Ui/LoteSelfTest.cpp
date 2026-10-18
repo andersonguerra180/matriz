@@ -3054,9 +3054,60 @@ int rodarLoteSelfTest() {
             }
             checar(dentro == 3, "dropping the container on a folder moves ALL its files into that folder (" + juce::String(dentro) + "/3)");
             arvore.recarregar();
-            bool aindaSolto = false;
-            for (const auto& lf : arvore.looseFiles_) if (lf.nestId == nestVinil) aindaSolto = true;
-            checar(!aindaSolto, "the container leaves the canvas root after it is placed in a folder");
+            const void* ligado = nullptr;
+            int idxLigado = -1;
+            for (size_t i = 0; i < arvore.looseFiles_.size(); ++i)
+                if (arvore.looseFiles_[i].nestId == nestVinil) idxLigado = static_cast<int>(i);
+            checar(idxLigado >= 0 && arvore.looseFiles_[static_cast<size_t>(idxLigado)].pastaPaiId == pasta,
+                   "the container stays on the canvas, now linked to the folder it was dropped on");
+            juce::ignoreUnused(ligado);
+            if (idxLigado >= 0) {
+                const auto& lf = arvore.looseFiles_[static_cast<size_t>(idxLigado)];
+                const auto entrada = arvore.portaEntradaDoContainer(lf);
+                checar(entrada.x <= lf.bounds.getCentreX() && std::abs(entrada.y - lf.bounds.getY()) < lf.bounds.getHeight(),
+                       "the container's only port is the input, on its left side");
+                // Ligado à pasta, ele nasce à direita dela e acompanha a pasta quando ela se move.
+                const auto& noPasta = arvore.nodes_[static_cast<size_t>(idxPasta)];
+                checar(lf.bounds.getX() >= noPasta.bounds.getRight(), "a linked container sits to the right of its folder");
+                const auto antes = lf.bounds.getPosition();
+                arvore.moverContainersDaPasta(pasta, 40, 25);
+                checar(arvore.looseFiles_[static_cast<size_t>(idxLigado)].bounds.getPosition() == antes + juce::Point<int>(40, 25),
+                       "a linked container follows its folder when the folder is dragged");
+            }
+
+            // SHOW CONTAINERS AS FOLDERS: o mesmo container vira uma caixa de pasta, ainda só com a porta de entrada.
+            arvore.chkContainersComoPastas_->setToggleState(true, juce::dontSendNotification);
+            arvore.containersComoPastas_ = true;
+            arvore.recarregar();
+            bool cabeComoPasta = false;
+            for (const auto& lf : arvore.looseFiles_)
+                if (lf.nestId == nestVinil) cabeComoPasta = lf.bounds.getWidth() == 190 && arvore.portaEntradaDoContainer(lf).x == static_cast<float>(lf.bounds.getX());
+            checar(cabeComoPasta, "with the toggle on, containers are drawn as folder boxes with the input on the left edge");
+            {
+                juce::File dir("./test-output");
+                dir.createDirectory();
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(dir.getChildFile("foldermap_containers_como_pastas.png"));
+                if (out.openedOk()) { out.setPosition(0); out.truncate(); png.writeImageToStream(arvore.createComponentSnapshot(arvore.getLocalBounds()), out); }
+            }
+            arvore.chkContainersComoPastas_->setToggleState(false, juce::dontSendNotification);
+            arvore.containersComoPastas_ = false;
+            arvore.recarregar();
+            {
+                juce::File dir("./test-output");
+                dir.createDirectory();
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(dir.getChildFile("foldermap_containers_ligados.png"));
+                if (out.openedOk()) { out.setPosition(0); out.truncate(); png.writeImageToStream(arvore.createComponentSnapshot(arvore.getLocalBounds()), out); }
+            }
+            // O mapa ORIGINAL (somente leitura) também mostra os containers, soltos.
+            arvore.mapaAtivoId_ = ProjetoAberto::kMapaOriginal;
+            arvore.recarregar();
+            int noOriginal = 0;
+            for (const auto& lf : arvore.looseFiles_) if (lf.ehContainer && lf.pastaPaiId.empty()) ++noOriginal;
+            checar(noOriginal == 2, "the read-only ORIGINAL map also shows both containers (" + juce::String(noOriginal) + ")");
+            arvore.mapaAtivoId_ = mapaPadrao;
+            arvore.recarregar();
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("folder map containers selftest: ") + e.what());
