@@ -5064,6 +5064,23 @@ void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
             break;
         }
     }
+    {   // Disconnect from Parent (D): tambem para containers — tira da pasta e volta para a raiz do mapa, solto.
+        bool algumContainer = false, algumComPai = false;
+        for (const auto& lf : looseFiles_) {
+            if (!lf.ehContainer || std::find(ids.begin(), ids.end(), lf.id) == ids.end()) continue;
+            algumContainer = true;
+            if (!lf.pastaPaiId.empty()) algumComPai = true;
+        }
+        if (algumContainer) {
+            juce::PopupMenu::Item item(i18n::t("arvore_backup.desconectar_pai"));
+            item.itemID = -1;
+            item.isEnabled = algumComPai && !mapaAtivoEhOriginal();
+            item.shortcutKeyDescription = "D";
+            item.action = [seguro] { if (seguro) seguro->desconectarContainersSelecionados(); };
+            menu.addItem(std::move(item));
+            menu.addSeparator();
+        }
+    }
     menu.addItem(i18n::t("light.ui.mb.ctx.showAtSource"), unico, false, [seguro, ids] { if (seguro) seguro->mostrarNaOrigem(ids.front()); });
     juce::PopupMenu mover;
     adicionarSubmenuDePastas(mover, "", ids);
