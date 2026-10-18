@@ -513,6 +513,7 @@ Ficha fichaAudio(const std::string& folha) {
         f.campos.push_back(cTexto("artist", "Artist", "Artista", "", "", [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false));
         f.campos.push_back(cTexto("album", "Album", "Álbum", "Becomes the name of the container", "Vira o nome do container", definirListaENome, false));
         f.campos.push_back(cContexto());
+        juntarCapa(f);  // capa do CD, igual Vinyl e Tape
     } else if (folha == "audio.preservation.vinyl") {
         f.campos.push_back(cTexto("artist", "Artist", "Artista", "", "", [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false));
         f.campos.push_back(cTexto("album", "Album", "Álbum", "Becomes the name of the container", "Vira o nome do container", definirListaENome, false));

@@ -2804,7 +2804,7 @@ void IntakeWorkspaceComponent::recarregar() {
             self->aplicarItensQuarentena(std::move(quarentena));
             if (self->gridComponent_)
                 for (const auto& it : self->todosItens_)
-                    if (self->itemEhContainer(it) && (it.containerOrigem == "vinyl" || it.containerOrigem == "tape" || it.containerOrigem == "youtube"))
+                    if (self->itemEhContainer(it) && (it.containerOrigem == "ddp" || it.containerOrigem == "production" || it.containerOrigem == "vinyl" || it.containerOrigem == "tape" || it.containerOrigem == "youtube"))
                         self->gridComponent_->esquecerMiniaturaDoItem(it.id);
             if (self->recarregarAoTerminarSnapshot_) {
                 self->recarregarAoTerminarSnapshot_ = false;
