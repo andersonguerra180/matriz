@@ -2808,7 +2808,7 @@ void IntakeWorkspaceComponent::recarregar() {
             self->aplicarItensQuarentena(std::move(quarentena));
             if (self->gridComponent_)
                 for (const auto& it : self->todosItens_)
-                    if (self->itemEhContainer(it) && (it.containerOrigem == "ddp" || it.containerOrigem == "production" || it.containerOrigem == "vinyl" || it.containerOrigem == "tape" || it.containerOrigem == "youtube"))
+                    if (self->itemEhContainer(it) && ehContainerGrafico(it.containerOrigem))
                         self->gridComponent_->esquecerMiniaturaDoItem(it.id);
             if (self->recarregarAoTerminarSnapshot_) {
                 self->recarregarAoTerminarSnapshot_ = false;
@@ -3872,7 +3872,7 @@ void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<in
     m.addSeparator();
     m.addItem(3, isPt ? juce::String::fromUTF8("Obter Informações...") : "Get Info...");
     const auto& itemClicado = todosItens_[static_cast<size_t>(itemIndex)];
-    const bool ehContainer = itemEhContainer(itemClicado) && ehOrigemProject(itemClicado.containerOrigem);
+    const bool ehContainer = itemEhContainer(itemClicado) && ehOrigemComFicha(itemClicado.containerOrigem);
     if (ehContainer) {
         m.addSeparator();
         m.addItem(4, i18n::t("imp.editar_questionario"));

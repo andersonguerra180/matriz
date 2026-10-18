@@ -2599,6 +2599,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"tipoc.doc.project_documentation", "Project Documentation"},
         {"tipoc.other.branding", "Branding / Visual ID"},
         {"tipoc.other.marketing", "Marketing"},
+        {"intake.container_projeto", "Project container"},
+        {"projeto.tipo_projeto", "PROJECT CONTAINER"},
         {"auto.painelrecebercelular.a60c9f", "en"},
     };
     return strings;

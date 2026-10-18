@@ -37,8 +37,13 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     return vazio;
 }
 
-bool ehOrigemProject(const juce::String& origem) {
+bool ehOrigemComFicha(const juce::String& origem) {
     return origem == "ddp" || origem == "vinyl" || origem == "tape" || origem == "production" || origem == "youtube";
+}
+
+// Container criado por "Group as Project Container" num tipo sem player (nest.origem = "projeto", ver kOrigemContainerGenerico).
+bool ehOrigemProject(const juce::String& origem) {
+    return ehOrigemComFicha(origem) || origem == "projeto";
 }
 
 juce::String rotuloDoProject(const juce::String& origem) {
@@ -46,7 +51,7 @@ juce::String rotuloDoProject(const juce::String& origem) {
 }
 
 bool ehContainerGrafico(const juce::String& origem) {
-    return origem == "ddp" || origem == "production" || origem == "vinyl" || origem == "tape" || origem == "youtube";
+    return ehOrigemProject(origem);
 }
 
 const juce::Image& iconeDoContainer(const juce::String& origem, const juce::String& nomeDoRecurso) {

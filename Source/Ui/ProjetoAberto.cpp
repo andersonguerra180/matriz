@@ -1,4 +1,5 @@
 #include "ProjetoAberto.h"
+#include "TiposContainer.h"
 #include "TraducaoContent.h"
 #include "../Diag/Watchdog.h"
 
@@ -4724,7 +4725,7 @@ bool ProjetoAberto::trocarTipoDoContainer(const std::string& nestId, const std::
     const bool temQuestionario = !folhaAtual.empty();
     std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
     try {
-        db.run("UPDATE nest SET origem = ?, tipo_container = ? WHERE id = ?",
+        db.run("UPDATE nest SET origem = ?, tipo_container = ?, icone = NULL WHERE id = ?",
                {matriz::db::Value::of(origem), matriz::db::Value::of(tipo), matriz::db::Value::of(nestId)});
         if (temQuestionario && folhaAtual != tipo)  // o questionario era de outro cartao: Edit Project Info nao se aplica mais
             db.run("UPDATE nest SET questionario = NULL WHERE id = ?", {matriz::db::Value::of(nestId)});
@@ -6116,6 +6117,23 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
                 "WHERE i.projeto_id = ? AND s.termo LIKE ? ESCAPE '\\'");
             stmt.bind(1, matriz::db::Value::of(projetoId));
             stmt.bind(2, matriz::db::Value::of(pattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
+        // g) CONTAINER: nome do container e tipo (rotulo do tipo no idioma ativo): todos os arquivos dele casam.
+        try {
+            std::string idsDeTipo, origensDeTipo;
+            for (const auto& t : tiposDeContainer()) {
+                if (!rotuloDoTipoContainer(t).containsIgnoreCase(cleanToken)) continue;
+                idsDeTipo += (idsDeTipo.empty() ? "'" : ",'") + std::string(t.id) + "'";
+                if (t.temPlayer()) origensDeTipo += (origensDeTipo.empty() ? "'" : ",'") + std::string(t.origemPlayer) + "'";
+            }
+            std::string sql = "SELECT ni.item_id FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE COALESCE(n.origem, '') <> '' AND (n.nome LIKE ? ESCAPE '\\'";
+            if (!idsDeTipo.empty()) sql += " OR n.tipo_container IN (" + idsDeTipo + ")";
+            if (!origensDeTipo.empty()) sql += " OR (COALESCE(n.tipo_container, '') = '' AND n.origem IN (" + origensDeTipo + "))";
+            sql += ")";
+            auto stmt = leitura().prepare(sql);
+            stmt.bind(1, matriz::db::Value::of(cleanPattern));
             while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
         } catch (...) {}
 

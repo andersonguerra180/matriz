@@ -24,6 +24,9 @@ const juce::Image& iconeDoContainer(const juce::String& origem, const juce::Stri
 // PROJECT: container nascido de um questionário do IMPORT (DDP master, vinil, fita, produção musical, YouTube). Gallery, WhatsApp,
 // Drive, Bridge e Lightroom não são PROJECT.
 bool ehOrigemProject(const juce::String& origem);
+// PROJECT com player e/ou questionário do IMPORT (Edit Project Info): ddp, vinil, fita, produção, YouTube. Os containers de tipo sem player
+// ("projeto") são PROJECT mas não têm ficha.
+bool ehOrigemComFicha(const juce::String& origem);
 // Tipo do PROJECT em destaque (DDP MASTER, VINYL TRANSCRIPTION, TAPE TRANSCRIPTION, PRODUCTION PACKAGE, YOUTUBE PRODUCTION); "" se não é PROJECT.
 juce::String rotuloDoProject(const juce::String& origem);
 

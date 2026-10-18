@@ -1,4 +1,5 @@
 #include "JanelaPastaFlutuante.h"
+#include "TiposContainer.h"
 
 #include "../I18n/Strings.h"
 #include "AcoesItem.h"
@@ -430,7 +431,10 @@ JanelaPastaFlutuante::JanelaPastaFlutuante(ProjetoAberto& projeto, const std::st
     conteudo_ = conteudo;
     juce::String titulo = i18n::t("arvore_backup.sobreposto_titulo").replace("{nome}", nomePasta);
     if (!nestId.empty()) {  // container: o tipo do PROJECT em destaque (DDP MASTER, VINYL TRANSCRIPTION...) e o nome
-        const auto tipo = rotuloDoProject(juce::String(projeto.origemDoContainer(nestId)));
+        const std::string origemDoNest = projeto.origemDoContainer(nestId);
+        const TipoContainer* tipoDoNest = tipoDeContainerDaOrigem(projeto.tipoDoContainer(nestId), origemDoNest);
+        const auto tipo = (tipoDoNest != nullptr && !tipoDoNest->temPlayer()) ? rotuloDoTipoContainer(*tipoDoNest).toUpperCase()
+                                                                               : rotuloDoProject(juce::String(origemDoNest));
         titulo = tipo.isNotEmpty() ? tipo + juce::String::fromUTF8("  \xc2\xb7  ") + nomePasta : nomePasta;
     }
     auto* moldurada = new moldura::JanelaMoldura(conteudo, moldura::Secao::Explorador, "Folder Map", titulo);

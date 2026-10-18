@@ -170,7 +170,7 @@ std::vector<CategoriaContainer> ordemDasCategorias(CategoriaContainer dominante)
 }
 
 // Dialogo de tipo no mesmo visual do SelecionarTipoMidia: PainelOverlay com cabecalhos por categoria. `nomeInicial` so aparece
-// ao agrupar (trocar o tipo nao renomeia). aoConcluir(nullptr, "") = cancelou.
+// o nome sugerido (ao trocar o tipo, o atual). aoConcluir(nullptr, "") = cancelou.
 void mostrarEscolherTipo(PainelOverlay& overlay, CategoriaContainer dominante, int quantidade, const juce::String& nomeInicial,
                          const TipoContainer* atual, bool trocar, std::function<void(const TipoContainer*, juce::String)> aoConcluir) {
     PainelOverlay::Config cfg;
@@ -189,11 +189,9 @@ void mostrarEscolherTipo(PainelOverlay& overlay, CategoriaContainer dominante, i
     }
     cfg.opcaoSelecionada = 0;
     for (size_t i = 0; i < ordenados.size(); ++i) if (ordenados[i] == atual) cfg.opcaoSelecionada = static_cast<int>(i);
-    if (!trocar) {
-        cfg.comCampoTexto = true;
-        cfg.textoInicial = nomeInicial;
-        cfg.dicaCampoTexto = matriz::i18n::t("tipoc.dialogo.nome");
-    }
+    cfg.comCampoTexto = true;  // o nome do container e editavel (ao trocar o tipo, vem o nome atual)
+    cfg.textoInicial = nomeInicial;
+    cfg.dicaCampoTexto = matriz::i18n::t("tipoc.dialogo.nome");
     cfg.botoes = {
         { matriz::i18n::t("comum.cancelar"), kBotaoCancelar, false, true },
         { matriz::i18n::t(trocar ? "tipoc.dialogo.confirmar_trocar" : "tipoc.dialogo.confirmar"), kBotaoConfirmar, true, false },
@@ -262,7 +260,10 @@ void criarEGravar(ProjetoAberto& projeto, std::vector<std::string> ids, const Ti
         if (t == nullptr) return;
         const juce::String nomeFinal = nome.isNotEmpty() ? nome : nomePadraoDoContainer(*proj, ids, rotuloDoTipoContainer(*t));
         const std::string nestId = proj->criarContainerDeTipo(ids, t->id, origemDoTipoContainer(*t), nomeFinal.toStdString());
-        if (!nestId.empty()) aplicarContentDoTipo(*proj, ids, *t);
+        if (!nestId.empty()) {
+            proj->definirIconeDoContainer(nestId, t->icone);  // ícone da categoria (ci_*), como os cards do IMPORT
+            aplicarContentDoTipo(*proj, ids, *t);
+        }
         juce::MessageManager::callAsync([vivo, h, nestId] {
             if (vivo.expired()) return;
             if (!nestId.empty()) EventBus::obterInstancia().dispararItemAlterado("", "nest");
@@ -291,6 +292,7 @@ void gravarComPlayer(ProjetoAberto& projeto, std::vector<std::string> ids, std::
         } else if (proj->trocarTipoDoContainer(nestExistente, t->id, origemDoTipoContainer(*t))) {
             nestId = nestExistente;
             if (!ctx.nomeContainer.empty()) proj->definirNomeDoContainer(nestId, ctx.nomeContainer);
+            else if (nomeDigitado.isNotEmpty()) proj->definirNomeDoContainer(nestId, nomeDigitado.toStdString());
         }
         if (!nestId.empty()) {
             try {
@@ -392,22 +394,28 @@ void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, Hos
     if (overlay == nullptr) return;
     const auto membros = projeto.membrosDoNest(nestId);
     const TipoContainer* atual = tipoDeContainerDaOrigem(projeto.tipoDoContainer(nestId), projeto.origemDoContainer(nestId));
+    juce::String nomeAtual;
+    if (!membros.empty())
+        if (const auto info = projeto.nestDoItem(membros.front())) nomeAtual = juce::String::fromUTF8(info->nome.c_str());
     ProjetoAberto* proj = &projeto;
     const auto vivo = projeto.tokenVida();
     const juce::Component::SafePointer<PainelOverlay> ov(overlay);
-    mostrarEscolherTipo(*overlay, atual != nullptr ? atual->categoria : CategoriaContainer::Outro, static_cast<int>(membros.size()), {}, atual, true,
-        [proj, vivo, nestId, membros, h, ov](const TipoContainer* tipo, juce::String) {
-            juce::MessageManager::callAsync([proj, vivo, nestId, membros, h, tipo, ov] {
+    mostrarEscolherTipo(*overlay, atual != nullptr ? atual->categoria : CategoriaContainer::Outro, static_cast<int>(membros.size()), nomeAtual, atual, true,
+        [proj, vivo, nestId, membros, h, ov, nomeAtual](const TipoContainer* tipo, juce::String nomeDigitado) {
+            const juce::String nomeNovo = nomeDigitado == nomeAtual ? juce::String() : nomeDigitado;  // so renomeia se mudou
+            juce::MessageManager::callAsync([proj, vivo, nestId, membros, h, tipo, ov, nomeNovo] {
                 if (vivo.expired()) return;
                 if (tipo == nullptr) { aoTerminarFluxo(h, false); return; }
-                if (tipo->temPlayer()) { fluxoComPlayer(*proj, membros, nestId, *tipo, {}, ov, h); return; }
+                if (tipo->temPlayer()) { fluxoComPlayer(*proj, membros, nestId, *tipo, nomeNovo, ov, h); return; }
                 if (h.fechar) h.fechar();
                 const std::string tipoId = tipo->id;
-                juce::Thread::launch([proj, vivo, nestId, membros, h, tipoId] {
+                juce::Thread::launch([proj, vivo, nestId, membros, h, tipoId, nomeNovo] {
                     if (vivo.expired()) return;
                     const TipoContainer* t = tipoDeContainer(tipoId);
                     bool ok = false;
                     if (t != nullptr && proj->trocarTipoDoContainer(nestId, t->id, origemDoTipoContainer(*t))) {
+                        proj->definirIconeDoContainer(nestId, t->icone);
+                        if (nomeNovo.isNotEmpty()) proj->definirNomeDoContainer(nestId, nomeNovo.toStdString());
                         aplicarContentDoTipo(*proj, membros, *t);  // nunca apaga nem sobrescreve o que ja esta preenchido
                         ok = true;
                     }
