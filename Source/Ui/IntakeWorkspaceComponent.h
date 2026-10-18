@@ -261,6 +261,12 @@ private:
     void tratarEscolhaImportar(const std::string& id, const std::vector<std::string>& caminho);
     void abrirSeletorDeImportacao(const std::string& id, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha = nullptr);
     void abrirFichaDeImportacao(const std::string& id, const std::vector<std::string>& caminho);
+    // YouTube Production: um vídeo por vez (dados + pasta de produção), com a pergunta "cadastrar outro?" no fim.
+    void abrirFluxoYoutube(const std::vector<std::string>& caminho);
+    void escolherPastaYoutube(std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha);
+    void perguntarOutroYoutube(const juce::String& nomeDoVideo);
+    void importarYoutubePendentes();
+    std::vector<std::pair<juce::File, std::shared_ptr<const matriz::ingest::SobreMaterial>>> youtubePendentes_;
     void abrirReceberDoCelular(std::function<void()> aoVoltar = nullptr);
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;

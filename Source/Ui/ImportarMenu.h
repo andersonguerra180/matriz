@@ -44,6 +44,11 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
                           std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir,
                           std::function<void()> aoVoltar = nullptr);
 
+// Depois de cadastrar um vídeo do YouTube Production: `aoEscolher(0)` cancela tudo, `(1)` segue com a importação,
+// `(2)` cadastra outro vídeo. Mostra no mesmo overlay.
+void mostrarPerguntaOutroYoutube(PainelOverlay& overlay, const juce::String& nomeDoVideo, int totalCadastrados,
+                                 std::function<void(int)> aoEscolher);
+
 // Ícone com fundo branco opaco (alguns de Assets/Icons) -> o branco ligado às bordas vira transparente. Devolve a mesma
 // imagem se ela já é transparente.
 juce::Image tirarFundoBrancoDasBordas(const juce::Image& original);

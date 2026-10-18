@@ -4681,6 +4681,75 @@ bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce
     return true;
 }
 
+bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nestId) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
+    juce::File video;
+    double duracao = 0.0;
+    juce::int64 maior = -1;
+    std::string itemDoVideo;
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT a.caminho_absoluto_origem, a.tamanho_bytes, a.caracteristicas_tecnicas_json, ni.item_id "
+            "FROM nest_item ni JOIN arquivo a ON a.item_id = ni.item_id AND a.eh_master = 1 WHERE ni.nest_id = ?");
+        stmt.bind(1, matriz::db::Value::of(nestId));
+        while (stmt.step()) {
+            if (stmt.columnIsNull(0)) continue;
+            const juce::File f(juce::String(stmt.columnText(0)));
+            if (matriz::ingest::categoriaPorExtensao(f) != matriz::ingest::CategoriaMidia::Video || !f.existsAsFile()) continue;
+            const juce::int64 tamanho = stmt.columnIsNull(1) ? 0 : static_cast<juce::int64>(stmt.columnInt(1));
+            if (tamanho <= maior) continue;
+            double d = 0.0;
+            if (!stmt.columnIsNull(2)) {
+                const auto json = juce::JSON::parse(juce::String(stmt.columnText(2)));
+                if (json.isObject() && json.hasProperty("duracaoSegundos")) d = static_cast<double>(json["duracaoSegundos"]);
+            }
+            if (d <= 0.0) continue;
+            maior = tamanho;
+            video = f;
+            duracao = d;
+            itemDoVideo = stmt.columnText(3);
+        }
+    } catch (...) { return false; }
+    if (!video.existsAsFile()) return false;
+    try {
+        const juce::File tmp = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("matriz_capa_" + juce::String(nestId));
+        auto frames = matriz::ingest::gerarKeyframesVideo(video, duracao, 1, tmp, "capa", 640, false, 0.35, 0.65);
+        bool ok = false;
+        if (!frames.empty()) ok = definirCapaDoContainer(nestId, frames.front().arquivo);
+        tmp.deleteRecursively();
+        // O vídeo é quem representa o container no Intake (categoria, título e miniatura), não o primeiro arquivo por data.
+        if (ok && !itemDoVideo.empty())
+            projeto_->registro().run("UPDATE nest SET capa_item_id = ? WHERE id = ?", {matriz::db::Value::of(itemDoVideo), matriz::db::Value::of(nestId)});
+        return ok;
+    } catch (...) { return false; }
+}
+
+std::string ProjetoAberto::criarNestDeImportacao(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_ || !projeto_ || itemIds.size() < 2) return {};
+    auto& db = projeto_->registro();
+    std::set<std::string> jaEmNest;
+    for (const auto& [id, info] : mapaDeNests(db)) { juce::ignoreUnused(info); jaEmNest.insert(id); }
+    std::vector<std::string> livres;
+    for (const auto& id : itemIds) if (jaEmNest.count(id) == 0) livres.push_back(id);
+    if (livres.size() < 2) return {};
+    const std::string nestId = matriz::model::novoUuid();
+    const std::string agora = matriz::model::agoraIso8601();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem) VALUES (?, ?, ?, ?, NULL)",
+               {matriz::db::Value::of(nestId), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(livres.front()),
+                matriz::db::Value::of(agora)});
+        for (const auto& id : livres)
+            db.run("INSERT INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(id), matriz::db::Value::of(nestId), matriz::db::Value::of(agora)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    return nestId;
+}
+
 std::optional<juce::String> ProjetoAberto::capaImagemDoContainer(const std::string& itemId) const {
     if (!projeto_) return std::nullopt;
     try {

@@ -116,7 +116,8 @@ std::vector<No> montarArvore() {
     // material pode ter vindo de uma fita e estar hoje num arquivo digital ou num link.
     auto videos = grupo("videos", IconeUi::Videos, "ci_vid_native_digital_png",
                         { folha("videos.digital", IconeUi::Videos, "ci_vid_native_digital_png"),
-                          folha("videos.link", IconeUi::Link, "youtube_png", true),
+                          folha("videos.link", IconeUi::Link, "videoweb_png", true),
+                          folha("videos.youtube", IconeUi::Link, "youtube_png"),
                           folha("videos.dvd_rip", IconeUi::Disco, "ci_vid_dvd_blu_ray_png", true),
                           folha("videos.other", IconeUi::Other, "ci_vid_other_png") });
     colorir(videos, tk.tipoVideo);

@@ -86,6 +86,9 @@ juce_add_binary_data(MatrizI18nAssets
 # (ci_aud_midi.png -> AssetsBinaryData::ci_aud_midi_png). Trocar um PNG exige recompilar; arquivo novo, reconfigurar.
 file(GLOB MATRIZ_ICONES_IMPORTAR CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icons/container_icons/*.png")
 
+# Ícone genérico do card Link (vídeo): só entra no binário se o arquivo existir (GLOB reavalia ao soltar o arquivo na pasta).
+file(GLOB MATRIZ_ICONE_VIDEOWEB CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icons/videoweb.png")
+
 # Assets embutidos no binário
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
@@ -97,6 +100,7 @@ juce_add_binary_data(MatrizAssets
         Assets/apple.png
         Assets/whatsapp.jpg
         ${MATRIZ_ICONES_IMPORTAR}
+        ${MATRIZ_ICONE_VIDEOWEB}
         # Logos das redes sociais do menu IMPORT
         Assets/Icons/instagram.jpeg
         Assets/Icons/meta.png

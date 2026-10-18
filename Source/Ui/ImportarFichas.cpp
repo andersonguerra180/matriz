@@ -249,13 +249,14 @@ void juntarGeo(Ficha& f) {
 
 // ── capa do container (vinil, fita) ───────────────────────────────────────────────────────────────────────
 
-void juntarCapa(Ficha& f) {
-    const juce::String grupo = t("imp.ficha.capa");
+void juntarCapa(Ficha& f, const char* chaveGrupo = "imp.ficha.capa", const char* chaveArquivo = "imp.ficha.capa.arquivo",
+                const char* chaveDica = "imp.ficha.capa.dica", const char* chaveBotao = "imp.ficha.capa.botao") {
+    const juce::String grupo = t(chaveGrupo);
     Campo c;
-    c.def = { "capa", t("imp.ficha.capa.arquivo"), "", t("imp.ficha.capa.dica"), {}, false, "", "", "", "", grupo };
+    c.def = { "capa", t(chaveArquivo), "", t(chaveDica), {}, false, "", "", "", "", grupo };
     c.aplica = [](const Resultado& r, SobreMaterial& s) { s.capaContainer = valorDe(r, "capa"); };
     f.campos.push_back(std::move(c));
-    f.botoesGrupo.push_back({ grupo, t("imp.ficha.capa.botao"), [](PainelOverlay& overlay) {
+    f.botoesGrupo.push_back({ grupo, t(chaveBotao), [](PainelOverlay& overlay) {
         auto seletor = std::make_shared<juce::FileChooser>(t("imp.ficha.capa.titulo"), juce::File(), "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.gif;*.webp");
         juce::Component::SafePointer<PainelOverlay> seguro(&overlay);
         seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -649,6 +650,25 @@ Ficha fichaDesign() {
     return f;
 }
 
+// YouTube Production: os dados de UM vídeo (nome, categoria, descrição, miniatura, tags); a pasta de produção vem depois.
+Ficha fichaYoutube() {
+    Ficha f;
+    f.campos.push_back(cAssunto("nome", "Video name", "Nome do vídeo"));
+    f.campos.push_back(cEscolha("categoria", "Category", "Categoria",
+                                { { "vlog", "Vlog", "Vlog" }, { "short", "Short", "Short" }, { "tutorial", "Tutorial", "Tutorial" }, { "review", "Review", "Review" },
+                                  { "interview", "Interview", "Entrevista" }, { "music", "Music video", "Videoclipe" }, { "live", "Livestream", "Transmissão ao vivo" },
+                                  { "documentary", "Documentary", "Documentário" }, { "other", "Other", "Outro" } }));
+    f.campos.push_back(cTexto("descricao", "Description", "Descrição", "", "", nullptr, true, 4));
+    f.campos.push_back(cTexto("tags", "Tags", "Tags", "Separated by commas", "Separadas por vírgula",
+                              [](SobreMaterial& s, const std::string& v) {
+                                  juce::StringArray partes;
+                                  partes.addTokens(juce::String::fromUTF8(v.c_str()), ",;", "");
+                                  for (auto& p : partes) if (p.trim().isNotEmpty()) s.tags.push_back(p.trim().toStdString());
+                              }, false));
+    juntarCapa(f, "imp.ficha.thumb", "imp.ficha.thumb.arquivo", "imp.ficha.thumb.dica", "imp.ficha.thumb.botao");
+    return f;
+}
+
 Ficha fichaOutro() {
     Ficha f;
     f.campos.push_back(cOutro());
@@ -686,6 +706,7 @@ std::shared_ptr<const SobreMaterial> contextoDaFolhaImportar(const std::string& 
         { "other.multimedia.apps", "", "", { "App / software" } },
         { "other.multimedia.interactive", "", "", { "Interactive multimedia" } },
         { "other.design", "", "", { "Design project" } },
+        { "videos.youtube", "YouTube Video", "", { "YouTube" } },
         { "other.social.instagram", "", "", { "Social media", "Instagram" } },
         { "other.social.facebook", "", "", { "Social media", "Facebook" } },
         { "other.social.tiktok", "", "", { "Social media", "TikTok" } },
@@ -705,6 +726,9 @@ std::shared_ptr<const SobreMaterial> contextoDaFolhaImportar(const std::string& 
         // Conjuntos que entram juntos e realizam uma ação viram CONTAINER no Intake (ver MainComponent::processarLoteEmBackground).
         if (id == "audio.production.project") sobre->containerOrigem = "production";
         if (id == "audio.preservation.ddp") sobre->containerOrigem = "ddp";
+        if (id == "videos.youtube") { sobre->containerOrigem = "youtube"; sobre->capaFrameDoVideo = true; }
+        // NEST (tema em comum), não container: sample pack, gravações de campo e documentos importados juntos.
+        if (id == "audio.production.samples" || id == "audio.general.field" || id.rfind("documents.", 0) == 0) sobre->agruparComoNest = true;
         if (id == "audio.preservation.vinyl") sobre->containerOrigem = "vinyl";
         if (id == "audio.preservation.tape") sobre->containerOrigem = "tape";
         return sobre;
@@ -729,13 +753,31 @@ std::shared_ptr<const SobreMaterial> mesclarContextosImportar(std::shared_ptr<co
     }
     if (!extra->sufixoTitulo.empty()) r->sufixoTitulo = extra->sufixoTitulo;
     if (!extra->containerOrigem.empty()) r->containerOrigem = extra->containerOrigem;
+    if (extra->agruparComoNest) r->agruparComoNest = true;
+    if (extra->capaFrameDoVideo) r->capaFrameDoVideo = true;
     if (!extra->capaContainer.empty()) r->capaContainer = extra->capaContainer;
     if (!extra->geoPadrao.vazio()) r->geoPadrao = extra->geoPadrao;
     return r;
 }
 
+void mostrarPerguntaOutroYoutube(PainelOverlay& overlay, const juce::String& nomeDoVideo, int totalCadastrados, std::function<void(int)> aoEscolher) {
+    PainelOverlay::Config cfg;
+    cfg.tom = PainelOverlay::Tom::Pergunta;
+    cfg.titulo = t("imp.ficha.youtube.titulo");
+    cfg.trilha = t("moldura.trilha.adicionar");
+    cfg.mensagem = t("imp.ficha.youtube.outro.msg").replace("{nome}", nomeDoVideo.isNotEmpty() ? nomeDoVideo : t("imp.ficha.youtube.sem_nome"))
+                                                   .replace("{n}", juce::String(totalCadastrados));
+    cfg.larguraCartao = 620;
+    cfg.botoes = {
+        { t("light.ui.common.cancel"), 0, false, true },
+        { t("imp.ficha.youtube.outro"), 2, false, false },
+        { t("imp.ficha.youtube.continuar"), 1, true, false },
+    };
+    overlay.mostrar(cfg, [aoEscolher](PainelOverlay::Resultado r) { if (aoEscolher) aoEscolher(r.botaoId); });
+}
+
 bool folhaImportarTemFicha(const std::string& id) {
-    if (id == "videos.digital" || id == "videos.other") return true;
+    if (id == "videos.digital" || id == "videos.other" || id == "videos.youtube") return true;
     if (id.rfind("other.social.", 0) == 0 || id.rfind("other.multimedia.", 0) == 0) return id != "other.multimedia.cdrom";
     if (id == "other.design") return true;
     if (id == "files.computer_folder" || id == "files.external_drive" || id == "files.optical") return true;
@@ -756,6 +798,10 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::fu
         if (id == "audio.preservation.ddp") mensagem = t("imp.ficha.ddp.msg");
         if (id == "audio.production.midi") mensagem = t("imp.ficha.midi.msg");
         ficha = fichaAudio(id);
+    } else if (id == "videos.youtube") {
+        titulo = t("imp.ficha.youtube.titulo");
+        mensagem = t("imp.ficha.youtube.msg");
+        ficha = fichaYoutube();
     } else if (id.rfind("videos.", 0) == 0) {
         titulo = t("imp.ficha.videos.titulo");
         mensagem = t("imp.ficha.videos.msg");

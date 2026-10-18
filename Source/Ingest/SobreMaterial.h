@@ -42,6 +42,13 @@ struct SobreMaterial {
     // no Intake com esta origem. Não é metadado do arquivo (não entra em vazio()).
     std::string containerOrigem;
 
+    // Arquivos que entram juntos e só têm um tema em comum (Lightroom, Bridge, sample pack, gravações de campo, documentos)
+    // viram um NEST — um agrupamento temático, sem origem — e não um container. Não é metadado do arquivo.
+    bool agruparComoNest = false;
+
+    // Container sem capa escolhida: a miniatura dele é um frame sorteado do meio do vídeo principal (YouTube Production).
+    bool capaFrameDoVideo = false;
+
     // Imagem escolhida na ficha (capa do disco/fita) para ser a miniatura do container. Só vale se o lote virar container.
     std::string capaContainer;
 

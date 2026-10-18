@@ -3426,8 +3426,10 @@ void MainComponent::ingerirPastaDoBridge() {
                                 });
                             };
                         }
-                        safeThis->origemContainerProximoLote_ = "bridge";  // Adobe Bridge = container no Intake
-                        safeThis->resolverDuplicatasIntakeEEnfileirar(std::move(*arquivos));
+                        // Adobe Bridge = NEST (agrupamento temático), não container.
+                        auto comoNest = std::make_shared<matriz::ingest::SobreMaterial>();
+                        comoNest->agruparComoNest = true;
+                        safeThis->resolverDuplicatasIntakeEEnfileirar(std::move(*arquivos), comoNest);
                     });
                 });
             });
@@ -3581,7 +3583,7 @@ void MainComponent::importarCatalogoLightroom() {
                     try {
                         auto st = registro->prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 1 ORDER BY criado_em, id");
                         while (st.step()) if (antes.count(st.columnText(0)) == 0) novos.push_back(st.columnText(0));
-                        if (novos.size() >= 2) projLr->criarContainerImportacao(novos, "lightroom");
+                        if (novos.size() >= 2) projLr->criarNestDeImportacao(novos);  // Lightroom = NEST (tema em comum), não container
                     } catch (...) {}
                 }
                 juce::MessageManager::callAsync([safeThis, res]() mutable {
@@ -4177,22 +4179,44 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         const std::set<std::string> meus(itemIds.begin(), itemIds.end());
         const std::string origem = origemDoLote;
         const std::string capaDoContainer = sobre != nullptr ? sobre->capaContainer : std::string();
+        const bool capaFrameDoVideo = sobre != nullptr && sobre->capaFrameDoVideo;
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
-        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer](const std::vector<std::string>& processados) {
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo](const std::vector<std::string>& processados) {
             if (!seguroContainer || !seguroContainer->projetoAberto_) return;
             std::vector<std::string> doContainer;
             for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
             if (doContainer.size() < 2) return;
             ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
-            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer] {
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo] {
                 try {
                     const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
                     if (!nestId.empty() && !capaDoContainer.empty()) proj->definirCapaDoContainer(nestId, juce::File(capaDoContainer));
+                    else if (!nestId.empty() && capaFrameDoVideo) proj->definirCapaDoContainerComFrameDeVideo(nestId);
                 } catch (...) {}
                 juce::MessageManager::callAsync([seguroContainer, proj] {
                     if (!seguroContainer || seguroContainer->projetoAberto_.get() != proj) return;
                     if (seguroContainer->intakeWorkspace_) seguroContainer->intakeWorkspace_->recarregar();
+                });
+            });
+        });
+    }
+    if (sobre != nullptr && sobre->agruparComoNest) {
+        // NEST: arquivos que entram juntos com um tema em comum (sample pack, gravações de campo, documentos, Bridge).
+        const std::set<std::string> meus(itemIds.begin(), itemIds.end());
+        juce::Component::SafePointer<MainComponent> seguroNest(this);
+        const juce::ScopedLock sl(estadoLote->lock);
+        estadoLote->aoConcluir.push_back([seguroNest, meus](const std::vector<std::string>& processados) {
+            if (!seguroNest || !seguroNest->projetoAberto_) return;
+            std::vector<std::string> doNest;
+            for (const auto& id : processados) if (meus.count(id)) doNest.push_back(id);
+            if (doNest.size() < 2) return;
+            ProjetoAberto* proj = seguroNest->projetoAberto_.get();
+            seguroNest->poolVaults_.addJob([seguroNest, proj, doNest] {
+                try { proj->criarNestDeImportacao(doNest); } catch (...) {}
+                juce::MessageManager::callAsync([seguroNest, proj] {
+                    if (!seguroNest || seguroNest->projetoAberto_.get() != proj) return;
+                    if (seguroNest->intakeWorkspace_) seguroNest->intakeWorkspace_->recarregar();
                 });
             });
         });

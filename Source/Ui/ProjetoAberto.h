@@ -894,6 +894,11 @@ public:
     std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem);
     // Capa do container (vinil, fita): reduz a imagem, grava em .miniaturas e guarda o caminho no nest. Roda fora da message thread.
     bool definirCapaDoContainer(const std::string& nestId, const juce::File& imagem);
+    // Sem capa escolhida: usa um frame sorteado do meio do maior vídeo do container (YouTube Production). Fora da message thread.
+    bool definirCapaDoContainerComFrameDeVideo(const std::string& nestId);
+    // Agrupamento temático de importação (Lightroom, Bridge, sample pack...): um NEST sem origem. Fora da message thread,
+    // sem eventos (quem chama recarrega a tela). Itens que já estão num nest ficam de fora. Devolve o id ("" se nada a fazer).
+    std::string criarNestDeImportacao(const std::vector<std::string>& itemIds);
     // Se o item é a capa de um container que tem imagem própria, o caminho dela (usado como miniatura no Intake).
     std::optional<juce::String> capaImagemDoContainer(const std::string& itemId) const;
     // Tira os itens do container (continuam no Intake como itens comuns, sem aprovação). Um container que fica com

@@ -121,7 +121,7 @@ DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& 
 
 std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double duracaoSegundos, int quantidade,
                                                  const juce::File& dirDestino, const juce::String& prefixo,
-                                                 int larguraPx, bool primeiroFrame) {
+                                                 int larguraPx, bool primeiroFrame, double janelaInicio, double janelaFim) {
     if (quantidade <= 0)
         throw MiniaturaError("quantidade de keyframes deve ser positiva");
     if (duracaoSegundos <= 0.0)
@@ -137,7 +137,7 @@ std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double
 
     for (int i = 0; i < quantidade; ++i) {
         double tempo = quantidade == 1
-            ? (primeiroFrame ? 0.0 : duracaoSegundos * (0.1 + rng.nextDouble() * 0.8))
+            ? (primeiroFrame ? 0.0 : duracaoSegundos * (janelaInicio + rng.nextDouble() * (janelaFim - janelaInicio)))
             : duracaoSegundos * (i + 0.5) / quantidade;
         juce::File destino = dirDestino.getChildFile(prefixo + "_" + juce::String(i).paddedLeft('0', 4) + ".jpg");
 

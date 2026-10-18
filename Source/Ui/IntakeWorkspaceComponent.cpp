@@ -76,7 +76,9 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     static const juce::Image producao = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_music_production_png, AssetsBinaryData::ci_aud_music_production_pngSize);
     static const juce::Image vinil = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_vinyl_rip_png, AssetsBinaryData::ci_aud_vinyl_rip_pngSize);
     static const juce::Image fita = juce::ImageFileFormat::loadFrom(AssetsBinaryData::Tape_Cassette_Rip_png, AssetsBinaryData::Tape_Cassette_Rip_pngSize);
+    static const juce::Image youtube = juce::ImageFileFormat::loadFrom(AssetsBinaryData::youtube_png, AssetsBinaryData::youtube_pngSize);
     static const juce::Image vazio;
+    if (origem == "youtube") return youtube;
     if (origem == "vinyl") return vinil;
     if (origem == "tape") return fita;
     if (origem == "ddp") return ddp;
@@ -91,7 +93,7 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
 
 // Containers que o Intake desenha como container (ícone grande ou capa), não como o primeiro arquivo com um selo.
 bool ehContainerGrafico(const juce::String& origem) {
-    return origem == "ddp" || origem == "production" || origem == "vinyl" || origem == "tape";
+    return origem == "ddp" || origem == "production" || origem == "vinyl" || origem == "tape" || origem == "youtube";
 }
 
 juce::String rotuloDaOrigem(const juce::String& origem) {
@@ -2805,7 +2807,7 @@ void IntakeWorkspaceComponent::recarregar() {
             self->aplicarItensQuarentena(std::move(quarentena));
             if (self->gridComponent_)
                 for (const auto& it : self->todosItens_)
-                    if (self->itemEhContainer(it) && (it.containerOrigem == "vinyl" || it.containerOrigem == "tape"))
+                    if (self->itemEhContainer(it) && (it.containerOrigem == "vinyl" || it.containerOrigem == "tape" || it.containerOrigem == "youtube"))
                         self->gridComponent_->esquecerMiniaturaDoItem(it.id);
             if (self->recarregarAoTerminarSnapshot_) {
                 self->recarregarAoTerminarSnapshot_ = false;
@@ -4341,6 +4343,7 @@ void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id, cons
     }
     if (id == "photos.lightroom") { if (aoIngerirDeLightroom) aoIngerirDeLightroom(); return; }
     if (id == "photos.bridge") { if (aoIngerirDeBridge) aoIngerirDeBridge(); return; }
+    if (id == "videos.youtube") { abrirFluxoYoutube(caminho); return; }
     if (folhaImportarTemFicha(id)) { abrirFichaDeImportacao(id, caminho); return; }
     abrirSeletorDeImportacao(id);
 }
@@ -4367,6 +4370,76 @@ void IntakeWorkspaceComponent::abrirFichaDeImportacao(const std::string& id, con
         });
     });
     resized();
+}
+
+// ── YouTube Production ───────────────────────────────────────────────────────────────────────────────────
+void IntakeWorkspaceComponent::abrirFluxoYoutube(const std::vector<std::string>& caminho) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarFichaImportar(*overlayAtual_, "videos.youtube", [seguro](bool continuar, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
+        juce::MessageManager::callAsync([seguro, continuar, daFicha] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (continuar) seguro->escolherPastaYoutube(daFicha);
+            else seguro->youtubePendentes_.clear();
+        });
+    }, [seguro, caminho] {  // VOLTAR: abandona o que foi cadastrado e reabre o card anterior
+        juce::MessageManager::callAsync([seguro, caminho] {
+            if (seguro == nullptr) return;
+            seguro->youtubePendentes_.clear();
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            seguro->abrirMenuImportar(caminho);
+        });
+    });
+    resized();
+}
+
+void IntakeWorkspaceComponent::escolherPastaYoutube(std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
+    auto seletor = std::make_shared<juce::FileChooser>(i18n::t("imp.ficha.youtube.pasta"));
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                         [seguro, seletor, daFicha](const juce::FileChooser& fc) {
+                             if (seguro == nullptr) return;
+                             const juce::File pasta = fc.getResult();
+                             if (!pasta.isDirectory()) { seguro->youtubePendentes_.clear(); return; }  // cancelou: nada é importado
+                             const auto contexto = mesclarContextosImportar(contextoDaFolhaImportar("videos.youtube"), daFicha);
+                             seguro->youtubePendentes_.push_back({ pasta, contexto });
+                             const juce::String nome = daFicha != nullptr && !daFicha->subject.empty() ? juce::String::fromUTF8(daFicha->subject.c_str())
+                                                                                                         : pasta.getFileName();
+                             seguro->perguntarOutroYoutube(nome);
+                         });
+}
+
+void IntakeWorkspaceComponent::perguntarOutroYoutube(const juce::String& nomeDoVideo) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarPerguntaOutroYoutube(*overlayAtual_, nomeDoVideo, static_cast<int>(youtubePendentes_.size()), [seguro](int escolha) {
+        juce::MessageManager::callAsync([seguro, escolha] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (escolha == 1) seguro->importarYoutubePendentes();
+            else if (escolha == 2) seguro->abrirFluxoYoutube({ "videos" });
+            else seguro->youtubePendentes_.clear();
+        });
+    });
+    resized();
+}
+
+// Cada vídeo vira um lote próprio (e um container próprio): pasta de produção inteira + o contexto da ficha dele.
+void IntakeWorkspaceComponent::importarYoutubePendentes() {
+    auto pendentes = std::move(youtubePendentes_);
+    youtubePendentes_.clear();
+    for (const auto& [pasta, contexto] : pendentes) {
+        if (aoIngerirComContexto) aoIngerirComContexto({ pasta }, contexto);
+        else if (aoIngerirArquivosDireto) aoIngerirArquivosDireto({ pasta });
+    }
 }
 
 // Seletor de arquivos e pastas do card escolhido; o que o card implica (ver contextoDaFolhaImportar) vai junto.

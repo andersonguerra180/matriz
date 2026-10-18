@@ -1171,6 +1171,62 @@ int rodarTestImportarComContexto() {
                    "capaImagemDoContainer devolve a imagem para o item-capa");
         }
 
+        // YouTube Production: pasta com um vídeo + arquivos de produção vira UM container 'youtube'; sem thumbnail escolhida,
+        // a capa é um frame do meio do vídeo.
+        {
+            juce::File pasta = tmpRoot.getChildFile("producao_youtube");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=10:duration=4",
+                             "-pix_fmt", "yuv420p", pasta.getChildFile("video_final.mp4").getFullPathName()});
+            pasta.getChildFile("roteiro.txt").replaceWithText("roteiro do video");
+            pasta.getChildFile("tags.txt").replaceWithText("tag1, tag2");
+            const auto ctxYt = contextoDaFolhaImportar("videos.youtube");
+            checar(ctxYt != nullptr && ctxYt->containerOrigem == "youtube" && ctxYt->capaFrameDoVideo, "videos.youtube pede container 'youtube' com frame do video");
+            mainComponent.ingerirArquivos({pasta}, true, ctxYt);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int containers = 0;
+            std::string capa;
+            while (juce::Time::getMillisecondCounter() - t0 < 40000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*), COALESCE(MAX(capa_imagem), '') FROM nest WHERE origem = 'youtube'");
+                st.step();
+                containers = static_cast<int>(st.columnInt(0));
+                capa = st.columnText(1);
+                if (containers == 1 && !capa.empty()) break;
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(containers == 1, "pasta de producao vira 1 container 'youtube' (" + juce::String(containers) + ")");
+            checar(!capa.empty() && mainComponent.projetoAberto()->projeto().pasta().getChildFile(juce::String(capa)).existsAsFile(),
+                   "sem thumbnail, a capa do container e um frame do video (" + juce::String(capa) + ")");
+        }
+
+        // NEST (e não container): arquivos com tema em comum (sample pack) ficam num nest sem origem.
+        {
+            const auto ctxSamples = contextoDaFolhaImportar("audio.production.samples");
+            checar(ctxSamples != nullptr && ctxSamples->agruparComoNest && ctxSamples->containerOrigem.empty(), "sample pack pede NEST, nao container");
+            juce::File pasta = tmpRoot.getChildFile("pacote_de_samples");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=100:duration=1", pasta.getChildFile("kick.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", pasta.getChildFile("snare.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, ctxSamples);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int nests = 0;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*) FROM nest WHERE origem IS NULL");
+                st.step();
+                nests = static_cast<int>(st.columnInt(0));
+                if (nests == 1) break;
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(nests == 1, "sample pack importado junto vira 1 NEST sem origem (" + juce::String(nests) + ")");
+            auto membros = registro.prepare("SELECT COUNT(*) FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE n.origem IS NULL");
+            membros.step();
+            checar(membros.columnInt(0) == 2, "o nest tem os 2 arquivos");
+        }
+
         // Foto do Intake (miniaturas) com os containers 'ddp' e 'vinyl' já criados — para olhar como o container aparece.
         {
             IntakeWorkspaceComponent intake(*mainComponent.projetoAberto());
@@ -1302,7 +1358,7 @@ int rodarTestImportarVisual() {
                                            { "audio.general.voice_over", "imp_23_ficha_locucao" }, { "documents.scanned", "imp_24_ficha_docs_escaneado" },
                                            { "other.design", "imp_25_ficha_design" }, { "files.optical", "imp_14_ficha_arquivos_optico" },
                                            { "audio.production.midi", "imp_26_ficha_midi" }, { "audio.production.tools", "imp_27_ficha_tools" },
-                                           { "photos.camera_card", "imp_28_ficha_cartao_camera" } };
+                                           { "photos.camera_card", "imp_28_ficha_cartao_camera" }, { "videos.youtube", "imp_30_ficha_youtube" } };
         for (const auto& fv : fichasVisuais) {
             PainelOverlay o;
             o.setBounds(0, 0, 1100, 760);
@@ -1374,6 +1430,14 @@ int rodarTestImportarVisual() {
             const bool fichaOk = quatroBotoes && voltou && !concluiu;
             std::cout << (fichaOk ? "  OK   " : "  FAIL ") << "a ficha tem VOLTAR (4 botoes) e ele nao conclui a importacao\n";
             if (!fichaOk) ++falhas;
+        }
+
+        {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarPerguntaOutroYoutube(o, "Meu vlog de domingo", 2, [](int) {});
+            girar(80);
+            salvar(o, "imp_31_youtube_outro");
         }
 
         PainelOverlay overlayDdp;
