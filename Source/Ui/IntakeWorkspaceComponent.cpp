@@ -4,6 +4,7 @@
 // ==============================================================================
 
 #include "IntakeWorkspaceComponent.h"
+#include "GeoAcoes.h"
 #include "GeoFavoritosGerenciar.h"
 #include "FloatingPreviewWindow.h"
 #include "PainelMetadadosArquivo.h"
@@ -954,7 +955,32 @@ public:
         btnSalvarFavorito_->onClick = [this] { salvarComoFavorito(); };
         addAndMakeVisible(*btnSalvarFavorito_);
 
-        setSize(380, 450);
+        // GET (local atual pelo IP) e OPEN (Google Maps), como em todas as fichas de GEO LOCATION.
+        btnGet_ = std::make_unique<juce::TextButton>(i18n::t("imp.ficha.geo.get"));
+        btnGet_->setTooltip("Fill in with the current location (approximate, by IP)");
+        btnGet_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnGet_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnGet_->onClick = [this] {
+            juce::Component::SafePointer<juce::Component> seguro(this);
+            matriz::ui::geoacoes::obterLocalAtual([this, seguro](matriz::ui::geoacoes::Local l) {
+                if (seguro == nullptr) return;
+                if (l.coords.isNotEmpty()) edCoords_->setText(l.coords);
+                if (l.cidade.isNotEmpty()) edCity_->setText(l.cidade);
+                if (l.estado.isNotEmpty()) edState_->setText(l.estado);
+                if (l.pais.isNotEmpty()) edCountry_->setText(l.pais);
+            });
+        };
+        addAndMakeVisible(*btnGet_);
+        btnOpen_ = std::make_unique<juce::TextButton>(i18n::t("imp.ficha.geo.open"));
+        btnOpen_->setTooltip(i18n::t("imp.ficha.geo.open.dica"));
+        btnOpen_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnOpen_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnOpen_->onClick = [this] {
+            matriz::ui::geoacoes::abrirNoGoogleMaps({ edCoords_->getText(), edAddress_->getText(), edCity_->getText(), edState_->getText(), edCountry_->getText() });
+        };
+        addAndMakeVisible(*btnOpen_);
+
+        setSize(380, 482);
     }
 
     void resized() override {
@@ -984,6 +1010,12 @@ public:
         layoutSubfield(lblState_, edState_);
         layoutSubfield(lblCountry_, edCountry_);
 
+        {
+            auto linhaGet = area.removeFromTop(26);
+            btnGet_->setBounds(linhaGet.removeFromLeft((linhaGet.getWidth() - 8) / 2));
+            linhaGet.removeFromLeft(8);
+            btnOpen_->setBounds(linhaGet);
+        }
         area.removeFromTop(4);
         auto rodape = area.removeFromBottom(28);
         btnApply_->setBounds(rodape.removeFromRight(150));
@@ -1134,6 +1166,7 @@ private:
     matriz::db::Database& registro_;
     std::unique_ptr<juce::Label> lblTitle_;
     std::unique_ptr<juce::TextButton> btnFavoritos_;
+    std::unique_ptr<juce::TextButton> btnGet_, btnOpen_;
     std::unique_ptr<juce::Label> lblCoords_;
     std::unique_ptr<juce::TextEditor> edCoords_;
     std::unique_ptr<juce::Label> lblAddress_;

@@ -7,6 +7,7 @@
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "ImportarMenu.h"
+#include "GeoAcoes.h"
 #include "JanelaContainerDdp.h"
 #include "MosaicoComponent.h"
 #include "IntakeWorkspaceComponent.h"
@@ -1352,6 +1353,20 @@ int rodarTestImportarComContexto() {
         checar(false, juce::String("teste importar contexto: ") + e.what());
     }
     tmpRoot.deleteRecursively();
+
+    // GEO LOCATION: OPEN abre o Google Maps nas coordenadas; sem coordenadas válidas usa o endereço; sem nada, não abre.
+    {
+        using matriz::ui::geoacoes::Local;
+        using matriz::ui::geoacoes::urlDoGoogleMaps;
+        checar(urlDoGoogleMaps(Local{ "-16.4435, -39.0643", "", "", "", "" }) ==
+                   "https://www.google.com/maps/search/?api=1&query=" + juce::URL::addEscapeChars("-16.443500,-39.064300", true),
+               "GEO OPEN: coordenadas válidas viram a busca por lat,lng");
+        const auto porEndereco = urlDoGoogleMaps(Local{ "", "Av. Paulista, 1000", "Sao Paulo", "SP", "Brasil" });
+        checar(porEndereco.contains("Paulista") && porEndereco.contains("Paulo"), "GEO OPEN: sem coordenadas usa endereço + cidade + estado + país");
+        checar(urlDoGoogleMaps(Local{ "0, 0", "", "", "", "" }).isEmpty() && urlDoGoogleMaps(Local{}).isEmpty(),
+               "GEO OPEN: coordenada 0,0 ou campos vazios não abrem nada");
+        checar(urlDoGoogleMaps(Local{ "99, 500", "Rua X", "", "", "" }).contains("Rua"), "GEO OPEN: coordenada fora do intervalo cai no endereço");
+    }
 
     std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;

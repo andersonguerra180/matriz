@@ -1,4 +1,5 @@
 #include "ImportarMenu.h"
+#include "GeoAcoes.h"
 
 #include <cmath>
 #include <map>
@@ -187,32 +188,20 @@ const std::set<std::string>& semOpticosRaros() {
 // ── geolocalização (cidade, estado, país, coordenadas) e botão GET ───────────────────────────────────────
 
 void obterLocalizacao(PainelOverlay& overlay) {
-    // Local aproximado pelo IP, preenchido sem apagar nada. Só roda quando o usuário clica em GET; a consulta sai da
-    // thread de interface.
+    // Local aproximado pelo IP, preenchido sem apagar nada. Só roda quando o usuário clica em GET (GeoAcoes).
     juce::Component::SafePointer<PainelOverlay> seguro(&overlay);
-    juce::Thread::launch([seguro] {
-        juce::String cidade, estado, pais, coord;
-        try {
-            juce::URL u("https://ipapi.co/json/");
-            if (auto in = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress).withConnectionTimeoutMs(6000))) {
-                const auto json = juce::JSON::parse(in->readEntireStreamAsString());
-                if (json.isObject() && json.hasProperty("country_name")) {
-                    cidade = json["city"].toString();
-                    estado = json["region"].toString();
-                    pais = json["country_name"].toString();
-                    if (json.hasProperty("latitude") && json.hasProperty("longitude"))
-                        coord = juce::String(static_cast<double>(json["latitude"]), 5) + ", " + juce::String(static_cast<double>(json["longitude"]), 5);
-                }
-            }
-        } catch (...) {}
-        juce::MessageManager::callAsync([seguro, cidade, estado, pais, coord] {
-            if (seguro == nullptr) return;
-            seguro->definirValorCampo("geo_cidade", cidade);
-            seguro->definirValorCampo("geo_estado", estado);
-            seguro->definirValorCampo("geo_pais", pais);
-            seguro->definirValorCampo("geo_coord", coord);
-        });
+    geoacoes::obterLocalAtual([seguro](geoacoes::Local local) {
+        if (seguro == nullptr) return;
+        seguro->definirValorCampo("geo_cidade", local.cidade);
+        seguro->definirValorCampo("geo_estado", local.estado);
+        seguro->definirValorCampo("geo_pais", local.pais);
+        seguro->definirValorCampo("geo_coord", local.coords);
     });
+}
+
+void abrirLocalizacao(PainelOverlay& overlay) {
+    geoacoes::abrirNoGoogleMaps({ overlay.valorDoCampo("geo_coord"), overlay.valorDoCampo("geo_endereco"), overlay.valorDoCampo("geo_cidade"),
+                                  overlay.valorDoCampo("geo_estado"), overlay.valorDoCampo("geo_pais") });
 }
 
 Campos cGeo() {
@@ -224,6 +213,7 @@ Campos cGeo() {
         return c;
     };
     return {
+        campo("geo_endereco", "imp.ficha.endereco", nullptr, [](const Resultado& r, SobreMaterial& s) { s.geoPadrao.endereco = valorDe(r, "geo_endereco"); }),
         campo("geo_cidade", "imp.ficha.cidade", nullptr, [](const Resultado& r, SobreMaterial& s) { s.geoPadrao.cidade = valorDe(r, "geo_cidade"); }),
         campo("geo_estado", "imp.ficha.estado", nullptr, [](const Resultado& r, SobreMaterial& s) { s.geoPadrao.estado = valorDe(r, "geo_estado"); }),
         campo("geo_pais", "imp.ficha.pais", nullptr, [](const Resultado& r, SobreMaterial& s) { s.geoPadrao.pais = valorDe(r, "geo_pais"); }),
@@ -242,9 +232,14 @@ PainelOverlay::BotaoGrupo botaoGet() {
     return { t("imp.ficha.geo"), t("imp.ficha.geo.get"), [](PainelOverlay& o) { obterLocalizacao(o); } };
 }
 
+PainelOverlay::BotaoGrupo botaoOpen() {
+    return { t("imp.ficha.geo"), t("imp.ficha.geo.open"), [](PainelOverlay& o) { abrirLocalizacao(o); } };
+}
+
 void juntarGeo(Ficha& f) {
     for (auto& c : cGeo()) f.campos.push_back(std::move(c));
     f.botoesGrupo.push_back(botaoGet());
+    f.botoesGrupo.push_back(botaoOpen());
 }
 
 // ── capa do container (vinil, fita) ───────────────────────────────────────────────────────────────────────

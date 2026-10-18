@@ -132,6 +132,8 @@ public:
     int totalBotoesParaTeste() const { return static_cast<int>(botoes_.size()); }
     // Preenche um campo da ficha pelo id (ex.: o botão do cartão de geolocalização).
     void definirValorCampo(const juce::String& id, const juce::String& valor);
+    // Texto atual de um campo da ficha pelo id ("" se não existe) — ex.: o botão OPEN do cartão de geolocalização.
+    juce::String valorDoCampo(const juce::String& id) const;
     void acionarBotaoParaTeste(int indice);
     void selecionarOpcaoParaTeste(int indice);
     void definirTextoParaTeste(const juce::String& texto);

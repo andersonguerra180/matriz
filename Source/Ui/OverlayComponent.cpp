@@ -498,6 +498,12 @@ void PainelOverlay::definirValorCampo(const juce::String& id, const juce::String
         if (cw.id == id && cw.editor) cw.editor->setText(valor, juce::dontSendNotification);
 }
 
+juce::String PainelOverlay::valorDoCampo(const juce::String& id) const {
+    for (const auto& cw : camposExtras_)
+        if (cw.id == id && cw.editor) return cw.editor->getText();
+    return {};
+}
+
 void PainelOverlay::acionarBotaoParaTeste(int indice) {
     if (indice < 0 || indice >= static_cast<int>(config_.botoes.size())) return;
     concluir(config_.botoes[static_cast<size_t>(indice)].id);

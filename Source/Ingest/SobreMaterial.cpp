@@ -172,10 +172,10 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
             if (!st.step()) {
                 const bool temCoord = sm.geoPadrao.lat.has_value() && sm.geoPadrao.lng.has_value();
                 const auto texto = [](const std::string& v) { return v.empty() ? Value::null() : Value::of(v); };
-                db.run("INSERT OR IGNORE INTO asset_geolocation (asset_id, latitude, longitude, country, state_province, city, source) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                db.run("INSERT OR IGNORE INTO asset_geolocation (asset_id, latitude, longitude, country, state_province, city, formatted_address, source) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                        {Value::of(itemId), temCoord ? Value::of(*sm.geoPadrao.lat) : Value::null(), temCoord ? Value::of(*sm.geoPadrao.lng) : Value::null(),
-                        texto(sm.geoPadrao.pais), texto(sm.geoPadrao.estado), texto(sm.geoPadrao.cidade),
+                        texto(sm.geoPadrao.pais), texto(sm.geoPadrao.estado), texto(sm.geoPadrao.cidade), texto(sm.geoPadrao.endereco),
                         Value::of(std::string(temCoord ? "USER_COORDINATES" : sm.geoPadrao.cidade.empty() ? (sm.geoPadrao.estado.empty() ? "USER_COUNTRY" : "USER_STATE") : "USER_CITY"))});
             }
         }

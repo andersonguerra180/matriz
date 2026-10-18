@@ -1,4 +1,5 @@
 #include "FichaPanelComponent.h"
+#include "GeoAcoes.h"
 
 #include "AutoCompleteTextEditor.h"
 #include "GeoFavoritosGerenciar.h"
@@ -1108,8 +1109,14 @@ public:
                     layoutGeoField(geolocalizacao_.labelState, geolocalizacao_.editorState);
                     layoutGeoField(geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
 
-                    // Favorite buttons row (side by side below all fields)
+                    // GET / OPEN row, then the favorite buttons row (side by side below all fields)
                     int favY = std::max(y0, y1) + tk.espacoPequeno;
+                    {
+                        const int meia = (innerW - tk.espacoPequeno) / 2;
+                        if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, favY, meia, 22);
+                        if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, favY, meia, 22);
+                        favY += 22 + tk.espacoPequeno;
+                    }
                     int halfW = (innerW - tk.espacoPequeno) / 2;
                     if (geolocalizacao_.btnSalvarFavorito)
                         geolocalizacao_.btnSalvarFavorito->setBounds(x + padCardX, favY, halfW, 22);
@@ -1317,6 +1324,14 @@ public:
                     y += 18;
                     geolocalizacao_.editorCountry->setBounds(x + padCardX, y, innerW, 24);
                     y += 24 + tk.espacoMedio;
+                }
+
+                // GET / OPEN row
+                {
+                    const int meia = (innerW - tk.espacoPequeno) / 2;
+                    if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, y, meia, 22);
+                    if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, y, meia, 22);
+                    y += 22 + tk.espacoPequeno;
                 }
 
                 // Favorite buttons row
@@ -1701,6 +1716,8 @@ public:
             if (geolocalizacao_.editorCountry) geolocalizacao_.editorCountry->setVisible(vis);
             if (geolocalizacao_.btnSalvarFavorito) geolocalizacao_.btnSalvarFavorito->setVisible(vis);
             if (geolocalizacao_.btnCarregarFavorito) geolocalizacao_.btnCarregarFavorito->setVisible(vis);
+            if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setVisible(vis);
+            if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setVisible(vis);
             if (aoRelayoutNecessario) aoRelayoutNecessario();
             repaint();
         };
@@ -1806,6 +1823,35 @@ public:
                 });
         };
         addAndMakeVisible(*geolocalizacao_.btnCarregarFavorito);
+
+        // GET (local atual) e OPEN (Google Maps): em todas as fichas de GEO LOCATION.
+        geolocalizacao_.btnGet = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.get"));
+        geolocalizacao_.btnGet->setTooltip(isPt ? "Preencher com o local atual (aproximado, pelo IP)" : "Fill in with the current location (approximate, by IP)");
+        geolocalizacao_.btnGet->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        geolocalizacao_.btnGet->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        geolocalizacao_.btnGet->onClick = [this, commitGeo] {
+            juce::Component::SafePointer<juce::Component> seguro(this);
+            matriz::ui::geoacoes::obterLocalAtual([this, seguro, commitGeo](matriz::ui::geoacoes::Local l) {
+                if (seguro == nullptr) return;
+                if (geolocalizacao_.editorCoords && l.coords.isNotEmpty()) geolocalizacao_.editorCoords->setText(l.coords);
+                if (geolocalizacao_.editorCity && l.cidade.isNotEmpty()) geolocalizacao_.editorCity->setText(l.cidade);
+                if (geolocalizacao_.editorState && l.estado.isNotEmpty()) geolocalizacao_.editorState->setText(l.estado);
+                if (geolocalizacao_.editorCountry && l.pais.isNotEmpty()) geolocalizacao_.editorCountry->setText(l.pais);
+                if (l.coords.isNotEmpty() || l.cidade.isNotEmpty()) commitGeo();
+            });
+        };
+        addAndMakeVisible(*geolocalizacao_.btnGet);
+
+        geolocalizacao_.btnOpen = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.open"));
+        geolocalizacao_.btnOpen->setTooltip(matriz::i18n::t("imp.ficha.geo.open.dica"));
+        geolocalizacao_.btnOpen->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        geolocalizacao_.btnOpen->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        geolocalizacao_.btnOpen->onClick = [this] {
+            const auto txt = [](const std::unique_ptr<juce::TextEditor>& e) { return e ? e->getText() : juce::String(); };
+            matriz::ui::geoacoes::abrirNoGoogleMaps({ txt(geolocalizacao_.editorCoords), txt(geolocalizacao_.editorAddress), txt(geolocalizacao_.editorCity),
+                                                      txt(geolocalizacao_.editorState), txt(geolocalizacao_.editorCountry) });
+        };
+        addAndMakeVisible(*geolocalizacao_.btnOpen);
     }
 
 
@@ -3633,6 +3679,8 @@ private:
         std::unique_ptr<juce::TextEditor>  editorCountry;
         std::unique_ptr<juce::TextButton>  btnSalvarFavorito;   // ★ Add to Favorites
         std::unique_ptr<juce::TextButton>  btnCarregarFavorito; // ▾ Load Favorite
+        std::unique_ptr<juce::TextButton>  btnGet;              // GET: local atual (pelo IP)
+        std::unique_ptr<juce::TextButton>  btnOpen;             // OPEN: abre no Google Maps
     } geolocalizacao_;
     juce::Image iconeGeo_;
     juce::Rectangle<int> iconeGeoBounds_;
@@ -4011,6 +4059,12 @@ public:
                     // Botões lado a lado, abaixo das duas colunas (mesmo
                     // arranjo do single-item — ver favY/halfW em ~944-950).
                     int favY = std::max(y0, y1) + tk.espacoPequeno;
+                    {
+                        const int meia = (innerW - tk.espacoPequeno) / 2;
+                        if (geoLote_.botaoGet) geoLote_.botaoGet->setBounds(x + padCardX, favY, meia, 22);
+                        if (geoLote_.botaoOpen) geoLote_.botaoOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, favY, meia, 22);
+                        favY += 22 + tk.espacoPequeno;
+                    }
                     int halfW = (innerW - tk.espacoPequeno) / 2;
                     if (geoLote_.botaoSalvarFavoritos)
                         geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, favY, halfW, 22);
@@ -4147,6 +4201,12 @@ public:
             layoutGeoSubfield1(geoLote_.labelState, geoLote_.editorState);
             layoutGeoSubfield1(geoLote_.labelCountry, geoLote_.editorCountry);
             if (geoLote_.botaoSalvarFavoritos || geoLote_.botaoFavoritos) {
+                {
+                    const int meia = (innerW - tk.espacoPequeno) / 2;
+                    if (geoLote_.botaoGet) geoLote_.botaoGet->setBounds(x + padCardX, y, meia, 22);
+                    if (geoLote_.botaoOpen) geoLote_.botaoOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, y, meia, 22);
+                    y += 22 + tk.espacoPequeno;
+                }
                 int halfW = (innerW - tk.espacoPequeno) / 2;
                 if (geoLote_.botaoSalvarFavoritos)
                     geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, y, halfW, 22);
@@ -4415,6 +4475,8 @@ private:
         std::unique_ptr<juce::TextEditor> editorCountry;
         std::unique_ptr<juce::TextButton> botaoFavoritos;
         std::unique_ptr<juce::TextButton> botaoSalvarFavoritos;   // ★ Add to Favorites (Fase 2)
+        std::unique_ptr<juce::TextButton> botaoGet;               // GET: local atual (pelo IP)
+        std::unique_ptr<juce::TextButton> botaoOpen;              // OPEN: abre no Google Maps
         bool tocado = false;
         // Valor comum (ou vazio se os selecionados divergem) capturado ao
         // montar o card — item 2 (correção METADATA 2026-09-28): só um
@@ -5129,6 +5191,35 @@ private:
                     });
             };
             addAndMakeVisible(*geoLote_.botaoFavoritos);
+
+            geoLote_.botaoGet = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.get"));
+            geoLote_.botaoGet->setTooltip(isPt ? "Preencher com o local atual (aproximado, pelo IP) e aplicar a todos os selecionados"
+                                               : "Fill in with the current location (approximate, by IP) and apply to all selected");
+            geoLote_.botaoGet->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            geoLote_.botaoGet->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            geoLote_.botaoGet->onClick = [this] {
+                juce::Component::SafePointer<juce::Component> seguro(this);
+                matriz::ui::geoacoes::obterLocalAtual([this, seguro](matriz::ui::geoacoes::Local l) {
+                    if (seguro == nullptr) return;
+                    if (geoLote_.editorCoords && l.coords.isNotEmpty()) geoLote_.editorCoords->setText(l.coords);
+                    if (geoLote_.editorCity && l.cidade.isNotEmpty()) geoLote_.editorCity->setText(l.cidade);
+                    if (geoLote_.editorState && l.estado.isNotEmpty()) geoLote_.editorState->setText(l.estado);
+                    if (geoLote_.editorCountry && l.pais.isNotEmpty()) geoLote_.editorCountry->setText(l.pais);
+                    if (l.coords.isNotEmpty() || l.cidade.isNotEmpty()) aplicarGeoAgora();
+                });
+            };
+            addAndMakeVisible(*geoLote_.botaoGet);
+
+            geoLote_.botaoOpen = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.open"));
+            geoLote_.botaoOpen->setTooltip(matriz::i18n::t("imp.ficha.geo.open.dica"));
+            geoLote_.botaoOpen->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            geoLote_.botaoOpen->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            geoLote_.botaoOpen->onClick = [this] {
+                const auto txt = [](const std::unique_ptr<juce::TextEditor>& e) { return e ? e->getText() : juce::String(); };
+                matriz::ui::geoacoes::abrirNoGoogleMaps({ txt(geoLote_.editorCoords), txt(geoLote_.editorAddress), txt(geoLote_.editorCity),
+                                                          txt(geoLote_.editorState), txt(geoLote_.editorCountry) });
+            };
+            addAndMakeVisible(*geoLote_.botaoOpen);
         };
 
         auto addDublinCoreLote = [&addEditableTextLote, &addDropdownLote, isPt]() {

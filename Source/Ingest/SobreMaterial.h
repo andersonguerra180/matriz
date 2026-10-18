@@ -37,9 +37,9 @@ struct SobreMaterial {
     // Localização padrão da importação: só vale para arquivos que não trazem geolocalização própria (as coordenadas
     // do arquivo e o que o usuário preencher à mão prevalecem).
     struct GeoPadrao {
-        std::string cidade, estado, pais;
+        std::string endereco, cidade, estado, pais;
         std::optional<double> lat, lng;
-        bool vazio() const { return cidade.empty() && estado.empty() && pais.empty() && !lat.has_value(); }
+        bool vazio() const { return endereco.empty() && cidade.empty() && estado.empty() && pais.empty() && !lat.has_value(); }
     } geoPadrao;
 
     // Conjunto que entra junto e realiza uma ação (ex.: "ddp", "production"): no fim do lote os itens viram um CONTAINER
