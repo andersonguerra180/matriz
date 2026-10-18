@@ -70,6 +70,27 @@ void somarAssunto(SobreMaterial& s, const std::string& valor) {
     s.subject = s.subject.empty() ? valor : valor + ", " + s.subject;
 }
 
+// LIST do Matriz (campo "lista" de cada arquivo) e TAGS a partir de uma lista separada por vírgula.
+void definirLista(SobreMaterial& s, const std::string& v) { s.campos.push_back({ "lista", v }); }
+
+void somarTags(SobreMaterial& s, const std::string& v) {
+    juce::StringArray partes;
+    partes.addTokens(juce::String::fromUTF8(v.c_str()), ",;", "");
+    for (auto& p : partes) if (p.trim().isNotEmpty()) s.tags.push_back(p.trim().toStdString());
+}
+
+// Texto livre direto em NOTES (sem o rótulo "Campo: ").
+void somarNotas(SobreMaterial& s, const std::string& v) { s.descricao += (s.descricao.empty() ? std::string() : std::string("\n")) + v; }
+
+// No máximo `n` palavras (campo curto que diz do que se trata).
+std::string primeirasPalavras(const std::string& v, int n) {
+    juce::StringArray palavras;
+    palavras.addTokens(juce::String::fromUTF8(v.c_str()), " \t\n", "");
+    palavras.removeEmptyStrings();
+    while (palavras.size() > n) palavras.remove(palavras.size() - 1);
+    return palavras.joinIntoString(" ").toStdString();
+}
+
 // ── construtores de campo ─────────────────────────────────────────────────────────────────────────────────
 
 Campo cTexto(const std::string& id, const std::string& en, const std::string& pt, const std::string& dicaEn = "",
@@ -317,6 +338,7 @@ Ficha fichaVideo(bool comOutro) {
     auto formatos = formatosDoVocabulario({ "VIDEO", "OPTICAL", "FILM" }, true, { "MiniDisc (MD)", "Audio CD / CD-R / CD-RW" });
     Ficha f;
     if (comOutro) f.campos.push_back(cOutro());
+    else f.campos.push_back(cAssunto("assunto", "What is in this video?", "O que há neste vídeo?"));
     f.campos.push_back(cFormato(formatos));
     f.campos.push_back(cNotas());
     return f;
@@ -344,6 +366,23 @@ Campos camposDoTipoMini(const std::string& tipoId, const std::set<std::string>& 
                     };
                 out.push_back(cEscolha(id, c.labelEn, c.labelPt, ops, true, extra, c.dicaEn, c.dicaPt));
             } else {
+                // Metadata pós-questionário: produção musical e sample pack caem direto no SUBJECT / LIST / TAGS / NOTES.
+                if (tipoId == "music_production" && id == "artist") {
+                    out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false));
+                    continue;
+                }
+                if ((tipoId == "music_production" && id == "project") || (tipoId == "sample_pack" && id == "pack_name")) {
+                    out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, definirLista, false));
+                    continue;
+                }
+                if (tipoId == "music_production" && id == "description") {
+                    out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, somarNotas, false, 3));
+                    continue;
+                }
+                if (tipoId == "sample_pack" && id == "sound_type") {
+                    out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, somarTags, false));
+                    continue;
+                }
                 std::function<void(SobreMaterial&, const std::string&)> extra;
                 if (idsDeAssunto.count(id))
                     extra = [](SobreMaterial& s, const std::string& v) { if (s.subject.empty()) s.subject = v; };
@@ -417,10 +456,12 @@ Ficha fichaAudio(const std::string& folha) {
         f.campos.push_back(formatoPadrao());
         f.campos.push_back(cIdentificacao());
         f.campos.push_back(cContexto());
+        f.depois = [](const Resultado&, SobreMaterial& s) { somarAssunto(s, "Sample Pack"); };  // SUBJECT = Sample Pack
     } else if (folha == "audio.production.midi") {
         // Lote / pasta de MIDIs: coleção, categoria do conteúdo, ecossistema de destino, origem física e notas de roteamento.
-        f.campos.push_back(cAssunto("colecao", "Collection / Project Name", "Coleção / Nome do projeto",
-                                    "e.g., Album Demos 2024, Drum Grooves Pack, Project X Stems", "ex.: Demos do Álbum 2024, Pacote de Grooves de Bateria, Stems do Projeto X"));
+        f.campos.push_back(cTexto("colecao", "Collection / Project Name", "Coleção / Nome do projeto",
+                                  "e.g., Album Demos 2024, Drum Grooves Pack, Project X Stems", "ex.: Demos do Álbum 2024, Pacote de Grooves de Bateria, Stems do Projeto X",
+                                  definirLista, false));
         f.campos.push_back(cEscolha("categoria", "Content Category", "Categoria de conteúdo",
                                     { { "full", "Full Song Arrangements (Multi-track)", "Arranjos completos de música (multipista)" },
                                       { "drums", "Drum Grooves / Percussive Loops", "Grooves de bateria / loops percussivos" },
@@ -430,29 +471,24 @@ Ficha fichaAudio(const std::string& folha) {
                                       { "mixed", "Mixed Session Files (Various parts)", "Arquivos de sessão mistos (várias partes)" } }));
         f.campos.push_back(cTexto("ecossistema", "Target Ecosystem / Sound Sources", "Ecossistema de destino / Fontes sonoras",
                                   "e.g., Logic Pro Session, Superior Drummer 3, Roland Juno-106, General MIDI",
-                                  "ex.: Sessão do Logic Pro, Superior Drummer 3, Roland Juno-106, General MIDI"));
+                                  "ex.: Sessão do Logic Pro, Superior Drummer 3, Roland Juno-106, General MIDI", somarTags, false));
         f.campos.push_back(cTexto("origem_hw", "Origin / Hardware Dump (optional)", "Origem / Dump de hardware (opcional)",
                                   "e.g., Akai MPC2000 Floppy #04, Old Mac Mini HD, Splice Pack",
-                                  "ex.: Disquete #04 do Akai MPC2000, HD do Mac Mini antigo, pacote do Splice"));
+                                  "ex.: Disquete #04 do Akai MPC2000, HD do Mac Mini antigo, pacote do Splice", somarTags, false));
         f.campos.push_back(cTexto("context", "Context / Routing Notes", "Contexto / Notas de roteamento",
                                   "e.g., Unquantized live takes, mapped for Addictive Drums, exported at 120 BPM.",
                                   "ex.: Takes ao vivo sem quantizar, mapeado para Addictive Drums, exportado a 120 BPM.", nullptr, true, 3));
+        f.depois = [](const Resultado&, SobreMaterial& s) { somarAssunto(s, "Midi"); };  // SUBJECT = Midi
     } else if (folha == "audio.production.tools") {
-        // Ferramentas: SUBJECT = Tools, LIST = tipo; função e nome/fabricante viram tags; as notas de contexto são o campo grande.
+        // Ferramentas: SUBJECT = tipo (Kind), LIST = nome/fabricante, função da ferramenta = tags; as notas de contexto são o campo grande.
         f.campos.push_back(cEscolha("asset_kind", "Kind", "Tipo",
                                     { { "instrument", "Virtual instrument", "Instrumento virtual" }, { "preset", "Preset", "Preset" },
                                       { "ir", "Impulse response (IR)", "Resposta ao impulso (IR)" }, { "plugin", "Plugin", "Plugin" }, { "other", "Other", "Outro" } },
-                                    false, [](SobreMaterial& s, const Op& op) { s.campos.push_back({ "lista", op.en }); }));
+                                    false, [](SobreMaterial& s, const Op& op) { somarAssunto(s, op.en); }));
         f.campos.push_back(cTexto("tool_function", "Tool Function", "Função da ferramenta", "e.g., Reverb, Synth, Sampler, EQ", "ex.: Reverb, Synth, Sampler, EQ",
-                                  [](SobreMaterial& s, const std::string& v) {
-                                      juce::StringArray partes;
-                                      partes.addTokens(juce::String::fromUTF8(v.c_str()), ",;", "");
-                                      for (auto& p : partes) if (p.trim().isNotEmpty()) s.tags.push_back(p.trim().toStdString());
-                                  }, false));
-        f.campos.push_back(cTexto("asset_name", "Name or vendor", "Nome ou fabricante", "", "",
-                                  [](SobreMaterial& s, const std::string& v) { s.tags.push_back(v); }, false));
+                                  somarTags, false));
+        f.campos.push_back(cTexto("asset_name", "Name or vendor", "Nome ou fabricante", "", "", definirLista, false));
         f.campos.push_back(cTexto("context", "Context Notes", "Notas de contexto", "", "", nullptr, true, 5));
-        f.depois = [](const Resultado&, SobreMaterial& s) { somarAssunto(s, "Tools"); };
     } else if (folha == "audio.preservation.ddp") {
         // DDP é a master que fabrica o CD industrial: a origem é sempre essa, então não se pergunta o formato.
         juntar(f, camposDoTipoMini("ddp_master"));
@@ -657,12 +693,16 @@ Ficha fichaDesign() {
 Ficha fichaYoutube() {
     Ficha f;
     // Nome e descrição vão para a ficha Dublin Core do arquivo de vídeo (dc_title, dc_description), não para as notas.
+    // SUBJECT = categoria do vídeo; LIST = do que se trata (até 4 palavras).
     f.campos.push_back(cTexto("nome", "Video name", "Nome do vídeo", "", "",
-                              [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); s.camposDoVideo.push_back({ "dc_title", v }); }, false));
+                              [](SobreMaterial& s, const std::string& v) { s.camposDoVideo.push_back({ "dc_title", v }); }, false));
     f.campos.push_back(cEscolha("categoria", "Category", "Categoria",
                                 { { "vlog", "Vlog", "Vlog" }, { "short", "Short", "Short" }, { "tutorial", "Tutorial", "Tutorial" }, { "review", "Review", "Review" },
                                   { "interview", "Interview", "Entrevista" }, { "music", "Music video", "Videoclipe" }, { "live", "Livestream", "Transmissão ao vivo" },
-                                  { "documentary", "Documentary", "Documentário" }, { "other", "Other", "Outro" } }));
+                                  { "documentary", "Documentary", "Documentário" }, { "other", "Other", "Outro" } },
+                                false, [](SobreMaterial& s, const Op& op) { somarAssunto(s, op.en); }));
+    f.campos.push_back(cTexto("sobre", "What is this video about? (4 words max)", "Do que se trata o vídeo? (no máximo 4 palavras)", "", "",
+                              [](SobreMaterial& s, const std::string& v) { definirLista(s, primeirasPalavras(v, 4)); }, false));
     f.campos.push_back(cTexto("descricao", "Description", "Descrição", "", "",
                               [](SobreMaterial& s, const std::string& v) { s.camposDoVideo.push_back({ "dc_description", v }); }, false, 4));
     f.campos.push_back(cTexto("tags", "Tags", "Tags", "Separated by commas", "Separadas por vírgula",

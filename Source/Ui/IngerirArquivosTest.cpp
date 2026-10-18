@@ -1503,6 +1503,52 @@ int rodarTestImportarVisual() {
             if (!ok) ++falhas;
         }
 
+        // Metadata pós-questionário: cada ficha preenche SUBJECT / LIST / TAGS / NOTES do jeito pedido.
+        {
+            const auto responder = [&](const std::string& folha, const std::vector<std::pair<juce::String, juce::String>>& valores) {
+                PainelOverlay o;
+                o.setBounds(0, 0, 1100, 760);
+                std::shared_ptr<const matriz::ingest::SobreMaterial> r;
+                mostrarFichaImportar(o, folha, [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial> sm) { r = sm; });
+                girar(30);
+                for (const auto& [id, v] : valores) o.definirValorCampo(id, v);
+                o.concluirExterno(1);
+                girar(30);
+                return r;
+            };
+            const auto lista = [](const matriz::ingest::SobreMaterial& sm) {
+                for (const auto& c : sm.campos) if (c.first == "lista") return c.second;
+                return std::string();
+            };
+            const auto temTag = [](const matriz::ingest::SobreMaterial& sm, const std::string& t) {
+                return std::find(sm.tags.begin(), sm.tags.end(), t) != sm.tags.end();
+            };
+            const auto confere = [&](bool ok, const char* nome) {
+                std::cout << (ok ? "  OK   " : "  FAIL ") << nome << "\n";
+                if (!ok) ++falhas;
+            };
+            if (auto sm = responder("audio.production.tools", { { "asset_name", "Valhalla VintageVerb" }, { "tool_function", "Reverb, Plate" } }); sm)
+                confere(lista(*sm) == "Valhalla VintageVerb" && temTag(*sm, "Reverb") && temTag(*sm, "Plate") && sm->subject.find("Tools") == std::string::npos,
+                        "Tools: LIST = nome, função = tags, SUBJECT = tipo (não 'Tools')");
+            else confere(false, "Tools: ficha respondeu");
+            if (auto sm = responder("audio.production.samples", { { "pack_name", "Drums Vol 1" }, { "sound_type", "Kick, Snare" } }); sm)
+                confere(sm->subject == "Sample Pack" && lista(*sm) == "Drums Vol 1" && temTag(*sm, "Kick") && temTag(*sm, "Snare"),
+                        "Sample Pack: SUBJECT = Sample Pack, LIST = nome do pack, tipo de som = tags");
+            else confere(false, "Sample Pack: ficha respondeu");
+            if (auto sm = responder("audio.production.midi", { { "colecao", "Album Demos" }, { "ecossistema", "Logic Pro" }, { "origem_hw", "Akai MPC2000" } }); sm)
+                confere(sm->subject == "Midi" && lista(*sm) == "Album Demos" && temTag(*sm, "Logic Pro") && temTag(*sm, "Akai MPC2000"),
+                        "MIDI: SUBJECT = Midi, LIST = nome do projeto, ecossistema e hardware = tags");
+            else confere(false, "MIDI: ficha respondeu");
+            if (auto sm = responder("audio.production.project", { { "artist", "Banda X" }, { "project", "Cancao Y" }, { "description", "Mix final aprovado" } }); sm)
+                confere(sm->subject == "Banda X" && lista(*sm) == "Cancao Y" && sm->descricao.find("Mix final aprovado") != std::string::npos,
+                        "Music Production: SUBJECT = artista/banda, LIST = projeto/música, descrição = NOTES");
+            else confere(false, "Music Production: ficha respondeu");
+            if (auto sm = responder("videos.youtube", { { "nome", "Meu video" }, { "sobre", "um dois tres quatro cinco seis" } }); sm)
+                confere(lista(*sm) == "um dois tres quatro" && sm->subject.find("Meu video") == std::string::npos,
+                        "YouTube: LIST = do que se trata (máx. 4 palavras), o nome do vídeo não vira SUBJECT");
+            else confere(false, "YouTube: ficha respondeu");
+        }
+
         // VOLTAR: a escolha de uma folha devolve o caminho de grupos, e reabrir com esse caminho cai no mesmo nível.
         {
             std::string idRecebido;
