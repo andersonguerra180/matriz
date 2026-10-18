@@ -4192,19 +4192,21 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         const bool capaFrameDoVideo = sobre != nullptr && sobre->capaFrameDoVideo;
         const std::string iconeDoContainer = sobre != nullptr ? sobre->iconeContainer : std::string();
         const std::string questionarioJson = sobre != nullptr ? questionarioParaJson(*sobre) : std::string();  // para editar depois
+        const std::string nomeDoContainer = sobre != nullptr ? sobre->nomeContainer : std::string();
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
-        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson](const std::vector<std::string>& processados) {
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer](const std::vector<std::string>& processados) {
             if (!seguroContainer || !seguroContainer->projetoAberto_) return;
             std::vector<std::string> doContainer;
             for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
             if (doContainer.size() < 2) return;
             ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
-            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson] {
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer] {
                 try {
                     const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
                     if (!nestId.empty() && !iconeDoContainer.empty()) proj->definirIconeDoContainer(nestId, iconeDoContainer);
                     if (!nestId.empty() && !questionarioJson.empty()) proj->definirQuestionarioDoContainer(nestId, questionarioJson);
+                    if (!nestId.empty() && !nomeDoContainer.empty()) proj->definirNomeDoContainer(nestId, nomeDoContainer);
                     if (!nestId.empty() && !capaDoContainer.empty()) proj->definirCapaDoContainer(nestId, juce::File(capaDoContainer));
                     // YouTube Production: o vídeo representa o container (preview ao abrir) e, sem thumbnail, dá o frame da capa.
                     if (!nestId.empty() && capaFrameDoVideo) proj->definirCapaDoContainerComFrameDeVideo(nestId, capaDoContainer.empty());

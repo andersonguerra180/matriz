@@ -1152,7 +1152,7 @@ int rodarTestImportarComContexto() {
             juce::File capa = tmpRoot.getChildFile("capa_vinil.png");
             gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=orange:s=800x800", "-frames:v", "1",
                              capa.getFullPathName()});
-            const std::map<std::string, std::string> respostasVelhas = { { "artist_album", "Banda Velha" } };
+            const std::map<std::string, std::string> respostasVelhas = { { "artist", "Banda Velha" }, { "album", "Disco Velho" } };
             auto ctxVinil = std::make_shared<matriz::ingest::SobreMaterial>(
                 *mesclarContextosImportar(contextoDaFolhaImportar("audio.preservation.vinyl"), contextoDeRespostasImportar("audio.preservation.vinyl", respostasVelhas)));
             ctxVinil->capaContainer = capa.getFullPathName().toStdString();
@@ -1185,7 +1185,7 @@ int rodarTestImportarComContexto() {
                 std::string folha;
                 std::map<std::string, std::string> guardadas;
                 checar(achou && questionarioDeJson(proj->questionarioDoContainer(nestId), folha, guardadas) && folha == "audio.preservation.vinyl" &&
-                           guardadas["artist_album"] == "Banda Velha",
+                           guardadas["artist"] == "Banda Velha",
                        "o container guarda o questionário inicial (card + respostas)");
                 const auto assuntoDosMembros = [&] {
                     std::string todos;
@@ -1193,16 +1193,24 @@ int rodarTestImportarComContexto() {
                     return todos;
                 };
                 checar(assuntoDosMembros().find("Banda Velha") != std::string::npos, "antes de editar: SUBJECT dos arquivos tem a resposta antiga");
-                const std::map<std::string, std::string> novas = { { "artist_album", "Banda Nova" } };
+                const std::map<std::string, std::string> novas = { { "artist", "Banda Nova" }, { "album", "Disco Novo" } };
                 const auto antigo = contextoDeRespostasImportar(folha, guardadas);
                 const auto novo = contextoDeRespostasImportar(folha, novas);
                 const bool ok = antigo && novo && proj->reaplicarQuestionarioDoContainer(nestId, *antigo, *novo, questionarioParaJson(*novo));
                 const auto depois = assuntoDosMembros();
                 checar(ok && depois.find("Banda Nova") != std::string::npos && depois.find("Banda Velha") == std::string::npos,
                        "editar o questionário troca a resposta antiga pela nova em todos os arquivos (" + juce::String(depois) + ")");
+                {
+                    auto n = registro.prepare("SELECT nome FROM nest WHERE id = ?");
+                    n.bind(1, matriz::db::Value::of(nestId));
+                    const bool tem = n.step();
+                    checar(tem && n.columnText(0) == "Disco Novo", "o álbum da ficha vira o nome do container (nest.nome) e a LIST dos arquivos");
+                    const auto itens = proj->membrosDoNest(nestId);
+                    checar(!itens.empty() && proj->lerMetadado(itens.front(), "lista").value_or("") == "Disco Novo", "LIST dos arquivos = álbum");
+                }
                 std::string folha2;
                 std::map<std::string, std::string> guardadas2;
-                checar(questionarioDeJson(proj->questionarioDoContainer(nestId), folha2, guardadas2) && guardadas2["artist_album"] == "Banda Nova",
+                checar(questionarioDeJson(proj->questionarioDoContainer(nestId), folha2, guardadas2) && guardadas2["artist"] == "Banda Nova",
                        "o questionário guardado passa a ser o novo");
             }
         }

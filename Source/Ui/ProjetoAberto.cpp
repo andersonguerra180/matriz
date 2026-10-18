@@ -405,6 +405,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             if (!nit->second.capaImagem.empty())
                 r.nestCapaImagem = pastaProjeto.getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
             r.nestIcone = nit->second.icone;
+            r.nestNome = nit->second.nome;
+            if (r.nestCapa && !r.nestNome.empty()) r.titulo = r.nestNome;  // a capa do container mostra o nome do container
         }
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -1083,6 +1085,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                     if (!nit->second.capaImagem.empty())
                         r.nestCapaImagem = projeto_->pasta().getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
                     r.nestIcone = nit->second.icone;
+                    r.nestNome = nit->second.nome;
+                    if (r.nestCapa && !r.nestNome.empty()) r.titulo = r.nestNome;
                 }
                 out.push_back(std::move(r));
             }
@@ -4563,15 +4567,16 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             "SELECT ni.item_id, ni.nest_id, "
             "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
             "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)), "
-            "n.origem, n.capa_imagem, n.icone "
+            "n.origem, n.capa_imagem, n.icone, n.nome "
             "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
-        std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe;
+        std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe, nomeDe;
         while (st.step()) {
             membros[st.columnText(1)].push_back(st.columnText(0));
             capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
             if (!st.columnIsNull(3)) origemDe[st.columnText(1)] = st.columnText(3);
             if (!st.columnIsNull(4)) capaImagemDe[st.columnText(1)] = st.columnText(4);
             if (!st.columnIsNull(5)) iconeDe[st.columnText(1)] = st.columnText(5);
+            if (!st.columnIsNull(6)) nomeDe[st.columnText(1)] = st.columnText(6);
         }
         for (const auto& [nid, itens] : membros) {
             if (itens.size() < 2) continue;  // nest de um arquivo só não existe
@@ -4581,6 +4586,7 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             if (auto oit = origemDe.find(nid); oit != origemDe.end()) info.origem = oit->second;
             if (auto cit = capaImagemDe.find(nid); cit != capaImagemDe.end()) info.capaImagem = cit->second;
             if (auto iit = iconeDe.find(nid); iit != iconeDe.end()) info.icone = iit->second;
+            if (auto nmit = nomeDe.find(nid); nmit != nomeDe.end()) info.nome = nmit->second;
             info.total = static_cast<int>(itens.size());
             for (const auto& id : itens) out[id] = info;
         }
@@ -4726,6 +4732,7 @@ bool ProjetoAberto::reaplicarQuestionarioDoContainer(const std::string& nestId, 
             for (const auto& id : membros) { tirar.desfazer(id); por.aplicar(id); }
         }
         db.run("UPDATE nest SET questionario = ? WHERE id = ?", {matriz::db::Value::of(json), matriz::db::Value::of(nestId)});
+        if (!novo.nomeContainer.empty()) db.run("UPDATE nest SET nome = ? WHERE id = ?", {matriz::db::Value::of(novo.nomeContainer), matriz::db::Value::of(nestId)});
         db.exec("COMMIT");
     } catch (const std::exception& e) {
         try { db.exec("ROLLBACK"); } catch (...) {}
@@ -4734,6 +4741,14 @@ bool ProjetoAberto::reaplicarQuestionarioDoContainer(const std::string& nestId, 
     }
     writeLock.unlock();
     EventBus::obterInstancia().dispararItensAlterados(membros, "metadado");
+    return true;
+}
+
+bool ProjetoAberto::definirNomeDoContainer(const std::string& nestId, const std::string& nome) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || nome.empty()) return false;
+    try {
+        projeto_->registro().run("UPDATE nest SET nome = ? WHERE id = ?", {matriz::db::Value::of(nome), matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
     return true;
 }
 

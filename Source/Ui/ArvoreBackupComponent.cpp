@@ -1504,6 +1504,7 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             }
             lf.id = stmt.columnText(0);
             lf.titulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
+            if (infoContainer != nullptr && !infoContainer->nome.empty()) lf.titulo = juce::String::fromUTF8(infoContainer->nome.c_str());  // o container mostra o nome da ficha
             lf.tipoMidia = stmt.columnText(2);
             lf.extensao = stmt.columnIsNull(3) ? juce::String() : juce::File(juce::String::fromUTF8(stmt.columnText(3).c_str())).getFileExtension().trimCharactersAtStart(".");
             lf.tamanhoBytes = stmt.columnIsNull(4) ? 0 : static_cast<juce::int64>(stmt.columnInt(4));

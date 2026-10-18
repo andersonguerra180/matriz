@@ -815,6 +815,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "nest", "icone", "TEXT");
     // Questionário inicial do container (JSON: folha + respostas), para editar depois pelo botão direito.
     garantirColuna(registro, "nest", "questionario", "TEXT");
+    // Nome do container (álbum / projeto / vídeo, vindo da ficha): é o que o container mostra no lugar do nome do arquivo-capa.
+    garantirColuna(registro, "nest", "nome", "TEXT");
     garantirColuna(registro, "acervo_pasta", "proposta_id", "TEXT");
     garantirColuna(registro, "acervo_pasta", "origem_caminho", "TEXT");
     registro.exec(

@@ -2485,7 +2485,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
             it.containerNestId = item.nestId;
             it.containerCapaCaminho = juce::String::fromUTF8(item.nestCapaImagem.c_str());
             it.containerIcone = juce::String::fromUTF8(item.nestIcone.c_str());
-            if (item.nestOrigem != "whatsapp") it.nomeArquivo = rotuloDaOrigem(it.containerOrigem) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
+            if (item.nestOrigem != "whatsapp") it.nomeArquivo = (item.nestNome.empty() ? rotuloDaOrigem(it.containerOrigem) : juce::String::fromUTF8(item.nestNome.c_str())) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
                              i18n::t("intake.container_arquivos").replace("{n}", juce::String(item.nestTotal));
             it.titulo = it.nomeArquivo;
         } else if (it.collection == "WhatsApp Chat") {

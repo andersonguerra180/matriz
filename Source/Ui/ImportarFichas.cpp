@@ -92,6 +92,12 @@ std::string primeirasPalavras(const std::string& v, int n) {
     return palavras.joinIntoString(" ").toStdString();
 }
 
+// LIST + nome do container (álbum, título, projeto ou música): o container passa a mostrar este nome.
+void definirListaENome(SobreMaterial& s, const std::string& v) {
+    definirLista(s, v);
+    s.nomeContainer = v;
+}
+
 // ── construtores de campo ─────────────────────────────────────────────────────────────────────────────────
 
 Campo cTexto(const std::string& id, const std::string& en, const std::string& pt, const std::string& dicaEn = "",
@@ -380,7 +386,11 @@ Campos camposDoTipoMini(const std::string& tipoId, const std::set<std::string>& 
                     out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false));
                     continue;
                 }
-                if ((tipoId == "music_production" && id == "project") || (tipoId == "sample_pack" && id == "pack_name")) {
+                if (tipoId == "music_production" && id == "project") {
+                    out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, definirListaENome, false));
+                    continue;
+                }
+                if (tipoId == "sample_pack" && id == "pack_name") {
                     out.push_back(cTexto(id, c.labelEn, c.labelPt, c.dicaEn, c.dicaPt, definirLista, false));
                     continue;
                 }
@@ -500,10 +510,12 @@ Ficha fichaAudio(const std::string& folha) {
         f.campos.push_back(cTexto("context", "Context Notes", "Notas de contexto", "", "", nullptr, true, 5));
     } else if (folha == "audio.preservation.ddp") {
         // DDP é a master que fabrica o CD industrial: a origem é sempre essa, então não se pergunta o formato.
-        juntar(f, camposDoTipoMini("ddp_master"));
+        f.campos.push_back(cTexto("artist", "Artist", "Artista", "", "", [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false));
+        f.campos.push_back(cTexto("album", "Album", "Álbum", "Becomes the name of the container", "Vira o nome do container", definirListaENome, false));
         f.campos.push_back(cContexto());
     } else if (folha == "audio.preservation.vinyl") {
-        f.campos.push_back(cTexto("artist_album", "Artist and album", "Artista e álbum", "", "", [](SobreMaterial& s, const std::string& v) { if (s.subject.empty()) s.subject = v; }));
+        f.campos.push_back(cTexto("artist", "Artist", "Artista", "", "", [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false));
+        f.campos.push_back(cTexto("album", "Album", "Álbum", "Becomes the name of the container", "Vira o nome do container", definirListaENome, false));
         f.campos.push_back(cEscolha("side", "Side", "Lado", { { "both", "Both", "Ambos" }, { "a", "Side A", "Lado A" }, { "b", "Side B", "Lado B" } }));
         const std::vector<Op> velocidades = { { "33", "33 1/3 RPM", "33 1/3 RPM" }, { "45", "45 RPM", "45 RPM" }, { "78", "78 RPM", "78 RPM" } };
         const std::vector<Op> tamanhos = { { "7", "7\"", "7\"" }, { "10", "10\"", "10\"" }, { "12", "12\"", "12\"" }, { "16", "16\"", "16\"" } };
@@ -530,7 +542,8 @@ Ficha fichaAudio(const std::string& folha) {
         };
         juntarCapa(f);
     } else if (folha == "audio.preservation.tape") {
-        f.campos.push_back(cTexto("artist_title", "Artist and title", "Artista e título", "", "", [](SobreMaterial& s, const std::string& v) { if (s.subject.empty()) s.subject = v; }));
+        f.campos.push_back(cTexto("artist", "Artist", "Artista", "", "", [](SobreMaterial& s, const std::string& v) { somarAssunto(s, v); }, false));
+        f.campos.push_back(cTexto("album", "Album or title", "Álbum ou título", "Becomes the name of the container", "Vira o nome do container", definirListaENome, false));
         f.campos.push_back(cEscolha("condition", "Tape condition", "Estado da fita", { { "good", "Good", "Boa" }, { "worn", "Worn", "Desgastada" }, { "damaged", "Damaged", "Danificada" } }));
         f.campos.push_back(cEscolha("noise_reduction", "Noise reduction", "Redução de ruído",
                                     { { "none", "None", "Nenhuma" }, { "dolby_b", "Dolby B", "Dolby B" }, { "dolby_c", "Dolby C", "Dolby C" }, { "dbx", "dbx", "dbx" } }));
@@ -704,7 +717,7 @@ Ficha fichaYoutube() {
     // Nome e descrição vão para a ficha Dublin Core do arquivo de vídeo (dc_title, dc_description), não para as notas.
     // SUBJECT = categoria do vídeo; LIST = do que se trata (até 4 palavras).
     f.campos.push_back(cTexto("nome", "Video name", "Nome do vídeo", "", "",
-                              [](SobreMaterial& s, const std::string& v) { s.camposDoVideo.push_back({ "dc_title", v }); }, false));
+                              [](SobreMaterial& s, const std::string& v) { s.camposDoVideo.push_back({ "dc_title", v }); s.nomeContainer = v; }, false));
     f.campos.push_back(cEscolha("categoria", "Category", "Categoria",
                                 { { "vlog", "Vlog", "Vlog" }, { "short", "Short", "Short" }, { "tutorial", "Tutorial", "Tutorial" }, { "review", "Review", "Review" },
                                   { "interview", "Interview", "Entrevista" }, { "music", "Music video", "Videoclipe" }, { "live", "Livestream", "Transmissão ao vivo" },
@@ -814,6 +827,7 @@ std::shared_ptr<const SobreMaterial> mesclarContextosImportar(std::shared_ptr<co
     if (!extra->iconeContainer.empty()) r->iconeContainer = extra->iconeContainer;
     if (!extra->geoPadrao.vazio()) r->geoPadrao = extra->geoPadrao;
     if (!extra->folhaId.empty()) r->folhaId = extra->folhaId;
+    if (!extra->nomeContainer.empty()) r->nomeContainer = extra->nomeContainer;
     if (!extra->respostas.empty()) r->respostas = extra->respostas;
     return r;
 }

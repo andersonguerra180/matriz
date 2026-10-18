@@ -58,6 +58,8 @@ struct SobreMaterial {
     // (id do campo -> texto). Guardados no container para o usuário poder editar o questionário inicial depois.
     // Não são metadado do arquivo (não entram em vazio()).
     std::string folhaId;
+    // Nome do container (o álbum / projeto / música / vídeo da ficha): vira o nome mostrado do container e a LIST dos arquivos.
+    std::string nomeContainer;
     std::map<std::string, std::string> respostas;
 
     // Ícone do container escolhido na ficha (nome do recurso embutido, ex.: "ci_daw_pro_tools_png" para a DAW da produção).
