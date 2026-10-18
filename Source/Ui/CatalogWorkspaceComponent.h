@@ -48,6 +48,8 @@ public:
 
     std::function<void()> aoVoltar;
     std::function<void(std::string folderId)> aoAgruparEIrParaTree;
+    // Botão direito num PROJECT > Edit Project Info (quem tem o overlay da tela principal abre a ficha).
+    std::function<void(const std::string& nestId, const std::string& origem)> aoEditarProjeto;
     std::function<void(const std::string& itemId)> aoItemAlterado;
 
 private:
@@ -66,6 +68,7 @@ private:
         int sessao = 0;
         int outros = 0;  // OTHERS: o que nenhuma categoria reconhece (inclusive extensão desconhecida)
         int phoneDump = 0;
+        int projetos = 0;  // capas de containers PROJECT (DDP, vinil, fita, produção, YouTube)
         int revisao = 0;
         int vulneraveis = 0;
         int mergeConflitos = 0;

@@ -1,4 +1,5 @@
 #include "CatalogWorkspaceComponent.h"
+#include "ContainerVisual.h"
 
 #include <algorithm>
 #include "AcoesItem.h"
@@ -930,6 +931,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         else if (cat.chave == "sessions")    cat.rotulo = matriz::i18n::t("catwork.sessions");
         else if (cat.chave == "others")      cat.rotulo = matriz::i18n::t("catwork.others");
         else if (cat.chave == "phone_dump")  cat.rotulo = "Phone Dump";
+        else if (cat.chave == "projects")    cat.rotulo = matriz::i18n::t("catwork.projects");
     }
     for (size_t i = 0; i < categorias_.size() && i < botoesCategorias_.size(); ++i) {
         juce::String texto = categorias_[i].rotulo;
@@ -987,6 +989,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
     categorias_.push_back({matriz::i18n::t("catwork.others"), "others", 0});
     categorias_.push_back({"Phone Dump", "phone_dump", 0});
+    categorias_.push_back({matriz::i18n::t("catwork.projects"), "projects", 0});
 
     // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
     // duplicatas (valor perdedor no histórico), pra revisão.
@@ -1238,6 +1241,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
     } catch (...) {}
 
+    // PROJECT: container nascido de um questionário (DDP, vinil, fita, produção, YouTube).
+    auto ehProjeto = [](const ItemResumo& it) { return ehOrigemProject(juce::String(it.nestOrigem)); };
+
     auto ehDump = [&](const ItemResumo& it) -> bool {
         juce::String src(it.sourceMedia);
         juce::String path(it.caminhoAbsolutoOrigem);
@@ -1287,9 +1293,11 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             bool match = false;
             if (*tipoMidiaSelecionado_ == "phone_dump") {
                 match = ehDump(item);
+            } else if (*tipoMidiaSelecionado_ == "projects") {
+                match = ehProjeto(item);  // só os containers PROJECT (a capa de cada um)
             } else {
-                if (ehDump(item)) {
-                    match = false; // Dump items do not appear in other lists until extracted!
+                if (ehDump(item) || ehProjeto(item)) {
+                    match = false; // Dump e PROJECT só aparecem na categoria deles (e dentro do container)!
                 } else {
                     auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                     auto cat = matriz::ingest::categoriaPorExtensao(ext);
@@ -1589,6 +1597,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                                        [](const ItemResumo& r) { return r.nestTotal > 1 && !r.nestCapa; }),
                         itens.end());
 
+            auto ehProjeto = [](const ItemResumo& it) { return ehOrigemProject(juce::String(it.nestOrigem)); };
+
             auto ehDump = [&](const ItemResumo& it) -> bool {
                 juce::String src(it.sourceMedia);
                 juce::String path(it.caminhoAbsolutoOrigem);
@@ -1626,6 +1636,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                 auto cat = matriz::ingest::categoriaPorExtensao(ext);
                 const bool isDump = ehDump(item);
+                const bool isProjeto = ehProjeto(item);
 
                 // Passa por cada filtro ativo? (sem filtro = passa)
                 const bool pAno = anosParaTipo.empty() ||
@@ -1636,7 +1647,9 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 if (filtroTipoMidiaAnos.has_value()) {
                     if (*filtroTipoMidiaAnos == "phone_dump") {
                         pTipo = isDump;
-                    } else if (isDump) {
+                    } else if (*filtroTipoMidiaAnos == "projects") {
+                        pTipo = isProjeto;
+                    } else if (isDump || isProjeto) {
                         pTipo = false;
                     } else {
                         if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
@@ -1670,7 +1683,9 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 // MEDIA TYPE: ano + collection + subject + lista (não filtra por si mesmo).
                 if (pAno && pColl && pSubj && pLista) {
-                    if (isDump) {
+                    if (isProjeto) {
+                        ++res.projetos;
+                    } else if (isDump) {
                         ++res.phoneDump;
                     } else {
                         switch (cat) {
@@ -1823,6 +1838,7 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("sessions", res.sessao);
     definirContagem("others", res.outros);
     definirContagem("phone_dump", res.phoneDump);
+    definirContagem("projects", res.projetos);
 
     bool reconstruiuAnoOuCollection = false;
 
@@ -2263,7 +2279,10 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
         return (safeThis != nullptr && safeThis->mosaico_) ? safeThis->mosaico_->itemEmMemoria(id) : nullptr;
     };
 
-    auto menu = acoes::construirMenu(projeto_, itemIds, ganchos.itemEmMemoria);
+    ganchos.aoEditarQuestionario = [safeThis](const std::string& nestId, const std::string& origem) {
+        if (safeThis && safeThis->aoEditarProjeto) safeThis->aoEditarProjeto(nestId, origem);
+    };
+    auto menu = acoes::construirMenu(projeto_, itemIds, ganchos.itemEmMemoria, true);
 
     if (itemIds.size() > 1) {
         menu.addSeparator();
@@ -2461,6 +2480,7 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
         else if (ch == "sessions")  cor = juce::Colour(0xff2b9348);
         else if (ch == "others")    cor = juce::Colour(0xff8a8f98);
         else if (ch == "phone_dump") cor = juce::Colour(0xff0284c7);
+        else if (ch == "projects")  cor = juce::Colour(0xffb8860b);
         else continue;
         auto btnBounds = botoesCategorias_[i]->getBounds();
         float cy = btnBounds.getCentreY() - 4.0f;
