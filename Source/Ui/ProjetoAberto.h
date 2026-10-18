@@ -904,6 +904,17 @@ public:
     // CONTAINER de importação (Intake): agrupa os itens recém-ingeridos de uma importação (galeria do celular, Drive,
     // Bridge, Lightroom) num nest com `origem`. Sem Undo (é estado de triagem, não edição). Itens já em nest ficam de fora.
     std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem);
+    // "Group as Project Container": container criado DEPOIS da importação, por arquivos já no projeto. `tipo` = nest.tipo_container,
+    // `origem` = origem do player do tipo (youtube, ddp...) ou a genérica; `nome` vazio = sem nome próprio. Devolve "" se há menos de
+    // 2 itens ou algum já está em nest/container. Capa = o 1º por data. Fora da message thread; sem eventos (quem chama dispara).
+    std::string criarContainerDeTipo(const std::vector<std::string>& itemIds, const std::string& tipo, const std::string& origem,
+                                     const std::string& nome);
+    // Change Container Type: troca tipo e origem; os membros ficam. Questionário guardado de outro cartão é descartado
+    // (as respostas dele já estão nos arquivos). Fora da message thread.
+    bool trocarTipoDoContainer(const std::string& nestId, const std::string& tipo, const std::string& origem);
+    // CONTENT (collection_type) só onde está vazio, numa transação só. Devolve quantos itens receberam. O evento "metadado"
+    // sai pela message thread.
+    int definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor);
     // Capa do container (vinil, fita): reduz a imagem, grava em .miniaturas e guarda o caminho no nest. Roda fora da message thread.
     bool definirCapaDoContainer(const std::string& nestId, const juce::File& imagem);
     // Ícone do container escolhido na ficha (nome do recurso embutido). Fora da message thread.

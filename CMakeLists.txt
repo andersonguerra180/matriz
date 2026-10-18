@@ -572,6 +572,7 @@ target_sources(matriz PRIVATE
     Source/Ui/CatalogoComponent.cpp
     Source/Ui/ConsolidacaoDialogo.cpp
     Source/Ui/SelecionarTipoMidiaDialogo.cpp
+    Source/Ui/TiposContainer.cpp
     Source/Ui/InitialRelinkDialog.cpp
     Source/Ui/OfflineAssetRelinkDialog.cpp
     Source/Ui/MainComponent.cpp

@@ -4681,6 +4681,83 @@ std::string ProjetoAberto::criarContainerImportacao(const std::vector<std::strin
     return nestId;
 }
 
+std::string ProjetoAberto::criarContainerDeTipo(const std::vector<std::string>& itemIds, const std::string& tipo, const std::string& origem,
+                                                const std::string& nome) {
+    if (somenteLeitura_ || !projeto_ || itemIds.size() < 2 || tipo.empty() || origem.empty()) return {};
+    auto& db = projeto_->registro();
+    const auto jaEmNest = mapaDeNests(db);
+    for (const auto& id : itemIds) if (jaEmNest.count(id) != 0) return {};
+    const std::string capa = ordenarPorDataDeCriacao(itemIds).front();
+    const std::string nestId = matriz::model::novoUuid();
+    const std::string agora = matriz::model::agoraIso8601();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem, tipo_container, nome) VALUES (?, ?, ?, ?, ?, ?, ?)",
+               {matriz::db::Value::of(nestId), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(capa),
+                matriz::db::Value::of(agora), matriz::db::Value::of(origem), matriz::db::Value::of(tipo),
+                nome.empty() ? matriz::db::Value::null() : matriz::db::Value::of(nome)});
+        for (const auto& id : itemIds)
+            db.run("INSERT INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(id), matriz::db::Value::of(nestId), matriz::db::Value::of(agora)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return {};
+    }
+    return nestId;
+}
+
+bool ProjetoAberto::trocarTipoDoContainer(const std::string& nestId, const std::string& tipo, const std::string& origem) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || tipo.empty() || origem.empty()) return false;
+    auto& db = projeto_->registro();
+    const std::string json = questionarioDoContainer(nestId);
+    const std::string folhaAtual = json.empty() ? std::string() : juce::JSON::parse(juce::String::fromUTF8(json.c_str()))["folha"].toString().toStdString();
+    const bool temQuestionario = !folhaAtual.empty();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        db.run("UPDATE nest SET origem = ?, tipo_container = ? WHERE id = ?",
+               {matriz::db::Value::of(origem), matriz::db::Value::of(tipo), matriz::db::Value::of(nestId)});
+        if (temQuestionario && folhaAtual != tipo)  // o questionario era de outro cartao: Edit Project Info nao se aplica mais
+            db.run("UPDATE nest SET questionario = NULL WHERE id = ?", {matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    return true;
+}
+
+int ProjetoAberto::definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor) {
+    if (somenteLeitura_ || !projeto_ || itemIds.empty() || valor.empty()) return 0;
+    auto& db = projeto_->registro();
+    const std::string agora = matriz::model::agoraIso8601();
+    std::vector<std::string> gravados;
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const auto& id : itemIds) {
+            auto st = db.prepare("SELECT COALESCE(TRIM(collection_type), ''), "
+                                 "COALESCE((SELECT TRIM(valor) FROM item_campo WHERE item_id = ?1 AND campo_id = 'collection_type' LIMIT 1), '') "
+                                 "FROM item WHERE id = ?1");
+            st.bind(1, matriz::db::Value::of(id));
+            if (!st.step() || !st.columnText(0).empty() || !st.columnText(1).empty()) continue;  // o que o usuario preencheu nunca e sobrescrito
+            db.run("UPDATE item SET collection_type = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                   {matriz::db::Value::of(valor), matriz::db::Value::of(agora), matriz::db::Value::of(id)});
+            db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'collection_type', ?, 'humano', ?) "
+                   "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
+                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id), matriz::db::Value::of(valor), matriz::db::Value::of(agora)});
+            gravados.push_back(id);
+        }
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("definirContentSeVazio: " + juce::String(e.what()));
+        return 0;
+    }
+    escrita.unlock();
+    if (!gravados.empty())
+        juce::MessageManager::callAsync([gravados] { EventBus::obterInstancia().dispararItensAlterados(gravados, "metadado"); });
+    return static_cast<int>(gravados.size());
+}
+
 bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce::File& imagem) {
     if (somenteLeitura_ || !projeto_ || nestId.empty() || !imagem.existsAsFile()) return false;
     juce::Image img = juce::ImageFileFormat::loadFrom(imagem);
