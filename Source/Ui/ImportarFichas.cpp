@@ -549,7 +549,7 @@ Ficha fichaAudio(const std::string& folha) {
         f.campos.push_back(cEscolha("noise_reduction", "Noise reduction", "Redução de ruído",
                                     { { "none", "None", "Nenhuma" }, { "dolby_b", "Dolby B", "Dolby B" }, { "dolby_c", "Dolby C", "Dolby C" }, { "dbx", "dbx", "dbx" } }));
         f.campos.push_back(cFormato(formatosPorNome({ "1\" Tape", "2\" Tape", "1/4\" Tape", "1/2\" Tape", "Cassette Tape", "8-Track Cartridge" })));
-        f.campos.push_back(cIdentificacao());
+        f.campos.push_back(cTexto("media_id", "Tape Label", "Etiqueta da fita", "Label, number or name written on it", "Etiqueta, número ou nome escrito nela"));
         f.campos.push_back(cContexto());
         juntarCapa(f);
     } else if (folha == "audio.general.soundtrack") {
