@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -53,6 +54,12 @@ struct SobreMaterial {
     // Container sem capa escolhida: a miniatura dele é um frame sorteado do meio do vídeo principal (YouTube Production).
     bool capaFrameDoVideo = false;
 
+    // Questionário que gerou este contexto: o card do IMPORT (ex.: "audio.production.project") e as respostas da ficha
+    // (id do campo -> texto). Guardados no container para o usuário poder editar o questionário inicial depois.
+    // Não são metadado do arquivo (não entram em vazio()).
+    std::string folhaId;
+    std::map<std::string, std::string> respostas;
+
     // Ícone do container escolhido na ficha (nome do recurso embutido, ex.: "ci_daw_pro_tools_png" para a DAW da produção).
     // Vale quando não há capa; sem os dois, o container usa o ícone da origem.
     std::string iconeContainer;
@@ -80,6 +87,10 @@ public:
     // Aplica ao item recém-ingerido. Falhas são registradas no log e nunca derrubam a ingestão.
     // `descricaoDoItem` (opcional) troca o texto da descrição só para este item — a legenda de uma mídia do WhatsApp.
     void aplicar(const std::string& itemId, const std::string* descricaoDoItem = nullptr);
+
+    // Tira do item o que ESTE contexto tinha posto (tags e pessoas, partes do SUBJECT, o texto de NOTES e a LIST iguais),
+    // para o questionário poder ser editado sem deixar a resposta antiga para trás. Só o que o usuário não mexeu depois.
+    void desfazer(const std::string& itemId);
 
 private:
     struct Impl;

@@ -3866,12 +3866,21 @@ void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<in
     m.addItem(2, isPt ? juce::String::fromUTF8("Mostrar Origem") : "Show at Source");
     m.addSeparator();
     m.addItem(3, isPt ? juce::String::fromUTF8("Obter Informações...") : "Get Info...");
+    const auto& itemClicado = todosItens_[static_cast<size_t>(itemIndex)];
+    const bool ehContainer = itemEhContainer(itemClicado) && itemClicado.containerOrigem != "whatsapp";
+    if (ehContainer) {
+        m.addSeparator();
+        m.addItem(4, i18n::t("imp.editar_questionario"));
+    }
+    const std::string nestDoClique = itemClicado.containerNestId, origemDoClique = itemClicado.containerOrigem.toStdString();
 
     juce::Component::SafePointer<IntakeWorkspaceComponent> safeThis(this);
     m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(screenPos.x, screenPos.y, 1, 1)),
-        [safeThis, itemIndex](int result) {
+        [safeThis, itemIndex, nestDoClique, origemDoClique](int result) {
             if (!safeThis) return;
-            if (result == 1) {
+            if (result == 4) {
+                safeThis->editarQuestionarioDoContainerDoItem(nestDoClique, origemDoClique);
+            } else if (result == 1) {
                 safeThis->alternarMarcaRDeItem(itemIndex);
             } else if (result == 2) {
                 safeThis->abrirArquivoOrigem(itemIndex);
@@ -4363,6 +4372,23 @@ void IntakeWorkspaceComponent::abrirFichaDeImportacao(const std::string& id, con
 }
 
 // ── YouTube Production ───────────────────────────────────────────────────────────────────────────────────
+// Botão direito num container > Editar questionário inicial: a ficha reabre com as respostas guardadas.
+void IntakeWorkspaceComponent::editarQuestionarioDoContainerDoItem(const std::string& nestId, const std::string& origem) {
+    if (overlayAtual_ != nullptr || nestId.empty()) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    editarQuestionarioDoContainer(*overlayAtual_, projeto_, nestId, origem, [seguro](bool aplicou) {
+        juce::MessageManager::callAsync([seguro, aplicou] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (aplicou) seguro->recarregar();
+        });
+    });
+    resized();
+}
+
 void IntakeWorkspaceComponent::abrirFluxoYoutube(const std::vector<std::string>& caminho) {
     if (overlayAtual_ != nullptr) return;
     overlayAtual_ = std::make_unique<PainelOverlay>();

@@ -38,6 +38,7 @@ enum Comando {
     kSubstituirArquivo,
     kObterExif,
     kRevisarConflitosMerge,
+    kEditarQuestionario,
     // Ids das pastas de destino ("Enviar para pasta") começam aqui, pra
     // nunca colidirem com os comandos fixos acima por mais que a lista de
     // pastas cresça.
@@ -529,9 +530,17 @@ void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& ite
 }
 
 juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
-                              ResolvedorItemEmMemoria emMemoria) {
+                              ResolvedorItemEmMemoria emMemoria, bool comEditarQuestionario) {
     juce::PopupMenu menu;
     bool umSo = itemIds.size() == 1;
+
+    // Container de importação: o questionário inicial pode ser editado depois (as respostas voltam preenchidas).
+    if (comEditarQuestionario && umSo) {
+        if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && !nest->origem.empty()) {
+            menu.addItem(kEditarQuestionario, matriz::i18n::t("imp.editar_questionario"));
+            menu.addSeparator();
+        }
+    }
 
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
     menu.addItem(kLimparMetadados, matriz::i18n::t("menu.limpar_metadados") + " (C)");
@@ -603,6 +612,12 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kRenomear:
             renomear(projeto, itemIds, ganchos);
+            break;
+
+        case kEditarQuestionario:
+            if (ganchos.aoEditarQuestionario)
+                if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && !nest->origem.empty())
+                    ganchos.aoEditarQuestionario(nest->nestId, nest->origem);
             break;
 
         case kRenomearEmLote:

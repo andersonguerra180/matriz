@@ -2289,6 +2289,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"imp.node.other.design", "Design / 3D / CAD"},
         {"imp.sub.other", "Web, multimedia, social, design, custom"},
         {"imp.sub.other.design", "CorelDRAW, InDesign, Maya, Blender..."},
+        {"imp.editar_questionario", "Edit initial questionnaire"},
+        {"imp.editar_questionario.sem", "This container has no initial questionnaire to edit."},
         {"imp.ficha.geo.get", "GET"},
         {"imp.ficha.geo.open", "OPEN"},
         {"imp.ficha.endereco", "Address"},

@@ -348,6 +348,7 @@ private:
     void selecionarIntervalo(int tipo, const std::string& deId, const std::string& ateId);
     std::vector<std::string> idsSoltosSelecionados() const;
     void mostrarMenuDeArquivosSoltos();
+    void editarQuestionarioDoContainerSolto(const std::string& nestId, const std::string& origem);
     void adicionarSubmenuDePastas(juce::PopupMenu& menu, const std::string& paiId, const std::vector<std::string>& ids);
     void moverSoltosParaPasta(const std::vector<std::string>& ids, const std::string& pastaId);
     void mostrarNaOrigem(const std::string& itemId);

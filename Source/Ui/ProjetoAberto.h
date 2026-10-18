@@ -17,6 +17,7 @@
 #include "../Consolidacao/Consolidacao.h"
 #include "../Consolidacao/MainEdit.h"
 #include "../Ficha/FichaDefinition.h"
+#include "../Ingest/SobreMaterial.h"
 #include "../Model/Project.h"
 #include "../Preservation/Preservation.h"
 
@@ -898,6 +899,13 @@ public:
     bool definirCapaDoContainer(const std::string& nestId, const juce::File& imagem);
     // Ícone do container escolhido na ficha (nome do recurso embutido). Fora da message thread.
     bool definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso);
+    // Questionário inicial do container (JSON {"folha": ..., "respostas": {...}}), guardado para ser editado depois.
+    std::string questionarioDoContainer(const std::string& nestId) const;
+    void definirQuestionarioDoContainer(const std::string& nestId, const std::string& json);
+    // Editar o questionário: tira dos arquivos do container o que o contexto ANTIGO tinha posto, aplica o NOVO e guarda o JSON.
+    // Uma transação só (container pequeno); message thread.
+    bool reaplicarQuestionarioDoContainer(const std::string& nestId, const matriz::ingest::SobreMaterial& antigo,
+                                          const matriz::ingest::SobreMaterial& novo, const std::string& json);
     // Sem capa escolhida: usa um frame sorteado do meio do maior vídeo do container (YouTube Production). Fora da message thread.
     // O vídeo passa a ser o item que representa o container; `gerarFrame` = também usa um frame dele como capa.
     bool definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame = true);

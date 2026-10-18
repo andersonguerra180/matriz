@@ -813,6 +813,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "nest", "capa_imagem", "TEXT");
     // Ícone do container escolhido na ficha (ex.: a DAW da produção): nome do recurso embutido (ci_daw_pro_tools_png).
     garantirColuna(registro, "nest", "icone", "TEXT");
+    // Questionário inicial do container (JSON: folha + respostas), para editar depois pelo botão direito.
+    garantirColuna(registro, "nest", "questionario", "TEXT");
     garantirColuna(registro, "acervo_pasta", "proposta_id", "TEXT");
     garantirColuna(registro, "acervo_pasta", "origem_caminho", "TEXT");
     registro.exec(

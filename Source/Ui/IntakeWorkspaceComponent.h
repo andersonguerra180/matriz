@@ -264,6 +264,7 @@ private:
     void abrirFichaDeImportacao(const std::string& id, const std::vector<std::string>& caminho);
     // YouTube Production: um vídeo por vez (dados + pasta de produção), com a pergunta "cadastrar outro?" no fim.
     void abrirFluxoYoutube(const std::vector<std::string>& caminho);
+    void editarQuestionarioDoContainerDoItem(const std::string& nestId, const std::string& origem);
     void escolherArquivosYoutube(std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha, const juce::String& aviso);
     void perguntarOutroYoutube(const juce::String& nomeDoVideo);
     void importarYoutubePendentes();

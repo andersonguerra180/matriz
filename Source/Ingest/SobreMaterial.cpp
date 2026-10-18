@@ -238,4 +238,81 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
     }
 }
 
+void AplicadorSobreMaterial::desfazer(const std::string& itemId) {
+    auto& im = *impl_;
+    auto& db = im.db;
+    const auto& sm = im.sobre;
+    if (itemId.empty()) return;
+    using namespace matriz::model::nomes;
+    const std::string agora = matriz::model::agoraIso8601();
+    bool savepointAberto = false;
+    try {
+        db.run("SAVEPOINT desfazer_sobre", {});
+        savepointAberto = true;
+        bool mudou = false;
+
+        for (const auto& tag : im.etiquetas) {
+            auto st = db.prepare("SELECT id FROM item_tag WHERE item_id = ? AND lower(tag) = lower(?)");
+            st.bind(1, Value::of(itemId));
+            st.bind(2, Value::of(tag));
+            std::vector<std::string> ids;
+            while (st.step()) ids.push_back(st.columnText(0));
+            for (const auto& id : ids) { db.run("DELETE FROM item_tag WHERE id = ?", {Value::of(id)}); mudou = true; }
+        }
+
+        if (!im.subjectsNovos.empty()) {
+            std::string atual = lerColuna(db, itemId, "dc_subject");
+            if (atual.empty()) atual = lerCampo(db, itemId, "dc_subject");
+            std::set<std::string> tirar;
+            for (const auto& s : im.subjectsNovos) tirar.insert(chave(s));
+            std::string junto;
+            for (const auto& s : dividirSubjects(atual)) {
+                if (tirar.count(chave(s))) continue;
+                junto += (junto.empty() ? "" : ", ") + s;
+            }
+            db.run("UPDATE item SET dc_subject = ? WHERE id = ?", {Value::of(junto), Value::of(itemId)});
+            upsertCampoHumano(db, itemId, "dc_subject", junto, true);
+            mudou = true;
+        }
+
+        if (!sm.descricao.empty()) {
+            auto secoes = matriz::model::parseNotasEstruturadas(lerColuna(db, itemId, "notas_livres"));
+            for (auto it = secoes.begin(); it != secoes.end(); ++it) {
+                if (it->titulo != "NOTES" || it->automatica) continue;
+                const auto pos = it->conteudo.find(sm.descricao);
+                if (pos == std::string::npos) break;
+                it->conteudo.erase(pos, sm.descricao.size());
+                const auto aparar = [](std::string& t) {
+                    t = juce::String(t).trim().toStdString();
+                };
+                // "A\n\n\n\nB" -> "A\n\nB": o separador que sobrou entre os dois trechos some junto.
+                while (it->conteudo.find("\n\n\n\n") != std::string::npos) it->conteudo.replace(it->conteudo.find("\n\n\n\n"), 4, "\n\n");
+                aparar(it->conteudo);
+                if (it->conteudo.empty()) secoes.erase(it);
+                db.run("UPDATE item SET notas_livres = ? WHERE id = ?", {Value::of(matriz::model::serializarNotasEstruturadas(secoes)), Value::of(itemId)});
+                mudou = true;
+                break;
+            }
+        }
+
+        for (const auto& [campo, valor] : sm.campos) {
+            if (campo != "lista" || valor.empty()) continue;
+            db.run("UPDATE item SET lista = '' WHERE id = ? AND lista = ?", {Value::of(itemId), Value::of(valor)});
+            mudou = true;
+        }
+
+        if (mudou) db.run("UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?", {Value::of(agora), Value::of(itemId)});
+        db.run("RELEASE desfazer_sobre", {});
+        savepointAberto = false;
+    } catch (const std::exception& e) {
+        juce::Logger::writeToLog("SobreMaterial: falha ao desfazer em " + juce::String(itemId) + " — " + juce::String(e.what()));
+        if (savepointAberto) {
+            try {
+                db.run("ROLLBACK TO desfazer_sobre", {});
+                db.run("RELEASE desfazer_sobre", {});
+            } catch (...) {}
+        }
+    }
+}
+
 } // namespace matriz::ingest

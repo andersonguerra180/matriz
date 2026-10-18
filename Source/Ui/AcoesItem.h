@@ -39,14 +39,17 @@ struct Ganchos {
     // Opcional (sempre por ÚLTIMO: Ganchos é inicializado por chaves em alguns pontos):
     // dados da grade pra decidir "é foto?" sem obterItemResumo por item.
     ResolvedorItemEmMemoria itemEmMemoria;
+    // Opcional, por ÚLTIMO: abre "Editar questionário inicial" de um container (nestId, origem). Sem ele o item de menu não aparece.
+    std::function<void(const std::string& nestId, const std::string& origem)> aoEditarQuestionario;
 };
 
 // Monta o menu de contexto pra `itemIds` (nunca vazio). Os rótulos mudam de
 // singular pra plural conforme a quantidade.
 // Os estados da seleção (H/K/P/W, "tem foto", "tem capa") saem de UMA passada;
 // `emMemoria` (opcional) evita o obterItemResumo por item.
+// `comEditarQuestionario`: acrescenta "Editar questionário inicial" quando o item único é de um container de importação.
 juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
-                              ResolvedorItemEmMemoria emMemoria = {});
+                              ResolvedorItemEmMemoria emMemoria = {}, bool comEditarQuestionario = false);
 
 // Executa o item de menu escolhido. `resultado` é o id devolvido por
 // PopupMenu::showMenuAsync; 0 (nada escolhido) é ignorado com segurança.

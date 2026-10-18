@@ -1,5 +1,6 @@
 #include "ImportarMenu.h"
 #include "GeoAcoes.h"
+#include "ProjetoAberto.h"
 
 #include <cmath>
 #include <map>
@@ -286,13 +287,19 @@ void juntarCapa(Ficha& f, const char* chaveGrupo = "imp.ficha.capa", const char*
 // ── mostrar uma ficha ─────────────────────────────────────────────────────────────────────────────────────
 
 void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce::String& mensagem, Ficha ficha, AoConcluirFicha aoConcluir,
-                  std::function<void()> aoVoltar) {
+                  std::function<void()> aoVoltar, std::string folhaId = {}, const std::map<std::string, std::string>* iniciais = nullptr) {
     PainelOverlay::Config cfg;
     cfg.titulo = titulo;
     cfg.mensagem = mensagem;
     cfg.trilha = t("moldura.trilha.adicionar");
     cfg.larguraCartao = 620;
-    for (const auto& c : ficha.campos) cfg.campos.push_back(c.def);
+    for (const auto& c : ficha.campos) {
+        cfg.campos.push_back(c.def);
+        if (iniciais != nullptr) {  // editar o questionário: as respostas guardadas voltam preenchidas
+            const auto it = iniciais->find(c.def.id.toStdString());
+            if (it != iniciais->end()) cfg.campos.back().valorInicial = juce::String::fromUTF8(it->second.c_str());
+        }
+    }
     cfg.botoesGrupo = ficha.botoesGrupo;
     if (aoVoltar) cfg.botoes.push_back({ t("imp.voltar"), 3, false, false });
     cfg.botoes.push_back({ t("light.ui.common.cancel"), 0, false, true });
@@ -300,7 +307,7 @@ void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce
     cfg.botoes.push_back({ t("imp.ficha.continuar"), 1, true, false });
     // A ficha inteira (campos e regras) vive dentro do callback: nada aponta para fora dele.
     auto dono = std::make_shared<Ficha>(std::move(ficha));
-    overlay.mostrar(cfg, [aoConcluir, dono, aoVoltar](Resultado r) {
+    overlay.mostrar(cfg, [aoConcluir, dono, aoVoltar, folhaId](Resultado r) {
         if (r.botaoId == 3) { if (aoVoltar) aoVoltar(); return; }  // VOLTAR: reabre o card anterior, sem importar nada
         if (!aoConcluir) return;
         if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
@@ -309,6 +316,8 @@ void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce
         for (const auto& c : dono->campos)
             if (c.aplica) c.aplica(r, *sobre);
         if (dono->depois) dono->depois(r, *sobre);
+        sobre->folhaId = folhaId;
+        for (const auto& [k, v] : r.valores) if (v.trim().isNotEmpty()) sobre->respostas[k.toStdString()] = v.trim().toStdString();
         aoConcluir(true, sobre->vazio() && sobre->capaContainer.empty() && sobre->iconeContainer.empty() ? nullptr : sobre);
     });
 }
@@ -761,6 +770,7 @@ std::shared_ptr<const SobreMaterial> contextoDaFolhaImportar(const std::string& 
     for (const auto& l : tabela) {
         if (id != l.id) continue;
         auto sobre = std::make_shared<SobreMaterial>();
+        sobre->folhaId = id;
         sobre->collectionType = l.content;
         for (const char* tag : l.tags) sobre->tags.push_back(tag);
         if (std::string(l.medium).size() > 0) {
@@ -803,6 +813,8 @@ std::shared_ptr<const SobreMaterial> mesclarContextosImportar(std::shared_ptr<co
     if (!extra->capaContainer.empty()) r->capaContainer = extra->capaContainer;
     if (!extra->iconeContainer.empty()) r->iconeContainer = extra->iconeContainer;
     if (!extra->geoPadrao.vazio()) r->geoPadrao = extra->geoPadrao;
+    if (!extra->folhaId.empty()) r->folhaId = extra->folhaId;
+    if (!extra->respostas.empty()) r->respostas = extra->respostas;
     return r;
 }
 
@@ -881,11 +893,12 @@ bool folhaImportarTemFicha(const std::string& id) {
     return ehOutro(id);
 }
 
-void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::function<void(bool, std::shared_ptr<const SobreMaterial>)> aoConcluir,
-                          std::function<void()> aoVoltar) {
-    if (!folhaImportarTemFicha(id)) { if (aoConcluir) aoConcluir(true, nullptr); return; }
+namespace {
 
-    juce::String titulo, mensagem = t("imp.ficha.msg.opcional");
+// A ficha de uma folha do IMPORT (campos, regras, título e mensagem). Usada ao mostrar a ficha e ao reconstruir o contexto de
+// respostas antigas (editar o questionário).
+Ficha montarFichaDaFolha(const std::string& id, juce::String& titulo, juce::String& mensagem) {
+    mensagem = t("imp.ficha.msg.opcional");
     Ficha ficha;
     if (id.rfind("audio.", 0) == 0) {
         titulo = t("imp.ficha.audio.titulo") + juce::String::fromUTF8(" \xe2\x80\xba ") + t("imp.node." + id);
@@ -923,7 +936,94 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::fu
         mensagem = t("imp.ficha.outro.msg");
         ficha = fichaOutro();
     }
-    mostrarFicha(overlay, titulo, mensagem, std::move(ficha), std::move(aoConcluir), std::move(aoVoltar));
+    return ficha;
+}
+
+}  // namespace
+
+void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id, std::function<void(bool, std::shared_ptr<const SobreMaterial>)> aoConcluir,
+                          std::function<void()> aoVoltar, const std::map<std::string, std::string>* respostasIniciais) {
+    if (!folhaImportarTemFicha(id)) { if (aoConcluir) aoConcluir(true, nullptr); return; }
+    juce::String titulo, mensagem;
+    Ficha ficha = montarFichaDaFolha(id, titulo, mensagem);
+    mostrarFicha(overlay, titulo, mensagem, std::move(ficha), std::move(aoConcluir), std::move(aoVoltar), id, respostasIniciais);
+}
+
+std::shared_ptr<const SobreMaterial> contextoDeRespostasImportar(const std::string& folha, const std::map<std::string, std::string>& respostas) {
+    if (!folhaImportarTemFicha(folha)) return nullptr;
+    juce::String titulo, mensagem;
+    const Ficha ficha = montarFichaDaFolha(folha, titulo, mensagem);
+    Resultado r;
+    for (const auto& [k, v] : respostas) r.valores[juce::String(k)] = juce::String::fromUTF8(v.c_str());
+    auto sobre = std::make_shared<SobreMaterial>();
+    for (const auto& c : ficha.campos)
+        if (c.aplica) c.aplica(r, *sobre);
+    if (ficha.depois) ficha.depois(r, *sobre);
+    sobre->folhaId = folha;
+    sobre->respostas = respostas;
+    return sobre;
+}
+
+std::string questionarioParaJson(const SobreMaterial& sobre) {
+    if (sobre.folhaId.empty()) return {};
+    auto* respostas = new juce::DynamicObject();
+    for (const auto& [k, v] : sobre.respostas) respostas->setProperty(juce::Identifier(k.c_str()), juce::String::fromUTF8(v.c_str()));
+    auto* raiz = new juce::DynamicObject();
+    raiz->setProperty("folha", juce::String(sobre.folhaId));
+    raiz->setProperty("respostas", juce::var(respostas));
+    return juce::JSON::toString(juce::var(raiz), true).toStdString();
+}
+
+bool questionarioDeJson(const std::string& json, std::string& folha, std::map<std::string, std::string>& respostas) {
+    const auto v = juce::JSON::parse(juce::String::fromUTF8(json.c_str()));
+    if (!v.isObject()) return false;
+    folha = v["folha"].toString().toStdString();
+    if (auto* obj = v["respostas"].getDynamicObject())
+        for (const auto& p : obj->getProperties()) respostas[p.name.toString().toStdString()] = p.value.toString().toStdString();
+    return !folha.empty();
+}
+
+std::string folhaDaOrigemDoContainer(const std::string& origem) {
+    if (origem == "production") return "audio.production.project";
+    if (origem == "ddp") return "audio.preservation.ddp";
+    if (origem == "vinyl") return "audio.preservation.vinyl";
+    if (origem == "tape") return "audio.preservation.tape";
+    if (origem == "youtube") return "videos.youtube";
+    return {};
+}
+
+void editarQuestionarioDoContainer(PainelOverlay& overlay, ProjetoAberto& projeto, const std::string& nestId, const std::string& origem,
+                                   std::function<void(bool)> aoFechar) {
+    std::string folha;
+    std::map<std::string, std::string> respostas;
+    const std::string json = projeto.questionarioDoContainer(nestId);
+    if (json.empty() || !questionarioDeJson(json, folha, respostas)) {  // container de antes desta função: ficha em branco da origem
+        folha = folhaDaOrigemDoContainer(origem);
+        respostas.clear();
+    }
+    if (folha.empty() || !folhaImportarTemFicha(folha)) {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, t("imp.editar_questionario"), t("imp.editar_questionario.sem"));
+        if (aoFechar) aoFechar(false);
+        return;
+    }
+    // O que o card já implica (tags dele) não é resposta do usuário: não sai ao trocar as respostas.
+    auto antigo = contextoDeRespostasImportar(folha, respostas);
+    juce::Component::SafePointer<juce::Component> seguro(&overlay);
+    ProjetoAberto* proj = &projeto;
+    mostrarFichaImportar(overlay, folha,
+        [proj, nestId, folha, antigo, aoFechar](bool continuar, std::shared_ptr<const SobreMaterial> novo) {
+            if (!continuar || novo == nullptr) { if (aoFechar) aoFechar(false); return; }
+            SobreMaterial tirar = antigo != nullptr ? *antigo : SobreMaterial{};
+            if (const auto card = contextoDaFolhaImportar(folha)) {
+                for (const auto& tag : card->tags)
+                    tirar.tags.erase(std::remove_if(tirar.tags.begin(), tirar.tags.end(),
+                                                    [&](const std::string& x) { return juce::String(x).equalsIgnoreCase(juce::String(tag)); }),
+                                     tirar.tags.end());
+            }
+            const bool ok = proj->reaplicarQuestionarioDoContainer(nestId, tirar, *novo, questionarioParaJson(*novo));
+            if (aoFechar) aoFechar(ok);
+        },
+        nullptr, &respostas);
 }
 
 } // namespace matriz::ui

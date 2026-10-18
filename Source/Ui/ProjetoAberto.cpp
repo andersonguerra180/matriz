@@ -4693,6 +4693,50 @@ bool ProjetoAberto::definirIconeDoContainer(const std::string& nestId, const std
     return true;
 }
 
+std::string ProjetoAberto::questionarioDoContainer(const std::string& nestId) const {
+    if (!projeto_ || nestId.empty()) return {};
+    try {
+        auto st = leitura().prepare("SELECT questionario FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nestId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    } catch (...) {}
+    return {};
+}
+
+void ProjetoAberto::definirQuestionarioDoContainer(const std::string& nestId, const std::string& json) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || json.empty()) return;
+    try {
+        projeto_->registro().run("UPDATE nest SET questionario = ? WHERE id = ?", {matriz::db::Value::of(json), matriz::db::Value::of(nestId)});
+    } catch (...) {}
+}
+
+bool ProjetoAberto::reaplicarQuestionarioDoContainer(const std::string& nestId, const matriz::ingest::SobreMaterial& antigo,
+                                                      const matriz::ingest::SobreMaterial& novo, const std::string& json) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
+    if (!projeto_ || nestId.empty()) return false;
+    const auto membros = membrosDoNest(nestId);
+    if (membros.empty()) return false;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        {
+            matriz::ingest::AplicadorSobreMaterial tirar(db, antigo);
+            matriz::ingest::AplicadorSobreMaterial por(db, novo);
+            for (const auto& id : membros) { tirar.desfazer(id); por.aplicar(id); }
+        }
+        db.run("UPDATE nest SET questionario = ? WHERE id = ?", {matriz::db::Value::of(json), matriz::db::Value::of(nestId)});
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("reaplicarQuestionarioDoContainer: " + juce::String(e.what()));
+        return false;
+    }
+    writeLock.unlock();
+    EventBus::obterInstancia().dispararItensAlterados(membros, "metadado");
+    return true;
+}
+
 bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame) {
     if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
     juce::File video;

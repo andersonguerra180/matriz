@@ -15,6 +15,7 @@
 #include "ConversaWhatsappComponent.h"
 #include "Tablet.h"
 #include "ContainerVisual.h"
+#include "ImportarMenu.h"
 #include "LogosTipoArquivo.h"
 #include "TrashWindow.h"
 #include "../Celular/ExistentesProjeto.h"
@@ -4870,12 +4871,38 @@ void ArvoreBackupComponent::removerSoltosDoBackup(const std::vector<std::string>
     recarregar();
 }
 
+// Botão direito num container solto > Editar questionário inicial.
+void ArvoreBackupComponent::editarQuestionarioDoContainerSolto(const std::string& nestId, const std::string& origem) {
+    if (overlayAtual_ != nullptr || nestId.empty()) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    editarQuestionarioDoContainer(*overlayAtual_, projeto_, nestId, origem, [seguro](bool aplicou) {
+        juce::MessageManager::callAsync([seguro, aplicou] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (aplicou) seguro->recarregar();
+        });
+    });
+    resized();
+}
+
 void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
     const auto ids = idsSoltosSelecionados();
     if (ids.empty()) return;
     juce::PopupMenu menu;
     juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
     const bool unico = ids.size() == 1;
+    if (unico) {
+        for (const auto& lf : looseFiles_) {
+            if (lf.id != ids.front() || !lf.ehContainer) continue;
+            const std::string nestId = lf.nestId, origem = lf.containerOrigem;
+            menu.addItem(i18n::t("imp.editar_questionario"), true, false, [seguro, nestId, origem] { if (seguro) seguro->editarQuestionarioDoContainerSolto(nestId, origem); });
+            menu.addSeparator();
+            break;
+        }
+    }
     menu.addItem(i18n::t("light.ui.mb.ctx.showAtSource"), unico, false, [seguro, ids] { if (seguro) seguro->mostrarNaOrigem(ids.front()); });
     juce::PopupMenu mover;
     adicionarSubmenuDePastas(mover, "", ids);

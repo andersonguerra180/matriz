@@ -2312,6 +2312,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"imp.node.other.design", "Design / 3D / CAD"},
         {"imp.sub.other", "Web, multimídia, redes, design, personalizado"},
         {"imp.sub.other.design", "CorelDRAW, InDesign, Maya, Blender..."},
+        {"imp.editar_questionario", "Editar questionário inicial"},
+        {"imp.editar_questionario.sem", "Este container não tem questionário inicial para editar."},
         {"imp.ficha.geo.get", "OBTER"},
         {"imp.ficha.geo.open", "ABRIR"},
         {"imp.ficha.endereco", "Endereço"},

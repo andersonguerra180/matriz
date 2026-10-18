@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,9 +41,23 @@ bool folhaImportarTemFicha(const std::string& id);
 // Mostra a ficha da folha. `aoConcluir(continuar, contexto)`: continuar=false = cancelou tudo; contexto nulo = o
 // usuário pulou ou não respondeu nada.
 // `aoVoltar` (opcional): quando existe a ficha ganha o botão VOLTAR, que chama este callback em vez de concluir.
+// `respostasIniciais` (opcional): respostas guardadas de um questionário anterior, que voltam preenchidas (editar o questionário).
 void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
                           std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir,
-                          std::function<void()> aoVoltar = nullptr);
+                          std::function<void()> aoVoltar = nullptr,
+                          const std::map<std::string, std::string>* respostasIniciais = nullptr);
+
+// Questionário inicial de um CONTAINER: o que cada resposta pôs nos arquivos, a gravação no container (JSON) e a edição depois.
+class ProjetoAberto;
+std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDeRespostasImportar(const std::string& folha,
+                                                                                const std::map<std::string, std::string>& respostas);
+std::string questionarioParaJson(const matriz::ingest::SobreMaterial& sobre);  // "" = sem questionário
+bool questionarioDeJson(const std::string& json, std::string& folha, std::map<std::string, std::string>& respostas);
+std::string folhaDaOrigemDoContainer(const std::string& origem);  // origem do container -> card do IMPORT ("" = não tem)
+// Botão direito > "Editar questionário inicial": reabre a ficha com as respostas guardadas e, ao continuar, troca as respostas
+// antigas pelas novas em todos os arquivos do container. `aoFechar(aplicou)` roda sempre ao terminar (aplicou = gravou mudanças).
+void editarQuestionarioDoContainer(PainelOverlay& overlay, ProjetoAberto& projeto, const std::string& nestId, const std::string& origem,
+                                   std::function<void(bool)> aoFechar);
 
 // YouTube Production: os arquivos de UM vídeo — o vídeo (obrigatório), a thumbnail e o roteiro (documento, PDF, texto...).
 struct ArquivosYoutube {

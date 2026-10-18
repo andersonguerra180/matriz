@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "ImportarMenu.h"
 #include "JanelaPastaFlutuante.h"
 #include "ContainerVisual.h"
 #include "../Model/Inbox.h"
@@ -1368,6 +1369,14 @@ matriz::ui::acoes::Ganchos MainComponent::ganchosDeAcao() {
     ganchos.itemEmMemoria = [this](const std::string& id) -> const ItemResumo* {
         return mosaico_ ? mosaico_->itemEmMemoria(id) : nullptr;
     };
+    ganchos.aoEditarQuestionario = [this](const std::string& nestId, const std::string& origem) {
+        if (!projetoAberto_) return;
+        editarQuestionarioDoContainer(overlay_, *projetoAberto_, nestId, origem, [this](bool aplicou) {
+            if (!aplicou) return;
+            if (mosaico_) mosaico_->recarregar();
+            if (intakeWorkspace_) intakeWorkspace_->recarregar();
+        });
+    };
     return ganchos;
 }
 
@@ -1375,7 +1384,7 @@ void MainComponent::abrirMenuContextoItens(std::vector<std::string> itemIds) {
     if (!projetoAberto_ || itemIds.empty()) return;
 
     auto ganchos = ganchosDeAcao();
-    auto menu = matriz::ui::acoes::construirMenu(*projetoAberto_, itemIds, ganchos.itemEmMemoria);
+    auto menu = matriz::ui::acoes::construirMenu(*projetoAberto_, itemIds, ganchos.itemEmMemoria, true);
     ProjetoAberto* projeto = projetoAberto_.get();
     menu.showMenuAsync(juce::PopupMenu::Options(), [projeto, itemIds, ganchos](int resultado) {
         matriz::ui::acoes::executar(resultado, *projeto, itemIds, ganchos);
@@ -4182,18 +4191,20 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         const std::string capaDoContainer = sobre != nullptr ? sobre->capaContainer : std::string();
         const bool capaFrameDoVideo = sobre != nullptr && sobre->capaFrameDoVideo;
         const std::string iconeDoContainer = sobre != nullptr ? sobre->iconeContainer : std::string();
+        const std::string questionarioJson = sobre != nullptr ? questionarioParaJson(*sobre) : std::string();  // para editar depois
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
-        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer](const std::vector<std::string>& processados) {
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson](const std::vector<std::string>& processados) {
             if (!seguroContainer || !seguroContainer->projetoAberto_) return;
             std::vector<std::string> doContainer;
             for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
             if (doContainer.size() < 2) return;
             ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
-            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer] {
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson] {
                 try {
                     const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
                     if (!nestId.empty() && !iconeDoContainer.empty()) proj->definirIconeDoContainer(nestId, iconeDoContainer);
+                    if (!nestId.empty() && !questionarioJson.empty()) proj->definirQuestionarioDoContainer(nestId, questionarioJson);
                     if (!nestId.empty() && !capaDoContainer.empty()) proj->definirCapaDoContainer(nestId, juce::File(capaDoContainer));
                     // YouTube Production: o vídeo representa o container (preview ao abrir) e, sem thumbnail, dá o frame da capa.
                     if (!nestId.empty() && capaFrameDoVideo) proj->definirCapaDoContainerComFrameDeVideo(nestId, capaDoContainer.empty());

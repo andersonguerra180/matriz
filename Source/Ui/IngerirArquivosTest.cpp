@@ -1151,7 +1151,9 @@ int rodarTestImportarComContexto() {
             juce::File capa = tmpRoot.getChildFile("capa_vinil.png");
             gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=orange:s=800x800", "-frames:v", "1",
                              capa.getFullPathName()});
-            auto ctxVinil = std::make_shared<matriz::ingest::SobreMaterial>(*contextoDaFolhaImportar("audio.preservation.vinyl"));
+            const std::map<std::string, std::string> respostasVelhas = { { "artist_album", "Banda Velha" } };
+            auto ctxVinil = std::make_shared<matriz::ingest::SobreMaterial>(
+                *mesclarContextosImportar(contextoDaFolhaImportar("audio.preservation.vinyl"), contextoDeRespostasImportar("audio.preservation.vinyl", respostasVelhas)));
             ctxVinil->capaContainer = capa.getFullPathName().toStdString();
             checar(ctxVinil->containerOrigem == "vinyl", "audio.preservation.vinyl pede container 'vinyl'");
             mainComponent.ingerirArquivos({pasta}, true, ctxVinil);
@@ -1172,6 +1174,36 @@ int rodarTestImportarComContexto() {
             const bool achouCapaItem = capaItem.step();
             checar(achouCapaItem && mainComponent.projetoAberto()->capaImagemDoContainer(capaItem.columnText(0)).has_value(),
                    "capaImagemDoContainer devolve a imagem para o item-capa");
+
+            // Editar o questionário inicial: as respostas ficam guardadas no container e trocá-las tira a resposta antiga dos arquivos.
+            {
+                auto ninho = registro.prepare("SELECT id FROM nest WHERE origem = 'vinyl' AND capa_imagem IS NOT NULL LIMIT 1");
+                const bool achou = ninho.step();
+                const std::string nestId = achou ? ninho.columnText(0) : std::string();
+                auto* proj = mainComponent.projetoAberto();
+                std::string folha;
+                std::map<std::string, std::string> guardadas;
+                checar(achou && questionarioDeJson(proj->questionarioDoContainer(nestId), folha, guardadas) && folha == "audio.preservation.vinyl" &&
+                           guardadas["artist_album"] == "Banda Velha",
+                       "o container guarda o questionário inicial (card + respostas)");
+                const auto assuntoDosMembros = [&] {
+                    std::string todos;
+                    for (const auto& id : proj->membrosDoNest(nestId)) todos += "[" + proj->lerMetadado(id, "dc_subject").value_or("") + "]";
+                    return todos;
+                };
+                checar(assuntoDosMembros().find("Banda Velha") != std::string::npos, "antes de editar: SUBJECT dos arquivos tem a resposta antiga");
+                const std::map<std::string, std::string> novas = { { "artist_album", "Banda Nova" } };
+                const auto antigo = contextoDeRespostasImportar(folha, guardadas);
+                const auto novo = contextoDeRespostasImportar(folha, novas);
+                const bool ok = antigo && novo && proj->reaplicarQuestionarioDoContainer(nestId, *antigo, *novo, questionarioParaJson(*novo));
+                const auto depois = assuntoDosMembros();
+                checar(ok && depois.find("Banda Nova") != std::string::npos && depois.find("Banda Velha") == std::string::npos,
+                       "editar o questionário troca a resposta antiga pela nova em todos os arquivos (" + juce::String(depois) + ")");
+                std::string folha2;
+                std::map<std::string, std::string> guardadas2;
+                checar(questionarioDeJson(proj->questionarioDoContainer(nestId), folha2, guardadas2) && guardadas2["artist_album"] == "Banda Nova",
+                       "o questionário guardado passa a ser o novo");
+            }
         }
 
         // YouTube Production: vídeo + thumbnail + roteiro entram juntos e viram UM container 'youtube'. A thumbnail é a capa, o vídeo
