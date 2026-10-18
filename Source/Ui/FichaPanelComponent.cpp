@@ -1089,42 +1089,45 @@ public:
                 y += padCardY + 24;
 
                 if (!colapsadoGeoLocation_) {
-                    int y0 = y;
-                    int y1 = y;
-                    auto layoutGeoField = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
-                        if (lbl && ed) {
-                            bool useCol1 = (y1 < y0);
-                            int currX = useCol1 ? x1 : x0;
-                            int& currY = useCol1 ? y1 : y0;
-
-                            lbl->setBounds(currX, currY, colW, 16);
-                            currY += 18;
-                            ed->setBounds(currX, currY, colW, 24);
-                            currY += 24 + tk.espacoPequeno;
-                        }
-                    };
-                    layoutGeoField(geolocalizacao_.labelCoords, geolocalizacao_.editorCoords);
-                    layoutGeoField(geolocalizacao_.labelAddress, geolocalizacao_.editorAddress);
-                    layoutGeoField(geolocalizacao_.labelCity, geolocalizacao_.editorCity);
-                    layoutGeoField(geolocalizacao_.labelState, geolocalizacao_.editorState);
-                    layoutGeoField(geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
-
-                    // GET / OPEN row, then the favorite buttons row (side by side below all fields)
-                    int favY = std::max(y0, y1) + tk.espacoPequeno;
-                    {
-                        const int meia = (innerW - tk.espacoPequeno) / 2;
-                        if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, favY, meia, 22);
-                        if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, favY, meia, 22);
-                        favY += 22 + tk.espacoPequeno;
+                    // Coordenadas na largura toda, GET/OPEN logo abaixo delas
+                    // (as duas metades casam com a linha de favoritos) e o
+                    // resto em grade 2x2 (Address|City, State|Country).
+                    if (geolocalizacao_.labelCoords && geolocalizacao_.editorCoords) {
+                        geolocalizacao_.labelCoords->setBounds(x + padCardX, y, innerW, 16);
+                        y += 18;
+                        geolocalizacao_.editorCoords->setBounds(x + padCardX, y, innerW, 24);
+                        y += 24 + tk.espacoPequeno;
                     }
-                    int halfW = (innerW - tk.espacoPequeno) / 2;
-                    if (geolocalizacao_.btnSalvarFavorito)
-                        geolocalizacao_.btnSalvarFavorito->setBounds(x + padCardX, favY, halfW, 22);
-                    if (geolocalizacao_.btnCarregarFavorito)
-                        geolocalizacao_.btnCarregarFavorito->setBounds(x + padCardX + halfW + tk.espacoPequeno, favY, halfW, 22);
-                    y0 = y1 = favY + 22 + tk.espacoPequeno;
+                    const int halfW = (innerW - tk.espacoPequeno) / 2;
+                    if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, y, halfW, 22);
+                    if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + halfW + tk.espacoPequeno, y, halfW, 22);
+                    y += 22 + tk.espacoMedio;
 
-                    int cardCBottom = std::max(y0, y1) + padCardY;
+                    auto layoutGeoPar = [&](std::unique_ptr<juce::Label>& lblA, std::unique_ptr<juce::TextEditor>& edA,
+                                            std::unique_ptr<juce::Label>& lblB, std::unique_ptr<juce::TextEditor>& edB) {
+                        if (lblA && edA) {
+                            lblA->setBounds(x0, y, colW, 16);
+                            edA->setBounds(x0, y + 18, colW, 24);
+                        }
+                        if (lblB && edB) {
+                            lblB->setBounds(x1, y, colW, 16);
+                            edB->setBounds(x1, y + 18, colW, 24);
+                        }
+                        y += 18 + 24 + tk.espacoPequeno;
+                    };
+                    layoutGeoPar(geolocalizacao_.labelAddress, geolocalizacao_.editorAddress,
+                                 geolocalizacao_.labelCity, geolocalizacao_.editorCity);
+                    layoutGeoPar(geolocalizacao_.labelState, geolocalizacao_.editorState,
+                                 geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
+
+                    // Favorites row
+                    if (geolocalizacao_.btnSalvarFavorito)
+                        geolocalizacao_.btnSalvarFavorito->setBounds(x + padCardX, y, halfW, 22);
+                    if (geolocalizacao_.btnCarregarFavorito)
+                        geolocalizacao_.btnCarregarFavorito->setBounds(x + padCardX + halfW + tk.espacoPequeno, y, halfW, 22);
+                    y += 22 + tk.espacoPequeno;
+
+                    int cardCBottom = y + padCardY;
                     quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
                     y = cardCBottom + tk.espacoMedio;
                 } else {
@@ -1298,6 +1301,14 @@ public:
                     y += 24 + tk.espacoPequeno;
                 }
 
+                // GET / OPEN row
+                {
+                    const int meia = (innerW - tk.espacoPequeno) / 2;
+                    if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, y, meia, 22);
+                    if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, y, meia, 22);
+                    y += 22 + tk.espacoMedio;
+                }
+
                 if (geolocalizacao_.labelAddress && geolocalizacao_.editorAddress) {
                     geolocalizacao_.labelAddress->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
@@ -1323,15 +1334,7 @@ public:
                     geolocalizacao_.labelCountry->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
                     geolocalizacao_.editorCountry->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoMedio;
-                }
-
-                // GET / OPEN row
-                {
-                    const int meia = (innerW - tk.espacoPequeno) / 2;
-                    if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, y, meia, 22);
-                    if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, y, meia, 22);
-                    y += 22 + tk.espacoPequeno;
+                    y += 24 + tk.espacoPequeno;
                 }
 
                 // Favorite buttons row
