@@ -21,7 +21,13 @@ bool ehContainerGrafico(const juce::String& origem);
 // `nomeDoRecurso` é o nome do recurso embutido (ex.: "ci_daw_pro_tools_png"); vazio = ícone da origem.
 const juce::Image& iconeDoContainer(const juce::String& origem, const juce::String& nomeDoRecurso);
 
-// Capa em arquivo (vinil, fita, YouTube), decodificada uma vez e guardada. Só na message thread. Vazio se o arquivo não abre.
+// PROJECT: container nascido de um questionário do IMPORT (DDP master, vinil, fita, produção musical, YouTube). Gallery, WhatsApp,
+// Drive, Bridge e Lightroom não são PROJECT.
+bool ehOrigemProject(const juce::String& origem);
+// Tipo do PROJECT em destaque (DDP MASTER, VINYL TRANSCRIPTION, TAPE TRANSCRIPTION, PRODUCTION PACKAGE, YOUTUBE PRODUCTION); "" se não é PROJECT.
+juce::String rotuloDoProject(const juce::String& origem);
+
+// Capa em arquivo (DDP, vinil, fita, produção, YouTube), decodificada uma vez e guardada. Só na message thread. Vazio se o arquivo não abre.
 const juce::Image& imagemDaCapaDoContainer(const juce::String& caminho);
 
 // Desenha o container dentro de `area`: a capa quando há, senão o ícone.

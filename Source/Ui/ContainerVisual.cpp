@@ -37,6 +37,14 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     return vazio;
 }
 
+bool ehOrigemProject(const juce::String& origem) {
+    return origem == "ddp" || origem == "vinyl" || origem == "tape" || origem == "production" || origem == "youtube";
+}
+
+juce::String rotuloDoProject(const juce::String& origem) {
+    return ehOrigemProject(origem) ? i18n::t("projeto.tipo_" + origem) : juce::String();
+}
+
 bool ehContainerGrafico(const juce::String& origem) {
     return origem == "ddp" || origem == "production" || origem == "vinyl" || origem == "tape" || origem == "youtube";
 }
