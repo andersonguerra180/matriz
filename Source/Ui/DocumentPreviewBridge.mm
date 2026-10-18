@@ -142,8 +142,12 @@ void docResize(DocHandle h, int w, int h2) {
     if (!h) return;
     DocState* s = static_cast<DocState*>(h);
     if (s->containerView) {
+        // A posição do containerView é do NSViewComponent do JUCE (ele a ajusta a cada movimento do componente); aqui só o
+        // tamanho muda. Antes o frame inteiro ia para a origem (0,0) e o documento ficava torto, grudado no canto da janela.
         NSRect r = NSMakeRect(0, 0, w, h2);
-        s->containerView.frame = r;
+        NSRect doContainer = s->containerView.frame;
+        doContainer.size = NSMakeSize(w, h2);
+        s->containerView.frame = doContainer;
         if (s->pdfView) s->pdfView.frame = r;
         if (s->qlView) s->qlView.frame = r;
         if (s->webView) s->webView.frame = r;
@@ -236,6 +240,15 @@ int docGetCurrentPage(DocHandle h) {
     return s->currentPage;
 }
 
+bool docOrigemParaTeste(DocHandle h, double* x, double* y) {
+    if (!h) return false;
+    DocState* s = static_cast<DocState*>(h);
+    if (!s->containerView || !s->containerView.superview) return false;
+    *x = s->containerView.frame.origin.x;
+    *y = s->containerView.frame.origin.y;
+    return true;
+}
+
 int docGetTotalPages(DocHandle h) {
     if (!h) return 1;
     DocState* s = static_cast<DocState*>(h);
@@ -261,5 +274,6 @@ void docGoToFirstPage(DocHandle) {}
 void docGoToLastPage(DocHandle) {}
 int docGetCurrentPage(DocHandle) { return 1; }
 int docGetTotalPages(DocHandle) { return 1; }
+bool docOrigemParaTeste(DocHandle, double*, double*) { return false; }
 
 #endif

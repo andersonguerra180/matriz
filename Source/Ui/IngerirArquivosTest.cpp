@@ -8,6 +8,7 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "ImportarMenu.h"
 #include "GeoAcoes.h"
+#include "DocumentPreviewComponent.h"
 #include "JanelaContainerDdp.h"
 #include "MosaicoComponent.h"
 #include "IntakeWorkspaceComponent.h"
@@ -1385,6 +1386,39 @@ int rodarTestImportarComContexto() {
         checar(false, juce::String("teste importar contexto: ") + e.what());
     }
     tmpRoot.deleteRecursively();
+
+#if JUCE_MAC
+    // PDF no preview: o NSView do documento fica onde o componente está, mesmo depois de a janela mudar de tamanho
+    // (docResize jogava a origem para (0,0): o PDF ficava torto, grudado no canto da janela).
+    {
+        const juce::File dirPdf = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("matriz_pdf_torto_" + juce::Uuid().toDashedString());
+        dirPdf.createDirectory();
+        const juce::File pdf = dirPdf.getChildFile("teste.pdf");
+        pdf.replaceWithText("%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+                            "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R/Size 4>>\n%%EOF\n");
+        juce::Component host;
+        host.setOpaque(true);
+        host.addToDesktop(juce::ComponentPeer::windowHasTitleBar);
+        host.setBounds(100, 100, 700, 600);
+        auto* previa = new DocumentPreviewComponent();
+        host.addAndMakeVisible(previa);
+        previa->setBounds(150, 60, 400, 300);
+        host.setVisible(true);
+        const bool carregou = previa->carregar(pdf);
+        for (int i = 0; i < 10; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
+        previa->setBounds(210, 90, 450, 420);  // a janela mudou de layout depois de o PDF abrir
+        for (int i = 0; i < 10; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
+        double x = -1, y = -1;
+        const bool tem = previa->origemNativaParaTeste(x, y);
+        const double esperadoX = 210 + 4, esperadoY = 90 + 36 + 4;  // posição do componente + margem + barra de navegação
+        const bool ok = carregou && tem && std::abs(x - esperadoX) < 2.0 && std::abs(y - esperadoY) < 2.0;
+        std::cout << (ok ? "  OK   " : "  FAIL ") << "PDF no preview fica na posição do componente depois de a janela mudar (x=" << x << " y=" << y
+                  << ", esperado " << esperadoX << "," << esperadoY << ")\n";
+        if (!ok) ++falhas;
+        delete previa;
+        dirPdf.deleteRecursively();
+    }
+#endif
 
     // GEO LOCATION: OPEN abre o Google Maps nas coordenadas; sem coordenadas válidas usa o endereço; sem nada, não abre.
     {

@@ -269,4 +269,8 @@ void DocumentPreviewComponent::resized() {
     }
 }
 
+bool DocumentPreviewComponent::origemNativaParaTeste(double& x, double& y) const {
+    return bridge_ != nullptr && docOrigemParaTeste(static_cast<DocHandle>(bridge_), &x, &y);
+}
+
 } // namespace matriz::ui

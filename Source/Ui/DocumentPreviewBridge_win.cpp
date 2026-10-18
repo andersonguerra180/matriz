@@ -33,6 +33,8 @@ void docGoToPreviousPage(DocHandle /*h*/) {}
 void docGoToFirstPage(DocHandle /*h*/) {}
 void docGoToLastPage(DocHandle /*h*/) {}
 
+bool docOrigemParaTeste(DocHandle, double*, double*) { return false; }
+
 int docGetCurrentPage(DocHandle h) {
     if (auto* ctx = static_cast<WinDocContext*>(h)) return ctx->curPage;
     return 1;
