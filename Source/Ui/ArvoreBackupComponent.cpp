@@ -1,4 +1,5 @@
 #include "ArvoreBackupComponent.h"
+#include "TiposContainer.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/FluxoLote.h"
 #include "../Ingest/LeituraTecnica.h"
@@ -5081,6 +5082,28 @@ void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
             seguro->projeto_.desfazerNest(ids);
             seguro->recarregar();
         });
+    {   // Group as Project Container / Change Container Type / Ungroup Container
+        matriz::ui::HospedeOverlay hospede;
+        hospede.abrir = [seguro]() -> PainelOverlay* {
+            if (seguro == nullptr || seguro->overlayAtual_ != nullptr) return nullptr;
+            seguro->overlayAtual_ = std::make_unique<PainelOverlay>();
+            seguro->addAndMakeVisible(*seguro->overlayAtual_);
+            seguro->resized();
+            return seguro->overlayAtual_.get();
+        };
+        hospede.fechar = [seguro] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+        };
+        hospede.aoMudarDados = [seguro] { if (seguro != nullptr) seguro->recarregar(); };
+        juce::PopupMenu grupo;
+        matriz::ui::adicionarMenuProjectContainer(grupo, projeto_, ids, hospede);
+        if (grupo.getNumItems() > 0) {
+            menu.addSeparator();
+            for (juce::PopupMenu::MenuItemIterator it(grupo); it.next();) menu.addItem(it.getItem());
+        }
+    }
     menu.addSeparator();
     menu.addItem(i18n::t("arvore_backup.mover_para_trash"), !mapaAtivoEhOriginal(), false, [seguro, ids] {
         if (!seguro) return;

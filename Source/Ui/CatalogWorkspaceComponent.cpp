@@ -1,5 +1,6 @@
 #include "CatalogWorkspaceComponent.h"
 #include "ContainerVisual.h"
+#include "TiposContainer.h"
 
 #include <algorithm>
 #include "AcoesItem.h"
@@ -2296,6 +2297,12 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
     if (itemIds.size() > 1 || algumEmNest) menu.addSeparator();
     if (itemIds.size() > 1) menu.addItem(600, matriz::i18n::t("menu.nest"));
     if (algumEmNest) menu.addItem(601, matriz::i18n::t("menu.un_nest"));
+    if (obterOverlay) {  // Group as Project Container / Change Container Type / Ungroup Container
+        matriz::ui::HospedeOverlay hospede;
+        hospede.abrir = [safeThis]() -> PainelOverlay* { return (safeThis && safeThis->obterOverlay) ? safeThis->obterOverlay() : nullptr; };
+        hospede.aoMudarDados = [safeThis] { if (safeThis) safeThis->recarregar(); };
+        matriz::ui::adicionarMenuProjectContainer(menu, projeto_, itemIds, hospede);
+    }
 
     menu.addItem(1000, matriz::i18n::t("menu.mover_para_pasta") + "...");
 

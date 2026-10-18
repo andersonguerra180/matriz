@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "OverlayComponent.h"
+
 // "Group as Project Container": os tipos de container que o usuario escolhe DEPOIS da importacao (INTAKE, METADATA, FOLDER MAP).
 // Os tipos com player proprio (origemPlayer nao vazia) geram o mesmo container que o card do IMPORT; os demais abrem o preview
 // normal com a lista dos membros. O tipo fica em nest.tipo_container; nest.origem diz qual visual/player vale.
@@ -43,6 +45,8 @@ juce::String rotuloDaCategoriaContainer(CategoriaContainer c);
 
 // Categoria dominante entre os itens (a que mais aparece na selecao); empate: a ordem Video, Audio, Image, Docs.
 CategoriaContainer categoriaDominanteDosItens(ProjetoAberto& projeto, const std::vector<std::string>& itemIds);
+// Nome da pasta em comum dos arquivos ("" se nao ha).
+juce::String nomeDaPastaEmComum(ProjetoAberto& projeto, const std::vector<std::string>& itemIds);
 // Nome padrao: a pasta em comum dos arquivos ou, sem ela, "<tipo> <data>".
 juce::String nomePadraoDoContainer(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, const juce::String& rotuloDoTipo);
 
@@ -50,5 +54,24 @@ juce::String nomePadraoDoContainer(ProjetoAberto& projeto, const std::vector<std
 // `contentDaFicha` (nao vazio) vale no lugar de tipo.content (tipos com player: o CONTENT do card do IMPORT). Fora da message thread.
 int aplicarContentDoTipo(ProjetoAberto& projeto, const std::vector<std::string>& membros, const TipoContainer& tipo,
                          const std::string& contentDaFicha = {});
+
+// Onde o dialogo de tipo (e a ficha dos tipos com player) aparece: cada tela tem o seu PainelOverlay.
+//   abrir()   devolve o overlay para usar agora (nullptr = ja ha um overlay aberto: o pedido e ignorado);
+//   fechar()  roda quando o fluxo termina (a tela solta o overlay que criou);
+//   aoMudarDados() roda na message thread depois de gravar (a tela recarrega o que mostra).
+struct HospedeOverlay {
+    std::function<PainelOverlay*()> abrir;
+    std::function<void()> fechar;
+    std::function<void()> aoMudarDados;
+};
+
+// Itens do botao direito nas tres telas: "Group as Project Container...", "Change Container Type..." e "Ungroup Container".
+// Group so vale com 2+ arquivos e nenhum ja em nest/container (senao fica desabilitado com o aviso logo abaixo).
+void adicionarMenuProjectContainer(juce::PopupMenu& menu, ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay hospede);
+
+void agruparComoProjectContainer(ProjetoAberto& projeto, std::vector<std::string> itemIds, HospedeOverlay hospede);
+void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, HospedeOverlay hospede);
+// Desfaz os CONTAINERS a que os itens pertencem (os arquivos voltam soltos; metadados intactos). Nests comuns ficam.
+void desagruparContainer(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay hospede);
 
 } // namespace matriz::ui

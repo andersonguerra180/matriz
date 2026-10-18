@@ -1874,6 +1874,7 @@ void MainComponent::mostrarGrid() {
     if (!catalogWorkspace_) {
         catalogWorkspace_ = std::make_unique<CatalogWorkspaceComponent>(*projetoAberto_);
         catalogWorkspace_->aoEditarProjeto = [this](const std::string& nestId, const std::string& origem) { editarProjetoDoContainer(nestId, origem); };
+        catalogWorkspace_->obterOverlay = [this]() -> PainelOverlay* { return overlay_.estaAberto() ? nullptr : &overlay_; };
         catalogWorkspace_->aoAgruparEIrParaTree = [this](std::string folderId) {
             mostrarTree();
             if (treeWorkspace_) {

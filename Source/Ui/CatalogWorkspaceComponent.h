@@ -12,6 +12,7 @@
 
 #include "EventBus.h"
 #include "FloatingPreviewWindow.h"
+#include "OverlayComponent.h"
 #include "ViewModeIconButton.h"
 
 namespace matriz::ui {
@@ -50,6 +51,8 @@ public:
     std::function<void(std::string folderId)> aoAgruparEIrParaTree;
     // Botão direito num PROJECT > Edit Project Info (quem tem o overlay da tela principal abre a ficha).
     std::function<void(const std::string& nestId, const std::string& origem)> aoEditarProjeto;
+    // Overlay da tela principal (dialogo de tipo do Project Container). nullptr = ja ha um aberto.
+    std::function<PainelOverlay*()> obterOverlay;
     std::function<void(const std::string& itemId)> aoItemAlterado;
 
 private:

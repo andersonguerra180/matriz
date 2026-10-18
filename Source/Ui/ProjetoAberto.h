@@ -927,6 +927,7 @@ public:
     // Questionário inicial do container (JSON {"folha": ..., "respostas": {...}}), guardado para ser editado depois.
     std::string questionarioDoContainer(const std::string& nestId) const;
     std::string origemDoContainer(const std::string& nestId) const;  // nest.origem ("" = não é container)
+    std::string tipoDoContainer(const std::string& nestId) const;    // nest.tipo_container ("" = container do IMPORT antigo ou nest comum)
     void definirQuestionarioDoContainer(const std::string& nestId, const std::string& json);
     // Editar o questionário: tira dos arquivos do container o que o contexto ANTIGO tinha posto, aplica o NOVO e guarda o JSON.
     // Uma transação só (container pequeno); message thread.

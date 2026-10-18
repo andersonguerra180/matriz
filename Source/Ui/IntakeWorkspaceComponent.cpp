@@ -10,6 +10,7 @@
 #include "PainelMetadadosArquivo.h"
 #include "GoogleDriveContas.h"
 #include "TraducaoContent.h"
+#include "TiposContainer.h"
 #include "../Ficha/AutocompleteHistorico.h"
 
 #include <AssetsBinaryData.h>
@@ -3879,6 +3880,36 @@ void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<in
     const std::string nestDoClique = itemClicado.containerNestId, origemDoClique = itemClicado.containerOrigem.toStdString();
 
     juce::Component::SafePointer<IntakeWorkspaceComponent> safeThis(this);
+
+    // Group as Project Container / Change Container Type / Ungroup Container: sobre a selecao (ou o item clicado, se ele nao esta nela).
+    {
+        std::vector<std::string> idsDoMenu;
+        if (itemClicado.selecionado) {
+            for (const auto& it : todosItens_) if (it.selecionado && it.containerOrigem != "whatsapp") idsDoMenu.push_back(it.id);
+        } else if (itemClicado.containerOrigem != "whatsapp") {
+            idsDoMenu.push_back(itemClicado.id);
+        }
+        matriz::ui::HospedeOverlay hospede;
+        hospede.abrir = [safeThis]() -> PainelOverlay* {
+            if (safeThis == nullptr || safeThis->overlayAtual_ != nullptr) return nullptr;
+            safeThis->overlayAtual_ = std::make_unique<PainelOverlay>();
+            safeThis->addAndMakeVisible(*safeThis->overlayAtual_);
+            safeThis->resized();
+            return safeThis->overlayAtual_.get();
+        };
+        hospede.fechar = [safeThis] {
+            if (safeThis == nullptr) return;
+            safeThis->overlayAtual_.reset();
+            safeThis->resized();
+        };
+        hospede.aoMudarDados = [safeThis] { if (safeThis != nullptr) safeThis->recarregar(); };
+        juce::PopupMenu grupo;
+        matriz::ui::adicionarMenuProjectContainer(grupo, projeto_, idsDoMenu, hospede);
+        if (grupo.getNumItems() > 0) {
+            m.addSeparator();
+            for (juce::PopupMenu::MenuItemIterator it(grupo); it.next();) m.addItem(it.getItem());
+        }
+    }
     m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(screenPos.x, screenPos.y, 1, 1)),
         [safeThis, itemIndex, nestDoClique, origemDoClique](int result) {
             if (!safeThis) return;

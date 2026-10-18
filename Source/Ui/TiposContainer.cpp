@@ -2,6 +2,7 @@
 
 #include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "EventBus.h"
 #include "ProjetoAberto.h"
 
 #include <map>
@@ -115,18 +116,22 @@ CategoriaContainer categoriaDominanteDosItens(ProjetoAberto& projeto, const std:
     }
 }
 
-juce::String nomePadraoDoContainer(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, const juce::String& rotuloDoTipo) {
+juce::String nomeDaPastaEmComum(ProjetoAberto& projeto, const std::vector<std::string>& itemIds) {
     const auto arquivos = arquivosPrincipais(projeto, itemIds);
-    if (!arquivos.empty()) {
-        juce::File comum = arquivos.front().getParentDirectory();
-        for (const auto& f : arquivos) {
-            while (comum != juce::File() && !f.isAChildOf(comum)) comum = comum.getParentDirectory();
-            if (comum == juce::File()) break;
-        }
-        // Raiz de volume nao e nome de projeto.
-        if (comum != juce::File() && comum.getParentDirectory() != comum && comum.getFileName().isNotEmpty() && comum.getParentDirectory().getFileName().isNotEmpty())
-            return comum.getFileName();
+    if (arquivos.empty()) return {};
+    juce::File comum = arquivos.front().getParentDirectory();
+    for (const auto& f : arquivos) {
+        while (comum != juce::File() && !f.isAChildOf(comum)) comum = comum.getParentDirectory();
+        if (comum == juce::File()) return {};
     }
+    // Raiz de volume nao e nome de projeto.
+    if (comum.getParentDirectory() == comum || comum.getFileName().isEmpty() || comum.getParentDirectory().getFileName().isEmpty()) return {};
+    return comum.getFileName();
+}
+
+juce::String nomePadraoDoContainer(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, const juce::String& rotuloDoTipo) {
+    const auto pasta = nomeDaPastaEmComum(projeto, itemIds);
+    if (pasta.isNotEmpty()) return pasta;
     return matriz::i18n::t("tipoc.nome_padrao").replace("{tipo}", rotuloDoTipo).replace("{data}", juce::Time::getCurrentTime().formatted("%Y-%m-%d"));
 }
 
@@ -145,6 +150,174 @@ int aplicarContentDoTipo(ProjetoAberto& projeto, const std::vector<std::string>&
         aceitos = membros;
     }
     return projeto.definirContentSeVazio(aceitos, valor);
+}
+
+
+namespace {
+
+constexpr int kBotaoCancelar = 0;
+constexpr int kBotaoConfirmar = 1;
+
+// Ordem das categorias no dialogo: a dominante na selecao primeiro, as outras logo abaixo.
+std::vector<CategoriaContainer> ordemDasCategorias(CategoriaContainer dominante) {
+    std::vector<CategoriaContainer> ordem{ dominante };
+    for (auto c : { CategoriaContainer::Video, CategoriaContainer::Audio, CategoriaContainer::Image, CategoriaContainer::Docs, CategoriaContainer::Outro })
+        if (c != dominante) ordem.push_back(c);
+    return ordem;
+}
+
+// Dialogo de tipo no mesmo visual do SelecionarTipoMidia: PainelOverlay com cabecalhos por categoria. `nomeInicial` so aparece
+// ao agrupar (trocar o tipo nao renomeia). aoConcluir(nullptr, "") = cancelou.
+void mostrarEscolherTipo(PainelOverlay& overlay, CategoriaContainer dominante, int quantidade, const juce::String& nomeInicial,
+                         const TipoContainer* atual, bool trocar, std::function<void(const TipoContainer*, juce::String)> aoConcluir) {
+    PainelOverlay::Config cfg;
+    cfg.titulo = matriz::i18n::t(trocar ? "tipoc.dialogo.titulo_trocar" : "tipoc.dialogo.titulo_agrupar");
+    cfg.mensagem = trocar ? matriz::i18n::t("tipoc.dialogo.msg_trocar") : matriz::i18n::t("tipoc.dialogo.msg").replace("{n}", juce::String(quantidade));
+    cfg.larguraCartao = 620;
+    std::vector<const TipoContainer*> ordenados;
+    for (auto cat : ordemDasCategorias(dominante)) {
+        bool primeiro = true;
+        for (const auto& t : tiposDeContainer()) {
+            if (t.categoria != cat) continue;
+            if (primeiro) { cfg.cabecalhos.push_back({ static_cast<int>(ordenados.size()), rotuloDaCategoriaContainer(cat) }); primeiro = false; }
+            cfg.opcoes.push_back((t.temPlayer() ? matriz::i18n::t("tipoc.player_marca") : juce::String()) + rotuloDoTipoContainer(t));
+            ordenados.push_back(&t);
+        }
+    }
+    cfg.opcaoSelecionada = 0;
+    for (size_t i = 0; i < ordenados.size(); ++i) if (ordenados[i] == atual) cfg.opcaoSelecionada = static_cast<int>(i);
+    if (!trocar) {
+        cfg.comCampoTexto = true;
+        cfg.textoInicial = nomeInicial;
+        cfg.dicaCampoTexto = matriz::i18n::t("tipoc.dialogo.nome");
+    }
+    cfg.botoes = {
+        { matriz::i18n::t("comum.cancelar"), kBotaoCancelar, false, true },
+        { matriz::i18n::t(trocar ? "tipoc.dialogo.confirmar_trocar" : "tipoc.dialogo.confirmar"), kBotaoConfirmar, true, false },
+    };
+    overlay.mostrar(cfg, [ordenados, aoConcluir](PainelOverlay::Resultado r) {
+        if (!aoConcluir) return;
+        if (r.botaoId != kBotaoConfirmar || r.opcaoSelecionada < 0 || r.opcaoSelecionada >= static_cast<int>(ordenados.size())) { aoConcluir(nullptr, {}); return; }
+        aoConcluir(ordenados[static_cast<size_t>(r.opcaoSelecionada)], r.texto.trim());
+    });
+}
+
+void aoTerminarFluxo(const HospedeOverlay& h, bool mudou) {
+    if (h.fechar) h.fechar();
+    if (mudou && h.aoMudarDados) h.aoMudarDados();
+}
+
+// Grava o container (e o CONTENT do tipo) fora da message thread; a tela recarrega ao fim.
+void criarEGravar(ProjetoAberto& projeto, std::vector<std::string> ids, const TipoContainer& tipo, juce::String nome, HospedeOverlay h) {
+    ProjetoAberto* proj = &projeto;
+    const auto vivo = projeto.tokenVida();
+    const std::string tipoId = tipo.id;
+    juce::Thread::launch([proj, vivo, ids, tipoId, nome, h] {
+        if (vivo.expired()) return;
+        const TipoContainer* t = tipoDeContainer(tipoId);
+        if (t == nullptr) return;
+        const juce::String nomeFinal = nome.isNotEmpty() ? nome : nomePadraoDoContainer(*proj, ids, rotuloDoTipoContainer(*t));
+        const std::string nestId = proj->criarContainerDeTipo(ids, t->id, origemDoTipoContainer(*t), nomeFinal.toStdString());
+        if (!nestId.empty()) aplicarContentDoTipo(*proj, ids, *t);
+        juce::MessageManager::callAsync([vivo, h, nestId] {
+            if (vivo.expired()) return;
+            if (!nestId.empty()) EventBus::obterInstancia().dispararItemAlterado("", "nest");
+            aoTerminarFluxo(h, !nestId.empty());
+        });
+    });
+}
+
+}  // namespace
+
+void agruparComoProjectContainer(ProjetoAberto& projeto, std::vector<std::string> itemIds, HospedeOverlay h) {
+    if (itemIds.size() < 2 || projeto.somenteLeitura() || !h.abrir) return;
+    for (const auto& id : itemIds)
+        if (projeto.nestDoItem(id).has_value()) return;  // o menu ja avisa; defesa
+    ProjetoAberto* proj = &projeto;
+    const auto vivo = projeto.tokenVida();
+    juce::Thread::launch([proj, vivo, itemIds, h] {
+        if (vivo.expired()) return;
+        const auto dominante = categoriaDominanteDosItens(*proj, itemIds);
+        const auto pasta = nomeDaPastaEmComum(*proj, itemIds);
+        juce::MessageManager::callAsync([proj, vivo, itemIds, h, dominante, pasta] {
+            if (vivo.expired()) return;
+            PainelOverlay* overlay = h.abrir();
+            if (overlay == nullptr) return;
+            mostrarEscolherTipo(*overlay, dominante, static_cast<int>(itemIds.size()), pasta, nullptr, false,
+                [proj, vivo, itemIds, h](const TipoContainer* tipo, juce::String nome) {
+                    juce::MessageManager::callAsync([proj, vivo, itemIds, h, tipo, nome] {
+                        if (vivo.expired()) return;
+                        if (tipo == nullptr) { aoTerminarFluxo(h, false); return; }
+                        if (h.fechar) h.fechar();
+                        criarEGravar(*proj, itemIds, *tipo, nome, h);
+                    });
+                });
+        });
+    });
+}
+
+void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, HospedeOverlay h) {
+    if (nestId.empty() || projeto.somenteLeitura() || !h.abrir) return;
+    PainelOverlay* overlay = h.abrir();
+    if (overlay == nullptr) return;
+    const auto membros = projeto.membrosDoNest(nestId);
+    const TipoContainer* atual = tipoDeContainerDaOrigem(projeto.tipoDoContainer(nestId), projeto.origemDoContainer(nestId));
+    ProjetoAberto* proj = &projeto;
+    const auto vivo = projeto.tokenVida();
+    mostrarEscolherTipo(*overlay, atual != nullptr ? atual->categoria : CategoriaContainer::Outro, static_cast<int>(membros.size()), {}, atual, true,
+        [proj, vivo, nestId, membros, h](const TipoContainer* tipo, juce::String) {
+            juce::MessageManager::callAsync([proj, vivo, nestId, membros, h, tipo] {
+                if (vivo.expired()) return;
+                if (tipo == nullptr) { aoTerminarFluxo(h, false); return; }
+                if (h.fechar) h.fechar();
+                const std::string tipoId = tipo->id;
+                juce::Thread::launch([proj, vivo, nestId, membros, h, tipoId] {
+                    if (vivo.expired()) return;
+                    const TipoContainer* t = tipoDeContainer(tipoId);
+                    bool ok = false;
+                    if (t != nullptr && proj->trocarTipoDoContainer(nestId, t->id, origemDoTipoContainer(*t))) {
+                        aplicarContentDoTipo(*proj, membros, *t);  // nunca apaga nem sobrescreve o que ja esta preenchido
+                        ok = true;
+                    }
+                    juce::MessageManager::callAsync([vivo, h, ok] {
+                        if (vivo.expired()) return;
+                        if (ok) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+                        aoTerminarFluxo(h, ok);
+                    });
+                });
+            });
+        });
+}
+
+void desagruparContainer(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay h) {
+    std::vector<std::string> deContainer;
+    for (const auto& id : itemIds)
+        if (const auto n = projeto.nestDoItem(id); n && !n->origem.empty()) deContainer.push_back(id);
+    if (deContainer.empty()) return;
+    projeto.desfazerNest(deContainer);
+    if (h.aoMudarDados) h.aoMudarDados();
+}
+
+void adicionarMenuProjectContainer(juce::PopupMenu& menu, ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay h) {
+    bool algumEmGrupo = false, algumContainer = false, todosNoMesmoContainer = true;
+    std::string nestDoContainer;
+    for (const auto& id : itemIds) {
+        const auto n = projeto.nestDoItem(id);
+        if (!n) { todosNoMesmoContainer = false; continue; }
+        algumEmGrupo = true;
+        if (n->origem.empty()) { todosNoMesmoContainer = false; continue; }
+        if (!algumContainer) { algumContainer = true; nestDoContainer = n->nestId; }
+        else if (nestDoContainer != n->nestId) todosNoMesmoContainer = false;
+    }
+    ProjetoAberto* proj = &projeto;
+    if (itemIds.size() > 1) {
+        menu.addItem(matriz::i18n::t("tipoc.menu.agrupar"), !algumEmGrupo, false, [proj, itemIds, h] { agruparComoProjectContainer(*proj, itemIds, h); });
+        if (algumEmGrupo) menu.addItem(matriz::i18n::t("tipoc.aviso.ja_agrupado"), false, false, nullptr);
+    }
+    if (algumContainer) {
+        menu.addItem(matriz::i18n::t("tipoc.menu.trocar"), todosNoMesmoContainer, false, [proj, nestDoContainer, h] { mudarTipoDoContainer(*proj, nestDoContainer, h); });
+        menu.addItem(matriz::i18n::t("tipoc.menu.desagrupar"), true, false, [proj, itemIds, h] { desagruparContainer(*proj, itemIds, h); });
+    }
 }
 
 } // namespace matriz::ui

@@ -4526,6 +4526,8 @@ namespace {
 struct EstadoNest {
     std::string id, projetoId, capa, criadoEm;
     std::vector<std::string> membros;
+    // Identidade de CONTAINER (nest.origem e colunas da ficha): sem isto o Undo de "Ungroup" devolvia um nest comum.
+    std::optional<std::string> origem, capaImagem, icone, questionario, nome, tipoContainer;
 };
 
 // Os nests a que os itens pertencem, com todos os membros — o retrato que o Undo restaura.
@@ -4543,12 +4545,15 @@ std::vector<EstadoNest> capturarNests(matriz::db::Database& db, const std::set<s
     for (const auto& nid : idsDeNest) {
         EstadoNest e;
         e.id = nid;
-        auto st = db.prepare("SELECT projeto_id, COALESCE(capa_item_id, ''), criado_em FROM nest WHERE id = ?");
+        auto st = db.prepare("SELECT projeto_id, COALESCE(capa_item_id, ''), criado_em, origem, capa_imagem, icone, questionario, nome, tipo_container "
+                             "FROM nest WHERE id = ?");
         st.bind(1, matriz::db::Value::of(nid));
         if (!st.step()) continue;
         e.projetoId = st.columnText(0);
         e.capa = st.columnText(1);
         e.criadoEm = st.columnText(2);
+        const auto opt = [&st](int c) { return st.columnIsNull(c) ? std::optional<std::string>() : std::optional<std::string>(st.columnText(c)); };
+        e.origem = opt(3); e.capaImagem = opt(4); e.icone = opt(5); e.questionario = opt(6); e.nome = opt(7); e.tipoContainer = opt(8);
         auto sm = db.prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
         sm.bind(1, matriz::db::Value::of(nid));
         while (sm.step()) e.membros.push_back(sm.columnText(0));
@@ -4564,9 +4569,12 @@ void removerNestsDosItens(matriz::db::Database& db, const std::set<std::string>&
 
 void restaurarNests(matriz::db::Database& db, const std::vector<EstadoNest>& estados) {
     for (const auto& e : estados) {
-        db.run("INSERT OR REPLACE INTO nest (id, projeto_id, capa_item_id, criado_em) VALUES (?, ?, ?, ?)",
+        const auto opt = [](const std::optional<std::string>& v) { return v ? matriz::db::Value::of(*v) : matriz::db::Value::null(); };
+        db.run("INSERT OR REPLACE INTO nest (id, projeto_id, capa_item_id, criado_em, origem, capa_imagem, icone, questionario, nome, tipo_container) "
+               "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                {matriz::db::Value::of(e.id), matriz::db::Value::of(e.projetoId),
-                e.capa.empty() ? matriz::db::Value::null() : matriz::db::Value::of(e.capa), matriz::db::Value::of(e.criadoEm)});
+                e.capa.empty() ? matriz::db::Value::null() : matriz::db::Value::of(e.capa), matriz::db::Value::of(e.criadoEm),
+                opt(e.origem), opt(e.capaImagem), opt(e.icone), opt(e.questionario), opt(e.nome), opt(e.tipoContainer)});
         for (const auto& m : e.membros)
             db.run("INSERT OR REPLACE INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
                    {matriz::db::Value::of(m), matriz::db::Value::of(e.id), matriz::db::Value::of(e.criadoEm)});
@@ -4808,6 +4816,16 @@ std::string ProjetoAberto::origemDoContainer(const std::string& nestId) const {
     if (!projeto_ || nestId.empty()) return {};
     try {
         auto st = leitura().prepare("SELECT origem FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nestId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    } catch (...) {}
+    return {};
+}
+
+std::string ProjetoAberto::tipoDoContainer(const std::string& nestId) const {
+    if (!projeto_ || nestId.empty()) return {};
+    try {
+        auto st = leitura().prepare("SELECT tipo_container FROM nest WHERE id = ?");
         st.bind(1, matriz::db::Value::of(nestId));
         if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
     } catch (...) {}
