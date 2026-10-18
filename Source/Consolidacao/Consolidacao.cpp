@@ -350,6 +350,86 @@ std::string chaveDestino(const juce::File& destino) {
     return destino.getFullPathName().trimCharactersAtEnd("/").toStdString();
 }
 
+namespace {
+
+// CONTAINER de importação (nest com origem): do backup em diante é uma pasta. Os arquivos dele vão para
+// <pasta do container>/<nome do container>/ (ou para a raiz do backup, se o container está solto no mapa).
+struct ContainerNoPlano {
+    std::string nestId;
+    juce::String nome;          // nome do container (nest.nome) ou o rótulo do tipo
+    std::string pastaDaCapa;    // pasta do mapa em que a capa está ("" = solto)
+    juce::String segmento;      // nome final da subpasta, sem colisão com pastas irmãs nem com outros containers
+};
+
+juce::String rotuloDeContainerSemNome(const std::string& origem) {
+    if (origem == "ddp") return "DDP master";
+    if (origem == "vinyl") return "Vinyl transcription";
+    if (origem == "tape") return "Tape transcription";
+    if (origem == "production") return "Production package";
+    if (origem == "youtube") return "YouTube production";
+    return juce::String(origem).isEmpty() ? juce::String("Container") : juce::String(origem) + " container";
+}
+
+// item -> container (só nests com origem). Falha silenciosa: projeto sem a tabela/colunas = sem containers.
+std::map<std::string, ContainerNoPlano> containersDoProjeto(matriz::db::Database& registro, const std::string& mapaId) {
+    std::map<std::string, ContainerNoPlano> out;
+    try {
+        std::map<std::string, ContainerNoPlano> porNest;
+        std::map<std::string, std::vector<std::string>> membros;
+        std::map<std::string, std::string> capaDe;
+        auto st = registro.prepare(
+            "SELECT ni.item_id, n.id, COALESCE(n.nome, ''), COALESCE(n.origem, ''), "
+            "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
+            "                          WHERE x.nest_id = n.id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)) "
+            "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE COALESCE(n.origem, '') != '' ORDER BY n.criado_em, n.id");
+        std::map<std::string, std::string> origemDe;
+        while (st.step()) {
+            const std::string nid = st.columnText(1);
+            membros[nid].push_back(st.columnText(0));
+            auto& c = porNest[nid];
+            c.nestId = nid;
+            c.nome = juce::String::fromUTF8(st.columnText(2).c_str());
+            origemDe[nid] = st.columnText(3);
+            capaDe[nid] = st.columnIsNull(4) ? std::string() : st.columnText(4);
+        }
+        // Pasta da capa no mapa (ou em qualquer mapa, sem mapa escolhido).
+        auto stPasta = registro.prepare(std::string("SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? ") +
+                                        (mapaId.empty() ? "" : "AND mapa_id = ? ") + "LIMIT 1");
+        for (auto& [nid, c] : porNest) {
+            if (membros[nid].size() < 2) continue;  // nest de um arquivo só não existe
+            if (c.nome.trim().isEmpty()) c.nome = rotuloDeContainerSemNome(origemDe[nid]);
+            stPasta.reset();
+            stPasta.bind(1, Value::of(capaDe[nid]));
+            if (!mapaId.empty()) stPasta.bind(2, Value::of(mapaId));
+            if (stPasta.step() && !stPasta.columnIsNull(0)) c.pastaDaCapa = stPasta.columnText(0);
+        }
+        // Nome da subpasta: sem colidir com as pastas filhas da mesma pasta nem com outro container ali (" (2)", " (3)"...).
+        std::map<std::string, std::set<std::string>> usados;  // pasta pai -> nomes (minúsculos) já ocupados
+        auto stFilhas = registro.prepare(std::string("SELECT nome FROM acervo_pasta WHERE ") + "COALESCE(pasta_pai_id, '') = ? " +
+                                         (mapaId.empty() ? "" : "AND mapa_id = ? "));
+        for (auto& [nid, c] : porNest) {
+            if (membros[nid].size() < 2) continue;
+            auto& ocupados = usados[c.pastaDaCapa];
+            if (ocupados.empty()) {
+                stFilhas.reset();
+                stFilhas.bind(1, Value::of(c.pastaDaCapa));
+                if (!mapaId.empty()) stFilhas.bind(2, Value::of(mapaId));
+                while (stFilhas.step()) ocupados.insert(segmentoSeguro(juce::String::fromUTF8(stFilhas.columnText(0).c_str()), "Folder").toLowerCase().toStdString());
+                ocupados.insert("");  // marca "já consultado" mesmo sem pastas filhas
+            }
+            const juce::String base = segmentoSeguro(c.nome, "Container");
+            juce::String candidato = base;
+            for (int n = 2; ocupados.count(candidato.toLowerCase().toStdString()) > 0; ++n) candidato = base + " (" + juce::String(n) + ")";
+            ocupados.insert(candidato.toLowerCase().toStdString());
+            c.segmento = candidato;
+            for (const auto& m : membros[nid]) out[m] = c;
+        }
+    } catch (...) {}
+    return out;
+}
+
+}  // namespace
+
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                         const juce::File& destino, const HierarquiaBackup& hierarquiaPedida,
                                         const RotuloTipoMidia& rotuloTipoMidia,
@@ -396,6 +476,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     const bool semPastaFisica = mapaEmUso && !paraExport;
     const bool semPastaNoCaminho = semPastaFisica || (mapaEmUso && paraExport && semPastaNaRaiz);
     std::set<std::string> itensComMovimento;
+    // Containers de importação: no PastaManual viram subpasta da pasta onde estão (ou raiz, se soltos). Só com PastaManual.
+    const auto containers = (usaPastaManual && !usaEstruturaOriginal) ? containersDoProjeto(registro, mapaId) : std::map<std::string, ContainerNoPlano>{};
 
     // Contador de sequência por pasta de destino (garante numeração sequencial por pasta final)
     std::map<std::string, int> seqPorDestino;
@@ -441,7 +523,10 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
         std::string pastaIdCandidata = stmt.columnText(1);
         if (pastaOuAncestralDesativada(registro, pastaIdCandidata)) continue; // pasta desabilitada na TREEMAP — bypass total
-        if (mapaEmUso && paraExport && pastaIdCandidata.empty() && !semPastaNaRaiz) {
+        // Membro de container solto no mapa: o container é uma pasta na raiz, então o arquivo não está "sem pasta".
+        const auto itContainer = containers.find(itemId);
+        const bool deContainerSolto = itContainer != containers.end() && itContainer->second.pastaDaCapa.empty();
+        if (mapaEmUso && paraExport && pastaIdCandidata.empty() && !semPastaNaRaiz && !deContainerSolto) {
             plano.semPastaExcluidos.insert(itemId);  // export por mapa: sem pasta = fora
             continue;
         }
@@ -603,7 +688,12 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                 case NivelHierarquia::PastaManual:
                     // A subárvore que o operador montou à mão na árvore BACKUP
                     for (auto& [id, nome] : cadeia) segmentosPasta.add(segmentoSeguro(nome, "Folder"));
-                    if (cadeia.empty() && semPastaNoCaminho) segmentosPasta.add(semPastaFisica ? kPastaSemPasta : kPastaNoFolderExport);
+                    // Membro de container que está na mesma pasta da capa: entra na subpasta do container. Solto: raiz do backup.
+                    if (itContainer != containers.end() && itContainer->second.pastaDaCapa == ip.pastaId) {
+                        segmentosPasta.add(itContainer->second.segmento);
+                    } else if (cadeia.empty() && semPastaNoCaminho) {
+                        segmentosPasta.add(semPastaFisica ? kPastaSemPasta : kPastaNoFolderExport);
+                    }
                     break;
                 case NivelHierarquia::EstruturaOriginal: {
                     juce::String dirStr = caminhoRelativoOrigem.upToLastOccurrenceOf("/", false, false);

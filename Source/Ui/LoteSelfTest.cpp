@@ -3114,6 +3114,70 @@ int rodarLoteSelfTest() {
     }
     raizCont.deleteRecursively();
 
+    // ------------------------- CONTAINER no backup: do MAKE BACKUP em diante o container e uma subpasta da pasta onde esta
+    std::cout << "\n-- Backup: containers viram subpastas --\n";
+    juce::File raizBk = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                            .getChildFile("matriz_container_backup_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizBk.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "ContainerBackup";
+        params.prefixoNomenclatura = "CBK";
+        auto projeto = matriz::model::Project::criar(raizBk.getChildFile("MAIN"), params);
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string projId = pa.projeto().projetoId();
+        const auto itens = [&](const std::string& prefixo, int n) {
+            std::vector<std::string> v;
+            for (int i = 0; i < n; ++i) v.push_back(inserirItem(reg, projId, prefixo + std::to_string(i), false));
+            return v;
+        };
+        const auto vinilIds = itens("VIN", 2), ddpIds = itens("DDP", 2), fitaIds = itens("TAP", 2), comuns = itens("COM", 1), orfaos = itens("ORF", 1);
+        const auto nestVinil = pa.criarContainerImportacao(vinilIds, "vinyl");
+        const auto nestDdp = pa.criarContainerImportacao(ddpIds, "ddp");
+        const auto nestFita = pa.criarContainerImportacao(fitaIds, "tape");
+        pa.definirNomeDoContainer(nestVinil, "Discos");   // colide com a subpasta "Discos" da pasta Albuns
+        pa.definirNomeDoContainer(nestDdp, "Master: Final?");  // caracteres proibidos no nome da pasta
+        const std::string mapa = pa.mapaAtivoPadrao();
+        const std::string albuns = pa.criarPastaAcervo("Albuns", std::nullopt, mapa);
+        pa.criarPastaAcervo("Discos", albuns, mapa);
+        pa.adicionarItensAPasta(vinilIds, albuns);   // container dentro de uma pasta
+        pa.adicionarItensAPasta(comuns, albuns);     // arquivo comum na mesma pasta
+        // ddpIds e fitaIds ficam soltos no canvas (containers sem pasta); orfaos = arquivo comum sem pasta
+
+        const juce::File media = pa.projeto().pastaMedia();
+        const auto planejar = [&](bool paraExport, bool semPastaNaRaiz) {
+            return matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), media,
+                                                              {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                              matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                              false, false, paraExport, mapa, false, semPastaNaRaiz);
+        };
+        const auto caminhoDe = [](const matriz::consolidacao::PlanoConsolidacao& plano, const std::string& itemId) {
+            for (const auto& ip : plano.itens) if (ip.itemId == itemId) return ip.caminhoRelativoDestino.toStdString();
+            return std::string("<fora do plano>");
+        };
+        const auto plano = planejar(false, false);
+        checar(caminhoDe(plano, vinilIds[0]).rfind("Albuns/Discos (2)/", 0) == 0 && caminhoDe(plano, vinilIds[1]).rfind("Albuns/Discos (2)/", 0) == 0,
+               "container dropped in a folder -> <folder>/<container name>/, with ' (2)' when a sibling folder has that name (" + juce::String(caminhoDe(plano, vinilIds[0])) + ")");
+        checar(caminhoDe(plano, comuns[0]).rfind("Albuns/", 0) == 0 && caminhoDe(plano, comuns[0]).find("Discos") == std::string::npos,
+               "an ordinary file in the same folder stays directly in the folder (" + juce::String(caminhoDe(plano, comuns[0])) + ")");
+        checar(caminhoDe(plano, ddpIds[0]).rfind("Master- Final-/", 0) == 0,
+               "a loose container goes to the root of the backup as its own folder, name sanitized (" + juce::String(caminhoDe(plano, ddpIds[0])) + ")");
+        checar(caminhoDe(plano, fitaIds[0]).rfind("Tape transcription/", 0) == 0,
+               "a container without a name uses the type label, never a file name (" + juce::String(caminhoDe(plano, fitaIds[0])) + ")");
+        checar(caminhoDe(plano, orfaos[0]).rfind("_SEM_PASTA/", 0) == 0, "an ordinary orphan file still goes to _SEM_PASTA");
+        // EXPORT por mapa: container solto sai na raiz; arquivo comum sem pasta continua tratado como antes (excluido ou _NO FOLDER).
+        const auto exp = planejar(true, true);
+        checar(caminhoDe(exp, ddpIds[0]).rfind("Master- Final-/", 0) == 0 && caminhoDe(exp, orfaos[0]).rfind("_NO FOLDER/", 0) == 0,
+               "EXPORT follows the same rule and the _NO FOLDER rule is intact (" + juce::String(caminhoDe(exp, orfaos[0])) + ")");
+        const auto expSemRaiz = planejar(true, false);
+        checar(caminhoDe(expSemRaiz, ddpIds[0]).rfind("Master- Final-/", 0) == 0 && expSemRaiz.semPastaExcluidos.count(orfaos[0]) == 1,
+               "a loose container is never counted as 'without folder' in an export by map");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("container backup selftest: ") + e.what());
+    }
+    raizBk.deleteRecursively();
+
     // ------------------------- Folder Map: atalhos C e D (item 9, 2026-09-29)
     std::cout << "\n-- Folder Map: C (Folder Color) / D (Disconnect) shortcuts --\n";
     juce::File raizCD = juce::File::getSpecialLocation(juce::File::tempDirectory)
