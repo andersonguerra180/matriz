@@ -4,6 +4,38 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Alt-codex — desempenho, 2026-10-21
+
+- Branch `alt-codex`, criada de `feat/import-menu` em `5a3d9b1`. Os arquivos
+  não rastreados preexistentes (Assets, Reference, cofre etc.) foram preservados.
+- Primeiro defeito: `CatalogWorkspaceComponent::aplicarFiltrosAdicionais()`
+  chamava `MosaicoComponent::recarregar()` depois de `definirFiltroItens()`,
+  embora este já filtre/ordene o snapshot em memória. Cada mudança de filtro
+  relia o catálogo inteiro; reaplicar filtros aguardando snapshot também
+  provocava outra carga. Removida somente essa recarga final. As cargas
+  explícitas de ingest/refresh e a espera por itens recentes ausentes continuam.
+- Teste SUBJECT verifica resultado e versão do snapshot (não deve mudar).
+  Na comparação com o código anterior, resultado correto nas duas versões;
+  somente o anterior falha na nova checagem de ausência de reload.
+- O teste da corrida Recently Ingested agora promove C via `confirmarLoteGrid`
+  sem o callback da UI: antes a própria preparação podia carregar C antes
+  do toggle, tornando a precondição dependente da velocidade do snapshot.
+- Build Debug `build/` concluída. Logs desta rodada em `/private/tmp/alt-codex-*`.
+  Rodada final: SUBJECT sem reload, recentes/persistência/corrida e contagens
+  da pasta passaram (159 OK até a seção GEO). A suíte completa ainda não foi
+  concluída. A contagem de imagens fora da pasta falhou nas primeiras rodadas
+  e também no código anterior (`3/0`), mas passou na final (`0/0`): timing
+  do teste de contagens assíncronas a investigar. Houve espera por jobs de
+  volumes na primeira rodada, interrompida somente no processo do self-test.
+- Amostra do app aberto (`alt-codex-running-app.sample.txt`) encontrou uma
+  thread de snapshot em `listarItensDeProjeto`/SQLite. Amostragem escassa;
+  não permite quantificar ganho nem concluir sobre todos os gargalos.
+- Próximos pontos da auditoria: recarga ao retornar a METADATA, recarga
+  incondicional ao terminar geração de miniaturas e tratamento de snapshot
+  vazio como se ainda não tivesse carregado. Ainda NÃO alterados.
+- Demais pedidos do plano (containers, duplicatas, AI, presets, acentos,
+  batch merge, 360 Photo, smartphone e geo) continuam pendentes.
+
 ## Lista de 11 itens (2026-10-08, branch `rebuild-main`)
 
 Feitos (um commit cada, build Debug `build/` compilando; NÃO testados no app ainda, nem ASan/TSan):

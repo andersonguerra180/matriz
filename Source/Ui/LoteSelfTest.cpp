@@ -2496,10 +2496,13 @@ int rodarLoteSelfTest() {
                "SUBJECT dropdown lists each existing subject once, plus the fixed No Subject entry last (" +
                    juce::String((int) cw->subjectsDisponiveis_.size()) + ")");
         if (cw->comboSubject_ && idTour > 0) {
+            const auto versaoAntesDoFiltro = cw->mosaico_->versaoSnapshot();
             cw->comboSubject_->setSelectedId(idTour, juce::sendNotificationSync);
             esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
             bombear(200);
             checar(visiveis(cw) == 2, "SUBJECT \"Tour\" shows only the 2 items tagged with it (" + juce::String(visiveis(cw)) + ")");
+            checar(cw->mosaico_->versaoSnapshot() == versaoAntesDoFiltro,
+                   "changing SUBJECT filters the current snapshot without reloading the catalog");
             cw->limparTodosOsFiltros(true);
             cw->aplicarFiltrosAdicionais();
             esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
@@ -2567,7 +2570,11 @@ int rodarLoteSelfTest() {
 
         cw->btnMostrarRecentes_->onClick();  // desliga (estava mostrando B)
         esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
-        promover(loteC);  // drena os próprios eventos "quarentena" (no-op: C ainda não está em itensTodos_)
+        // Prepara a promoção sem o callback da UI que já solicita um snapshot.
+        // Assim C realmente ainda está fora da memória ao ligar o filtro,
+        // independentemente de quão rápido o snapshot da UI terminaria.
+        janela->projetoAberto()->confirmarLoteGrid(loteC);
+        bombear(200);  // drena eventos "quarentena" dos itens ainda fora da memória
 
         // Chama atualizarItemEmMemoria() diretamente, na MESMA pilha, logo
         // após o recarregar() do toggle e antes de qualquer bombear — o

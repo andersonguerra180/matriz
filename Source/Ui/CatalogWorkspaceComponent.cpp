@@ -1367,7 +1367,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         mosaico_->definirFiltroItens(std::nullopt);
     }
 
-    mosaico_->recarregar();
+    // definirFiltroItens já refiltra/reordena o snapshot em memória. Uma
+    // recarga aqui relia todo o catálogo a cada filtro/edição e até ao
+    // reaplicar filtros que estavam aguardando o snapshot recém-entregue.
 }
 
 void CatalogWorkspaceComponent::construirFiltroCollection() {
