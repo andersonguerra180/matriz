@@ -2387,15 +2387,17 @@ void CatalogWorkspaceComponent::filtrarPorChave(const std::string& chave) {
     // apply them as embedded-collection filters directly.
     if (mosaico_) {
         auto ids = projeto_.itensDaColecaoEmbutida(chave);
+        // A coleção já é aplicada sobre o snapshot atual; recarregar aqui
+        // relia o índice inteiro a cada troca de coleção.
         mosaico_->definirFiltroItens(std::move(ids));
-        mosaico_->recarregar();
     }
 }
 
 void CatalogWorkspaceComponent::filtrarPorIds(std::set<std::string> ids) {
     if (mosaico_) {
+        // A seleção por IDs também é um filtro em memória; o snapshot só
+        // precisa ser recarregado quando o catálogo realmente muda.
         mosaico_->definirFiltroItens(std::move(ids));
-        mosaico_->recarregar();
     }
 }
 
