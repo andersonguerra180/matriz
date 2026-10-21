@@ -2485,6 +2485,28 @@ int rodarLoteSelfTest() {
         };
 
         auto* cw = abrirGrid();
+        // Deixa terminar o refresh inicial das miniaturas antes de medir
+        // a navegação, para não atribuir esse trabalho à troca de aba.
+        bombear(900);
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+        const auto versaoAntesDeVoltar = cw->mosaico_->versaoSnapshot();
+        cw->setVisible(false);
+        janela->projetoAberto()->salvarMetadado(antigos[0], "titulo", "Edited while metadata hidden");
+        bombear(100);  // o mosaico escondido acumula o evento
+        janela->mostrarGrid();
+        esperarAte([&] {
+            const auto& itens = cw->mosaico_->todosItensEmMemoria();
+            return std::any_of(itens.begin(), itens.end(), [&](const ItemResumo& item) {
+                return item.id == antigos[0] && item.titulo == "Edited while metadata hidden";
+            });
+        });
+        checar(cw->mosaico_->versaoSnapshot() == versaoAntesDeVoltar && !cw->mosaico_->snapshotPendente(),
+               "returning to METADATA applies hidden item updates without a full catalog reload");
+        checar(std::any_of(cw->mosaico_->todosItensEmMemoria().begin(), cw->mosaico_->todosItensEmMemoria().end(),
+                          [&](const ItemResumo& item) {
+                              return item.id == antigos[0] && item.titulo == "Edited while metadata hidden";
+                          }),
+               "an edit made while METADATA is hidden is visible when returning");
         // SUBJECT: opções vindas dos subjects existentes, filtro por um deles.
         esperarAte([&] { return !cw->subjectsDisponiveis_.empty(); }, 5000);
         int idTour = -1;
@@ -2574,7 +2596,8 @@ int rodarLoteSelfTest() {
         // Assim C realmente ainda está fora da memória ao ligar o filtro,
         // independentemente de quão rápido o snapshot da UI terminaria.
         janela->projetoAberto()->confirmarLoteGrid(loteC);
-        bombear(200);  // drena eventos "quarentena" dos itens ainda fora da memória
+        // Não bombeia mensagens aqui: os eventos da promoção devem chegar
+        // DURANTE o snapshot disparado abaixo, nunca carregar C antes dele.
 
         // Chama atualizarItemEmMemoria() diretamente, na MESMA pilha, logo
         // após o recarregar() do toggle e antes de qualquer bombear — o

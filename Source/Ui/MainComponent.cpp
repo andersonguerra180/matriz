@@ -1855,6 +1855,9 @@ void MainComponent::mostrarCatalog() {
 
 void MainComponent::mostrarGrid() {
     if (!projetoAberto_) return;
+    // A consolidação pode atualizar estado/sincronização sem evento por
+    // item; mantém a releitura ao sair do Backup, inclusive pelo DONE.
+    const bool voltandoDoBackup = backupWorkspace_ && backupWorkspace_->isVisible();
     telaAtiva_ = TelaAtiva::Catalog;
 
     if (barraNavegacao_) {
@@ -1892,8 +1895,11 @@ void MainComponent::mostrarGrid() {
         };
         addAndMakeVisible(*catalogWorkspace_);
     } else {
+        // O mosaico acumula eventos enquanto escondido e os aplica em
+        // visibilityChanged(). Voltar à aba não é uma mudança no catálogo:
+        // reler tudo aqui descartava o benefício das atualizações por item.
         catalogWorkspace_->setVisible(true);
-        catalogWorkspace_->recarregar();
+        if (voltandoDoBackup) catalogWorkspace_->recarregar();
     }
 
     // Sem "Catalog ready" aqui: era falso (nada carregado ainda). O progresso real

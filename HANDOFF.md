@@ -21,18 +21,35 @@ não devem ser revertidas.
   sem o callback da UI: antes a própria preparação podia carregar C antes
   do toggle, tornando a precondição dependente da velocidade do snapshot.
 - Build Debug `build/` concluída. Logs desta rodada em `/private/tmp/alt-codex-*`.
-  Rodada final: SUBJECT sem reload, recentes/persistência/corrida e contagens
-  da pasta passaram (159 OK até a seção GEO). A suíte completa ainda não foi
-  concluída. A contagem de imagens fora da pasta falhou nas primeiras rodadas
+  Rodada final: SUBJECT sem reload, recentes/persistência/corrida, contagens
+  da pasta e GEO com 1.200 itens passaram. Interrompida após 372 OK na seção
+  de navegação/estresse de 18 mil itens; seis FAIL adicionais em pHash,
+  VALIDATE ALL PROBABLE e opções do dropdown EXPORT, ainda sem baseline
+  completo para atribuir causa. A suíte completa NÃO está verde.
+  A contagem de imagens fora da pasta falhou nas primeiras rodadas
   e também no código anterior (`3/0`), mas passou na final (`0/0`): timing
   do teste de contagens assíncronas a investigar. Houve espera por jobs de
   volumes na primeira rodada, interrompida somente no processo do self-test.
 - Amostra do app aberto (`alt-codex-running-app.sample.txt`) encontrou uma
   thread de snapshot em `listarItensDeProjeto`/SQLite. Amostragem escassa;
   não permite quantificar ganho nem concluir sobre todos os gargalos.
-- Próximos pontos da auditoria: recarga ao retornar a METADATA, recarga
-  incondicional ao terminar geração de miniaturas e tratamento de snapshot
-  vazio como se ainda não tivesse carregado. Ainda NÃO alterados.
+- Segundo defeito (em validação): `MainComponent::mostrarGrid()` relia todo
+  o catálogo ao retornar à aba existente. O mosaico já acumula eventos
+  escondido e os aplica ao reaparecer. Retirada a recarga de navegação;
+  PRESERVADA ao voltar do Backup (consolidação pode mudar estados sem eventos).
+  Teste cobre edição com a aba escondida e retorno sem nova versão de snapshot.
+  As duas checagens passaram, assim como SUBJECT e Recentes/corrida, na build
+  Debug final (`alt-codex-tab-verified-lote.log`), mas houve SIGSEGV no fechamento
+  do fixture seguinte (pasta enviada ao grid). Segundo fix AINDA SEM COMMIT:
+  não considerar pronto antes de investigar. Fixture é headless (sem peer):
+  atualização de componente escondido coberta, adiamento nativo de eventos
+  ainda requer uso real. Em andamento: build ASan (`alt-codex-asan-build.log`)
+  e debugger (`alt-codex-lldb-segv.log`). Debuggers anteriores pararam em
+  jassert de foco e não capturaram o SIGSEGV. Nenhum processo do usuário foi
+  fechado; somente processos de self-test/debugger desta tarefa.
+- Próximos pontos da auditoria: recarga incondicional ao terminar geração de
+  miniaturas e tratamento de snapshot vazio como se ainda não tivesse
+  carregado. Ainda NÃO alterados.
 - Demais pedidos do plano (containers, duplicatas, AI, presets, acentos,
   batch merge, 360 Photo, smartphone e geo) continuam pendentes.
 
