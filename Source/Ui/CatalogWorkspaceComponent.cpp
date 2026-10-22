@@ -990,6 +990,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
     categorias_.push_back({matriz::i18n::t("catwork.others"), "others", 0});
     categorias_.push_back({"Phone Dump", "phone_dump", 0});
+    categorias_.push_back({"AI Generated", "ai_generated", 0});
     categorias_.push_back({matriz::i18n::t("catwork.projects"), "projects", 0});
 
     // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
@@ -1292,7 +1293,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         if (tipoMidiaSelecionado_.has_value()) {
             anyFilter = true;
             bool match = false;
-            if (*tipoMidiaSelecionado_ == "phone_dump") {
+            if (*tipoMidiaSelecionado_ == "ai_generated") {
+                match = item.aiGenerated;
+            } else if (*tipoMidiaSelecionado_ == "phone_dump") {
                 match = ehDump(item);
             } else if (*tipoMidiaSelecionado_ == "projects") {
                 match = ehProjeto(item);  // só os containers PROJECT (a capa de cada um)
@@ -1648,7 +1651,9 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 bool pTipo = true;
                 if (filtroTipoMidiaAnos.has_value()) {
-                    if (*filtroTipoMidiaAnos == "phone_dump") {
+                    if (*filtroTipoMidiaAnos == "ai_generated") {
+                        pTipo = item.aiGenerated;
+                    } else if (*filtroTipoMidiaAnos == "phone_dump") {
                         pTipo = isDump;
                     } else if (*filtroTipoMidiaAnos == "projects") {
                         pTipo = isProjeto;
@@ -1686,6 +1691,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 // MEDIA TYPE: ano + collection + subject + lista (não filtra por si mesmo).
                 if (pAno && pColl && pSubj && pLista) {
+                    if (item.aiGenerated) ++res.aiGenerated;
                     if (isProjeto) {
                         ++res.projetos;
                     } else if (isDump) {
@@ -1841,6 +1847,7 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("sessions", res.sessao);
     definirContagem("others", res.outros);
     definirContagem("phone_dump", res.phoneDump);
+    definirContagem("ai_generated", res.aiGenerated);
     definirContagem("projects", res.projetos);
 
     bool reconstruiuAnoOuCollection = false;

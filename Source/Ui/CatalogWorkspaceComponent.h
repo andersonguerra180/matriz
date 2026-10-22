@@ -71,6 +71,7 @@ private:
         int sessao = 0;
         int outros = 0;  // OTHERS: o que nenhuma categoria reconhece (inclusive extensão desconhecida)
         int phoneDump = 0;
+        int aiGenerated = 0;
         int projetos = 0;  // capas de containers PROJECT (DDP, vinil, fita, produção, YouTube)
         int revisao = 0;
         int vulneraveis = 0;

@@ -445,6 +445,7 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     it->subject = subj.has_value() && !subj->empty() ? subj : std::nullopt;
     it->marcadoPublicacao = projeto_.itemMarcadoPublicacao(itemId);
     it->tags = projeto_.lerTags(itemId);
+    it->aiGenerated = !projeto_.lerMetadado(itemId, "ai_generated").value_or("").empty();
     it->etapaProducao = projeto_.valorCampo(itemId, "raiz", 0, "etapa_producao").value_or("");
     it->versaoEscolhida = projeto_.valorCampo(itemId, "raiz", 0, "versao_escolhida").value_or("") == "true";
     it->metadadosEditados = true;
@@ -2913,6 +2914,15 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
             // Corner stamps H / K / P (top-right of areaImagem)
             int stampRight = (selecionado && !modoQuarentena_) ? (areaImagem.getRight() - 28) : (areaImagem.getRight() - 4);
+            if (item.aiGenerated) {
+                juce::Rectangle<int> stampAI(stampRight - 24, areaImagem.getY() + 4, 24, 16);
+                g.setColour(juce::Colour(0xcc9333ea));
+                g.fillRoundedRectangle(stampAI.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("AI", stampAI, juce::Justification::centred);
+                stampRight -= 27;
+            }
             if (item.marcadoPrint) {
                 juce::Rectangle<int> stampP(stampRight - 16, areaImagem.getY() + 4, 16, 16);
                 g.setColour(juce::Colour(0xffff6b00));
