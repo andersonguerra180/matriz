@@ -24,6 +24,7 @@
 #include "Tokens.h"
 #include "ProgressoGlobal.h"
 #include "EventBus.h"
+#include <array>
 #include <AssetsBinaryData.h>
 #include <exiv2/exiv2.hpp>
 
@@ -511,6 +512,38 @@ void avisoRapidoNoRotulo(juce::Label* rotulo, const juce::String& texto) {
         seguro->setText(pr.getWithDefault("textoOriginal", juce::String()).toString(), juce::dontSendNotification);
         pr.remove("textoOriginal");
     });
+}
+
+// AI GENERATED = campo ai_generated + as 4 tags (IA, AI, CONTEUDO IA, AI CONTENT). Um só lugar liga/desliga/lê os dois,
+// para o seletor (individual, lote e Presets) nunca deixar campo e tags divergirem.
+inline const std::array<const char*, 4>& tagsDeIa() {
+    static const std::array<const char*, 4> tags{"IA", "AI", "CONTEUDO IA", "AI CONTENT"};
+    return tags;
+}
+
+inline bool tagEhDeIa(const std::string& tag) {
+    const juce::String t = juce::String(tag).trimCharactersAtStart("#").trim();
+    for (const auto* ia : tagsDeIa())
+        if (t.equalsIgnoreCase(ia)) return true;
+    return false;
+}
+
+bool itemEhIa(ProjetoAberto& projeto, const std::string& itemId) {
+    const juce::String campo = juce::String::fromUTF8(projeto.lerMetadado(itemId, "ai_generated").value_or("").c_str()).trim();
+    if (campo.isNotEmpty() && !campo.equalsIgnoreCase("false") && !campo.equalsIgnoreCase("0") &&
+        !campo.equalsIgnoreCase("no") && !campo.equalsIgnoreCase("nao"))
+        return true;
+    for (const auto& tag : projeto.lerTags(itemId))
+        if (tagEhDeIa(tag)) return true;  // tem a tag de IA mesmo sem o campo: aparece marcado
+    return false;
+}
+
+void definirIaNoItem(ProjetoAberto& projeto, const std::string& itemId, bool ligado) {
+    projeto.salvarMetadado(itemId, "ai_generated", ligado ? "AI Generated / Gerado por IA" : "");
+    for (const auto* tag : tagsDeIa()) {
+        if (ligado) projeto.adicionarTag(itemId, tag);
+        else projeto.removerTag(itemId, tag);
+    }
 }
 
 class FichaConteudo : public juce::Component {
@@ -2872,54 +2905,30 @@ private:
             toggle->setColour(juce::ToggleButton::tickColourId, tk.acento);
 
             auto* tPtr = toggle.get();
-            linha->onCommit = [this, itemId, dbColuna, tPtr] {
-                if (tPtr) {
-                    bool st = tPtr->getToggleState();
-                    projeto_.salvarMetadado(itemId, dbColuna, st ? "AI Generated / Gerado por IA" : "");
-
-                    TagChipsEditor* chips = nullptr;
-                    for (auto& cu : camposUnificados_) {
-                        if (cu && cu->ehTags) {
-                            chips = dynamic_cast<TagChipsEditor*>(cu->editor.get());
-                            break;
-                        }
-                    }
-
-                    if (st) {
-                        if (chips) {
-                            chips->addTag("IA");
-                            chips->addTag("AI");
-                            chips->addTag("CONTEUDO IA");
-                            chips->addTag("AI CONTENT");
-                        } else {
-                            projeto_.adicionarTag(itemId, "IA");
-                            projeto_.adicionarTag(itemId, "AI");
-                            projeto_.adicionarTag(itemId, "CONTEUDO IA");
-                            projeto_.adicionarTag(itemId, "AI CONTENT");
-                        }
-                    } else {
-                        if (chips) {
-                            auto currentTags = chips->getTags();
-                            std::vector<std::string> newTags;
-                            for (const auto& tg : currentTags) {
-                                juce::String lower = juce::String(tg).trimCharactersAtStart("#").trim().toLowerCase();
-                                if (lower != "ia" && lower != "ai" && lower != "conteudo ia" && lower != "ai content") {
-                                    newTags.push_back(tg);
-                                }
-                            }
-                            chips->setTags(newTags);
-                            projeto_.definirTags(itemId, newTags);
-                        } else {
-                            projeto_.removerTag(itemId, "IA");
-                            projeto_.removerTag(itemId, "AI");
-                            projeto_.removerTag(itemId, "CONTEUDO IA");
-                            projeto_.removerTag(itemId, "AI CONTENT");
-                        }
-                    }
-
-                    if (aoAplicarSucesso) aoAplicarSucesso(itemId);
-                    if (aoMudar) aoMudar();
+            linha->onCommit = [this, itemId, tPtr] {
+                if (!tPtr) return;
+                const bool st = tPtr->getToggleState();
+                // Tudo no banco primeiro (campo + as 4 tags, direto, sem passar pelos chips: cada chip
+                // dispararia uma regravação das tags e um refiltro da grade no meio do caminho).
+                projeto_.iniciarGrupoUndo("AI generated");
+                try {
+                    definirIaNoItem(projeto_, itemId, st);
+                } catch (const std::exception& e) {
+                    juce::Logger::writeToLog("[ficha] FALHA ao salvar AI generated item=" + juce::String(itemId) + " erro=" + juce::String(e.what()));
                 }
+                projeto_.finalizarGrupoUndo();
+
+                // Os chips só espelham o que ficou gravado.
+                for (auto& cu : camposUnificados_) {
+                    if (cu && cu->ehTags) {
+                        if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) chips->setTags(projeto_.lerTags(itemId));
+                        break;
+                    }
+                }
+
+                // Por último: estes callbacks podem refazer a ficha, então nada é tocado depois deles.
+                if (aoAplicarSucesso) aoAplicarSucesso(itemId);
+                if (aoMudar) aoMudar();
             };
             toggle->onClick = linha->onCommit;
             addAndMakeVisible(*toggle);
@@ -3174,8 +3183,7 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
-        juce::String valAiGen = projeto_.lerMetadado(itemId, "ai_generated").value_or("");
-        bool isAi = (valAiGen.isNotEmpty() && !valAiGen.equalsIgnoreCase("false") && !valAiGen.equalsIgnoreCase("0") && !valAiGen.equalsIgnoreCase("no") && !valAiGen.equalsIgnoreCase("nao"));
+        const bool isAi = itemEhIa(projeto_, itemId);
 
         // Construct fields per category exactly as specified
         if (cat == MediaCategory::Audio) {
@@ -4957,6 +4965,29 @@ private:
             std::string valorComum;
             bool todosIguais = true;
             bool primeiro = true;
+            if (dbColuna == "ai_generated") {
+                // Estado real (campo OU tags de IA), como no seletor da ficha individual: todos ligados = YES,
+                // todos desligados = NO, mistura = "Multiple values". Opções: 1 = YES, 2 = NO.
+                bool algumLigado = false, algumDesligado = false;
+                for (const auto& itemId : itemIds_) {
+                    (itemEhIa(projeto_, itemId) ? algumLigado : algumDesligado) = true;
+                    if (algumLigado && algumDesligado) break;
+                }
+                if (algumLigado != algumDesligado) {
+                    cb->setSelectedId(algumLigado ? 1 : 2, juce::dontSendNotification);
+                    linha->valorSeed = juce::String::fromUTF8(opcoes[algumLigado ? 0 : 1].c_str());
+                } else {
+                    cb->setTextWhenNothingSelected(matriz::i18n::t("ficha.lote_valores_multiplos"));
+                }
+                cb->setTooltip(rotulo);
+                cb->onChange = [this, linha] {
+                    aplicarCampoAgora(linha);
+                    if (aoPedirFocoGrade) aoPedirFocoGrade();
+                };
+                addAndMakeVisible(*cb);
+                linha->editor = std::move(cb);
+                return;
+            }
             for (const auto& itemId : itemIds_) {
                 std::string v = projeto_.lerMetadado(itemId, dbColuna).value_or("");
                 if (primeiro) { valorComum = v; primeiro = false; }
@@ -5752,19 +5783,7 @@ private:
                     juce::String canon = traduzirContent(val, false);
                     projeto_.salvarMetadado(id, "collection_type", canon.toStdString());
                 } else if (linha->colunaDb == "ai_generated") {
-                    if (val.containsIgnoreCase("SIM") || val.containsIgnoreCase("YES")) {
-                        projeto_.salvarMetadado(id, "ai_generated", "AI Generated / Gerado por IA");
-                        projeto_.adicionarTag(id, "IA");
-                        projeto_.adicionarTag(id, "AI");
-                        projeto_.adicionarTag(id, "CONTEUDO IA");
-                        projeto_.adicionarTag(id, "AI CONTENT");
-                    } else {
-                        projeto_.salvarMetadado(id, "ai_generated", "");
-                        projeto_.removerTag(id, "IA");
-                        projeto_.removerTag(id, "AI");
-                        projeto_.removerTag(id, "CONTEUDO IA");
-                        projeto_.removerTag(id, "AI CONTENT");
-                    }
+                    definirIaNoItem(projeto_, id, val.containsIgnoreCase("SIM") || val.containsIgnoreCase("YES"));
                 } else if (!linha->colunaDb.empty()) {
                     projeto_.salvarMetadado(id, linha->colunaDb, val.toStdString());
                 }
@@ -6361,6 +6380,9 @@ void FichaPanelComponent::abrirPresets() {
             for (const auto* campo : {"dc_subject", "ano", "lista", "dc_creator", "collection_type", "source_media", "ai_generated"})
                 if (objeto->hasProperty(juce::Identifier(campo))) campos.emplace_back(campo, objeto->getProperty(juce::Identifier(campo)).toString().toStdString());
             seguro->projeto_.salvarMetadadoEmLote(ids, campos);
+            // AI generated do preset liga também as tags de IA (campo e tags andam juntos).
+            if (objeto->hasProperty("ai_generated") && objeto->getProperty("ai_generated").toString().isNotEmpty())
+                for (const auto& id : ids) definirIaNoItem(seguro->projeto_, id, true);
             seguro->mostrarSelecao(ids);
             if (seguro->aoMudar) seguro->aoMudar();
         }
