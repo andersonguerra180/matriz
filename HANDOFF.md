@@ -4,6 +4,58 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Alt-codex — estado atual, 2026-10-22
+
+- Branch atual: `alt-codex`. Arquivos não rastreados preexistentes em
+  `Assets/`, `Reference/`, `cofre/` e listas locais continuam preservados e
+  não entram nos commits.
+- Build Debug atual concluída com sucesso em
+  `build/matriz_artefacts/Debug/BKR Matriz.app`. Último commit funcional:
+  `a65d289`. As correções desta rodada foram compiladas, mas as suítes amplas
+  de self-test e ASan/TSan não foram executadas.
+- METADATA: filtros atualizam os campos do snapshot e refiltram em memória
+  (`a42919f`); presets tiveram UTF-8/layout/salvamento em lote corrigidos
+  (`32f101a`); LIST agora depende de CONTENT (`8afe12f`); HIDE FILES WITH GEO
+  LOCATION considera qualquer campo preenchido da ficha GEO (`240767b`);
+  coordenadas embutidas travam toda a ficha GEO até OVERRIDE explícito
+  (`cf2c49c`).
+- Intake — consultas por cartão: removidas duas varreduras sem uso de
+  `itensSemPasta()` ao filtrar/contar (`28cfc6b`). Os caminhos de miniatura
+  agora são carregados uma vez no snapshot, sem consulta SQLite por cartão
+  (`9c2409c`).
+- Intake — acervo real diagnosticado em
+  `/Volumes/BUNKER 4TB/BACKUP FINAL/Fotos/Project`: 497 itens em quarentena,
+  todos com original acessível, mas zero linhas correspondentes em
+  `indice.sqlite/miniatura`. Para itens sem índice, somente os originais dos
+  cartões visíveis são carregados no pool e mantidos no cache da grade
+  (`6be4ca3`). Esta recuperação vale para qualquer acervo; se o original
+  estiver realmente offline, permanece o placeholder.
+- Clique numa foto do Intake bloqueava a message thread por cerca de 30 s:
+  `FichaPanelComponent::construirMetadadosUnificados()` abria o original do
+  Google Drive via Exiv2/decoder quando largura e altura estavam ausentes.
+  A ficha agora usa apenas a análise técnica já gravada e nunca força o
+  download do original na message thread (`7d75527`).
+- Phone Dump/QR: fechar e reabrir o painel reutilizava a porta 8765 com um
+  token novo; a página ainda aberta no celular recebia 403 e mandava escanear
+  novamente. O token automático agora dura por toda a execução do app
+  (`a65d289`). Fechar/reabrir somente o painel mantém a página válida; reiniciar
+  o app gera outro token e exige novo QR. Rejeições registram no log se foram
+  causadas por token antigo ou endereço fora da rede local, sem registrar o
+  token. Uploads com 403 continuam sem gravar arquivo.
+- Diagnóstico do Mac em 2026-10-22: sem pressão de memória, sem limitação
+  térmica e SMART verificado. O pico de lentidão coincidiu com fila extrema de
+  I/O/SQLite (load average de 15 min acima de 80). SSD interno tinha somente
+  11 GB livres; BUNKER estava 94% ocupado. Não é uma mudança de código.
+- Pendências observadas: abertura desse projeto gastou cerca de 91 s em
+  `schemas_e_migracoes`; uma operação de remoção em massa executou muitos
+  `DELETE FROM item WHERE id = ?` síncronos e bloqueou a interface por cerca
+  de 52 s. Investigar em commits separados. O fallback de miniaturas guarda a
+  imagem em memória; ele não cria retroativamente linhas em `indice.sqlite`.
+- O plano original ainda tem itens de duplicatas, design das tags, selo/filtro
+  AI, cover/preview de container, Batch Merge Conflicts e uso de imagens do
+  catálogo como capa a revisar/terminar. Não considerar o plano inteiro
+  encerrado apenas pelos fixes acima.
+
 ## Alt-codex — desempenho, 2026-10-21
 
 - Branch `alt-codex`, criada de `feat/import-menu` em `5a3d9b1`. Os arquivos
