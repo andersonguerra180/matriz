@@ -252,6 +252,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"ficha.lote_titulo", "{n} materiais selecionados"},
         {"ficha.notas_adicionar", "Adicionar nota…"},
         {"ficha.notas_contagem", "Notas: {n}"},
+        {"ficha.dc_preenchidos", "{n} preenchidos"},
         {"ficha.um_selecionado", "1 material selecionado"},
         {"ficha.lote_valores_multiplos", "Múltiplos valores"},
         {"ficha.nao_classificado", "Ainda não classificado. Escolha um tipo de mídia pra preencher a ficha:"},

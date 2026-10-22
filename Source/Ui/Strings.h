@@ -244,6 +244,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"ficha.lote_titulo", "{n} materials selected"},
         {"ficha.notas_adicionar", "Add a note…"},
         {"ficha.notas_contagem", "Notes: {n}"},
+        {"ficha.dc_preenchidos", "{n} filled"},
         {"ficha.um_selecionado", "1 material selected"},
         {"ficha.lote_valores_multiplos", "Multiple values"},
         {"ficha.nao_classificado", "Not classified yet. Choose a media type to fill in its record sheet:"},

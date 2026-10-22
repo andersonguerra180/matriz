@@ -711,14 +711,14 @@ public:
         secHeaderDublinCore_.reset();
         btnAjudaDublinCore_.reset();
         btnCollapseDublinCore_.reset();
-        colapsadoDublinCore_ = true;
+        dcResumo_.reset();
+        // colapsado*_ NÃO é zerado aqui: aberto/fechado de cada card fica
+        // lembrado ao trocar de item (Dublin Core começa recolhido).
         secHeaderUserAsset_.reset();
         btnAjudaUserAsset_.reset();
         btnCollapseUserAsset_.reset();
-        colapsadoUserAsset_ = false;
         btnAjudaGeoLocation_.reset();
         btnCollapseGeoLocation_.reset();
-        colapsadoGeoLocation_ = false;
         notasEntrada_.reset();
         notasMais_.reset();
         notasExif_.reset();
@@ -753,6 +753,23 @@ public:
 
         construirMetadadosUnificados(itemId, tipoMidia);
         construirSecaoGeolocalizacao(itemId);
+        if (colapsadoGeoLocation_) {  // estado lembrado entre itens: nasce recolhido
+            for (juce::Component* c : {static_cast<juce::Component*>(geolocalizacao_.labelCoords.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.editorCoords.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.labelAddress.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.editorAddress.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.labelCity.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.editorCity.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.labelState.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.editorState.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.labelCountry.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.editorCountry.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.btnSalvarFavorito.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.btnCarregarFavorito.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.btnGet.get()),
+                                       static_cast<juce::Component*>(geolocalizacao_.btnOpen.get())})
+                if (c != nullptr) c->setVisible(false);
+        }
 
         {
             juce::StringArray faltando;
@@ -1184,6 +1201,11 @@ public:
                     btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
                     rightX -= 8;
                 }
+                if (dcResumo_ && colapsadoDublinCore_) {
+                    rightX -= 110;
+                    dcResumo_->setBounds(rightX, y + padCardY, 110, 20);
+                    rightX -= 4;
+                }
                 secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
                 y += padCardY + 24;
             } else {
@@ -1410,6 +1432,11 @@ public:
                 rightX -= btnW;
                 btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
                 rightX -= 8;
+            }
+            if (dcResumo_ && colapsadoDublinCore_) {
+                rightX -= 110;
+                dcResumo_->setBounds(rightX, y + padCardY, 110, 20);
+                rightX -= 4;
             }
             secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
             y += padCardY + 24;
@@ -2084,6 +2111,24 @@ private:
         linha.rotulo->addAndMakeVisible(*botao);
         linha.btnPasta = std::move(botao);
     }
+    std::unique_ptr<juce::Label> dcResumo_;  // "N preenchidos" no cabeçalho do Dublin Core recolhido
+
+    void atualizarResumoDublinCore() {
+        if (!dcResumo_) return;
+        int preenchidos = 0;
+        for (auto& cu : camposUnificados_) {
+            if (!cu || cu->bloco != BlocoFicha::DublinCore || !cu->editor) continue;
+            if (auto* ed = dynamic_cast<juce::TextEditor*>(cu->editor.get())) {
+                if (ed->getText().trim().isNotEmpty()) ++preenchidos;
+            } else if (auto* cb = dynamic_cast<juce::ComboBox*>(cu->editor.get())) {
+                if (cb->getText().trim().isNotEmpty()) ++preenchidos;
+            }
+        }
+        dcResumo_->setText(matriz::i18n::t("ficha.dc_preenchidos").replace("{n}", juce::String(preenchidos)),
+                           juce::dontSendNotification);
+        dcResumo_->setVisible(colapsadoDublinCore_);
+    }
+
     std::unique_ptr<juce::Label> secHeaderDublinCore_;
     std::unique_ptr<juce::TextButton> btnAjudaDublinCore_;
     std::unique_ptr<juce::TextButton> btnCollapseDublinCore_;
@@ -2407,6 +2452,12 @@ private:
         secHeaderDublinCore_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*secHeaderDublinCore_);
 
+        dcResumo_ = std::make_unique<juce::Label>();
+        dcResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        dcResumo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        dcResumo_->setJustificationType(juce::Justification::centredRight);
+        addChildComponent(*dcResumo_);
+
         btnAjudaDublinCore_ = std::make_unique<juce::TextButton>("?");
         btnAjudaDublinCore_->setTooltip(
             isPt ? juce::String::fromUTF8("DUBLIN CORE (ISO 15836)\n"
@@ -2431,6 +2482,7 @@ private:
             btnCollapseDublinCore_->setButtonText(colapsadoDublinCore_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
             btnCollapseDublinCore_->setTooltip(colapsadoDublinCore_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
             bool vis = !colapsadoDublinCore_;
+            atualizarResumoDublinCore();
             for (auto& cu : camposUnificados_) {
                 if (cu && cu->bloco == BlocoFicha::DublinCore) {
                     if (cu->rotulo) cu->rotulo->setVisible(vis);
@@ -3195,6 +3247,18 @@ private:
             addEditableTags(tagsList);
         }
 
+        atualizarResumoDublinCore();
+        if (colapsadoUserAsset_) {
+            for (auto& cu : camposUnificados_) {
+                if (!cu || cu->bloco != BlocoFicha::UserAsset || cu->campoId == "ai_generated") continue;
+                if (cu->rotulo) cu->rotulo->setVisible(false);
+                if (cu->badge) cu->badge->setVisible(false);
+                if (cu->editor) cu->editor->setVisible(false);
+            }
+            if (notasEntrada_) notasEntrada_->setVisible(false);
+            if (notasMais_) notasMais_->setVisible(false);
+            if (notasExif_) notasExif_->setVisible(false);
+        }
         if (colapsadoDublinCore_) {
             for (auto& cu : camposUnificados_) {
                 if (cu && cu->bloco == BlocoFicha::DublinCore) {
