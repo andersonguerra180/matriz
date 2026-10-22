@@ -864,6 +864,28 @@ public:
         const int padCardY = 10;
         bool ehDuasColunas = (larguraUtil >= 500);
 
+        // Dados técnicos (somente leitura): grade de `colunas` colunas no topo
+        // do card ASSET & USER METADATA, na ordem em que foram adicionados.
+        // Rótulo em cima, valor embaixo; devolve o y logo abaixo da grade.
+        auto layoutGradeTecnica = [&](int colunas, int yIni) {
+            const int larguraGrade = larguraUtil - 2 * padCardX;
+            const int gapGrade = tk.espacoMedio;
+            const int larguraCelula = (larguraGrade - gapGrade * (colunas - 1)) / colunas;
+            const int alturaLinhaGrade = 16 + 24 + tk.espacoPequeno;
+            int coluna = 0, yAtual = yIni, quantas = 0;
+            for (auto& cu : camposUnificados_) {
+                if (!cu || cu->bloco != BlocoFicha::UserAsset || !cu->ehAutoFixed) continue;
+                const int cx = x + padCardX + coluna * (larguraCelula + gapGrade);
+                cu->rotulo->setBounds(cx, yAtual, larguraCelula, 16);
+                cu->editor->setBounds(cx, yAtual + 16, larguraCelula, 24);
+                ++quantas;
+                if (++coluna == colunas) { coluna = 0; yAtual += alturaLinhaGrade; }
+            }
+            if (quantas > 0 && coluna != 0) yAtual += alturaLinhaGrade;
+            if (quantas > 0) yAtual += tk.espacoPequeno;  // respiro antes dos campos editáveis
+            return yAtual;
+        };
+
         if (ehDuasColunas) {
             int innerW = larguraUtil - 2 * padCardX;
             int gap = 16;
@@ -897,6 +919,7 @@ public:
                     std::stable_sort(ordenados.begin(), ordenados.end(), [&](auto* a, auto* b) { return prioridade(a) < prioridade(b); });
                 }
                 for (auto* cu : ordenados) {
+                    if (cu->ehAutoFixed) continue;  // vai na grade técnica (layoutGradeTecnica)
 
                     if (bloco == BlocoFicha::UserAsset) {
                         if (cu->ehNotes)  { notasFora = cu; continue; }
@@ -995,6 +1018,7 @@ public:
                 y += padCardY;
             }
             if (!colapsadoUserAsset_) {
+                y = layoutGradeTecnica(4, y);
                 int y0 = y;
                 int y1 = y;
                 LinhaUnificada* notasFora = nullptr;
@@ -1171,7 +1195,7 @@ public:
         int innerW = larguraUtil - 2 * padCardX;
         auto layoutCamposDoBloco1Col = [&](BlocoFicha bloco) {
             for (auto& cu : camposUnificados_) {
-                if (!cu || cu->bloco != bloco) continue;
+                if (!cu || cu->bloco != bloco || cu->ehAutoFixed) continue;
                 int rotuloW = innerW - 100;
                 cu->rotulo->setBounds(x + padCardX, y, rotuloW, 16);
                 cu->badge->setBounds(x + padCardX + innerW - 95, y, 95, 16);
@@ -1230,6 +1254,7 @@ public:
             y += padCardY;
         }
         if (!colapsadoUserAsset_) {
+            y = layoutGradeTecnica(2, y);
             layoutCamposDoBloco1Col(BlocoFicha::UserAsset);
             int cardBBottom1 = y + padCardY;
             quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop1, larguraUtil, cardBBottom1 - cardBTop1);
@@ -2398,7 +2423,7 @@ private:
         addAndMakeVisible(*btnCollapseUserAsset_);
 
         // Helpers to add fields
-        auto addAutoFixed = [this, &tk, isPt](const std::string& campoId, const juce::String& rotulo, const juce::String& valor) {
+        auto addAutoFixed = [this, &tk](const std::string& campoId, const juce::String& rotulo, const juce::String& valor) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
             linha->bloco = BlocoFicha::UserAsset;
@@ -2410,15 +2435,11 @@ private:
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoSecundario);
             addAndMakeVisible(*linha->rotulo);
 
-            linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? "[AUTO + FIXO]" : "[AUTO + FIXED]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
-            linha->badge->setColour(juce::Label::textColourId, tk.campoLeituraTecnica);
-            linha->badge->setJustificationType(juce::Justification::centredRight);
-            addAndMakeVisible(*linha->badge);
-
+            // Dados técnicos viram células da grade somente leitura no topo do
+            // card — sem badge [AUTO + FIXO] (a posição já diz que não edita).
             auto lbl = std::make_unique<juce::Label>();
             lbl->setText(valor, juce::dontSendNotification);
+            lbl->setTooltip(valor);
             lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
             lbl->setColour(juce::Label::textColourId, tk.campoLeituraTecnica);
             lbl->setColour(juce::Label::backgroundColourId, tk.painelAlt.withAlpha(0.6f));
@@ -2987,9 +3008,9 @@ private:
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("codec", "CODEC", codecStr);
-            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
+            addAutoFixed("file_size", isPt ? "TAMANHO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("sample_rate", isPt ? "TAXA DE AMOSTRAGEM" : "SAMPLE RATE", sampleRateStr);
-            addAutoFixed("bit_depth", isPt ? "PROFUNDIDADE DE BITS" : "BIT DEPTH", bitDepthStr);
+            addAutoFixed("bit_depth", isPt ? "PROF. DE BITS" : "BIT DEPTH", bitDepthStr);
             if (channelsStr.isNotEmpty())
                 addAutoFixed("channels", isPt ? "CANAIS" : "CHANNELS", channelsStr);
             addEditableText("isrc", "ISRC", valIsrc, "isrc");
@@ -3016,12 +3037,12 @@ private:
             addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
-            addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
+            addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("ORIENTAÇÃO") : juce::String("ORIENTATION"), orientationStr);
+            addAutoFixed("file_size", isPt ? "TAMANHO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("codec", "CODEC", codecStr);
-            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("sample_rate", isPt ? "TAXA DE AMOSTRAGEM" : "SAMPLE RATE", sampleRateStr);
-            addAutoFixed("bit_depth", isPt ? "PROFUNDIDADE DE BITS" : "BIT DEPTH", bitDepthStr);
+            addAutoFixed("bit_depth", isPt ? "PROF. DE BITS" : "BIT DEPTH", bitDepthStr);
             addEditableOriginalSourceMedium(valSourceMedia.toStdString());
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Video, isPt),
@@ -3044,10 +3065,10 @@ private:
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
-            addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
+            addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("ORIENTAÇÃO") : juce::String("ORIENTATION"), orientationStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
-            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("color_space", isPt ? juce::String::fromUTF8("ESPAÇO DE COR") : juce::String("COLOR SPACE"), colorSpaceStr);
+            addAutoFixed("file_size", isPt ? "TAMANHO" : "FILE SIZE", fileSizeStr);
             addEditableOriginalSourceMedium(valSourceMedia.toStdString());
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Image, isPt),
@@ -3070,7 +3091,7 @@ private:
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
-            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
+            addAutoFixed("file_size", isPt ? "TAMANHO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("pages", isPt ? juce::String::fromUTF8("PÁGINAS") : juce::String("PAGES"), pagesStr);
             addEditableOriginalSourceMedium(valSourceMedia.toStdString());
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
