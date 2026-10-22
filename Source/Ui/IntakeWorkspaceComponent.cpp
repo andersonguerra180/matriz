@@ -1433,7 +1433,8 @@ public:
     }
 
     void pedirMiniatura(const std::string& itemId, const juce::String& capaContainer,
-                        const juce::String& caminhoMiniatura, const juce::String& extensao) {
+                        const juce::String& caminhoMiniatura, const juce::String& caminhoOrigem,
+                        const juce::String& extensao) {
         {
             const juce::ScopedLock sl(lock_);
             if (loading_.count(itemId) || cache_.count(itemId) || noThumbnail_.count(itemId)) return;
@@ -1441,7 +1442,7 @@ public:
         }
 
         juce::Component::SafePointer<ThumbnailsGridComponent> safeThis(this);
-        poolThumbnails_.addJob([safeThis, itemId, capaContainer, caminhoMiniatura, extensao]() mutable {
+        poolThumbnails_.addJob([safeThis, itemId, capaContainer, caminhoMiniatura, caminhoOrigem, extensao]() mutable {
             // Container com capa própria (vinil, fita): a capa escolhida na ficha vale como miniatura dele.
             std::optional<juce::String> caminho;
             if (capaContainer.isNotEmpty() && juce::File(capaContainer).existsAsFile()) caminho = capaContainer;
@@ -1449,6 +1450,24 @@ public:
             juce::Image img;
             if (caminho) img = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
             bool temCaminho = caminho.has_value();
+
+            // Imports antigos e arquivos que chegaram como placeholder de nuvem
+            // podem não ter uma linha em indice.sqlite. O Intake ainda precisa
+            // mostrar a foto: carrega somente o original visível, no pool, e o
+            // mantém no cache da grade sem consultar o banco por cartão.
+            if (!img.isValid() && caminhoOrigem.isNotEmpty()) {
+                const juce::File origem(caminhoOrigem);
+                if (origem.existsAsFile()) {
+                    img = juce::ImageFileFormat::loadFrom(origem);
+                    if (img.isValid() && (img.getWidth() > 512 || img.getHeight() > 512)) {
+                        const double escala = juce::jmin(512.0 / img.getWidth(), 512.0 / img.getHeight());
+                        img = img.rescaled(juce::jmax(1, juce::roundToInt(img.getWidth() * escala)),
+                                           juce::jmax(1, juce::roundToInt(img.getHeight() * escala)),
+                                           juce::Graphics::ResamplingQuality::mediumResamplingQuality);
+                    }
+                    if (img.isValid()) temCaminho = true;
+                }
+            }
 
             if (!img.isValid()) {
                 const auto ext = extensao.toLowerCase().replace(".", "");
@@ -1537,7 +1556,8 @@ public:
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
                     g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
                 } else {
-                    pedirMiniatura(item.id, item.containerCapaCaminho, item.caminhoMiniatura, item.extensao);
+                    pedirMiniatura(item.id, item.containerCapaCaminho, item.caminhoMiniatura,
+                                   item.caminhoOrigem, item.extensao);
                     g.setColour(corCat.withAlpha(0.12f));
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
                     g.setColour(corCat);
