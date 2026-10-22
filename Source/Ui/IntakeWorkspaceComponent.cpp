@@ -1432,7 +1432,8 @@ public:
         return cache_.count(itemId) > 0;
     }
 
-    void pedirMiniatura(const std::string& itemId, const juce::String& capaContainer = {}) {
+    void pedirMiniatura(const std::string& itemId, const juce::String& capaContainer,
+                        const juce::String& caminhoMiniatura, const juce::String& extensao) {
         {
             const juce::ScopedLock sl(lock_);
             if (loading_.count(itemId) || cache_.count(itemId) || noThumbnail_.count(itemId)) return;
@@ -1440,27 +1441,22 @@ public:
         }
 
         juce::Component::SafePointer<ThumbnailsGridComponent> safeThis(this);
-        ProjetoAberto* proj = &owner_.projeto_;
-
-        poolThumbnails_.addJob([safeThis, proj, itemId, capaContainer]() mutable {
+        poolThumbnails_.addJob([safeThis, itemId, capaContainer, caminhoMiniatura, extensao]() mutable {
             // Container com capa própria (vinil, fita): a capa escolhida na ficha vale como miniatura dele.
             std::optional<juce::String> caminho;
             if (capaContainer.isNotEmpty() && juce::File(capaContainer).existsAsFile()) caminho = capaContainer;
-            if (!caminho) caminho = proj->caminhoMiniaturaPrincipal(itemId);
+            if (!caminho && caminhoMiniatura.isNotEmpty()) caminho = caminhoMiniatura;
             juce::Image img;
             if (caminho) img = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
             bool temCaminho = caminho.has_value();
 
             if (!img.isValid()) {
-                if (auto arq = proj->arquivoPrincipal(itemId)) {
-                    juce::File f(arq->caminhoAbsoluto);
-                    juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
-                    juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
-                    if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
-                    if (logoFile.isNotEmpty()) {
-                        img = matriz::ui::carregarLogoDeTipo(logoFile);
-                        if (img.isValid()) temCaminho = true;
-                    }
+                const auto ext = extensao.toLowerCase().replace(".", "");
+                juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
+                if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
+                if (logoFile.isNotEmpty()) {
+                    img = matriz::ui::carregarLogoDeTipo(logoFile);
+                    if (img.isValid()) temCaminho = true;
                 }
             }
 
@@ -1541,7 +1537,7 @@ public:
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
                     g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
                 } else {
-                    pedirMiniatura(item.id);
+                    pedirMiniatura(item.id, item.containerCapaCaminho, item.caminhoMiniatura, item.extensao);
                     g.setColour(corCat.withAlpha(0.12f));
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
                     g.setColour(corCat);
@@ -2516,6 +2512,9 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
 
         it.caminhoOrigem = !item.caminhoAbsolutoOrigem.empty() ? juce::String::fromUTF8(item.caminhoAbsolutoOrigem.c_str())
                                                               : juce::String::fromUTF8(item.caminhoRelativoArquivo.c_str());
+        if (!item.miniaturaCaminhoRelativo.empty())
+            it.caminhoMiniatura = projeto_.projeto().pasta().getChildFile(
+                juce::String::fromUTF8(item.miniaturaCaminhoRelativo.c_str())).getFullPathName();
 
         // IMPORT FROM PHONE (galeria/WhatsApp): chega com Original Source Medium = Internal Storage / Smartphone,
         // o que também o faz passar pelo filtro PHONE DUMP. Só preenche quando ainda não há medium definido.

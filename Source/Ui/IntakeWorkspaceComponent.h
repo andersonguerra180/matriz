@@ -117,6 +117,7 @@ private:
         juce::int64 tamanhoBytes = 0;
         std::optional<double> duracaoSegundos;  // áudio/vídeo: vem junto com a lista (sem consulta ao pintar)
         juce::String caminhoOrigem;
+        juce::String caminhoMiniatura;
         juce::String categoria; // "Audio", "Video", "Image", "Document", "Project", "Other"
         juce::String collection; // assigned collection or ""
         juce::String sourceMedia; // assigned original source medium or ""

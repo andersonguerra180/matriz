@@ -951,6 +951,17 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     if (!projeto_) return out;
     std::unique_ptr<matriz::vault::ResolvedorEmLote> resolvedor;  // só se algum item precisar checar disco
 
+    // O Intake pintava cada card disparando uma consulta separada no
+    // indice.sqlite. Carrega os caminhos uma vez no snapshot de background.
+    std::unordered_map<std::string, std::string> miniaturas;
+    try {
+        auto minStmt = leituraIndice().prepare(
+            "SELECT item_id, caminho_relativo FROM miniatura "
+            "WHERE tipo = 'miniatura' ORDER BY item_id, gerado_em DESC");
+        while (minStmt.step())
+            miniaturas.emplace(minStmt.columnText(0), minStmt.columnText(1));
+    } catch (...) {}
+
     // Mesma cópia sob lock de listarItens() -- este método também roda em
     // background (IntakeWorkspaceComponent) enquanto a message thread pode
     // escrever nesses sets/map ao mesmo tempo.
@@ -1041,6 +1052,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.masterArquivoId = masterArqId;
                 r.caminhoRelativoArquivo = camRel;
                 r.caminhoAbsolutoOrigem = camAbs;
+                if (auto mini = miniaturas.find(r.id); mini != miniaturas.end())
+                    r.miniaturaCaminhoRelativo = mini->second;
 
                 // Mesmo critério de listarItensDeProjeto: re-verifica só os do cache.
                 if (offlineCopia.count(r.id) > 0)
