@@ -524,6 +524,9 @@ private:
     int ticksDoTimer_ = 0;
     juce::int64 tamanhoTotalEmCache_ = 0;
     bool calculandoTamanhoTotal_ = false;
+    // A varredura de grafias também percorre as tabelas de metadados. Na
+    // abertura, espera o primeiro snapshot da grade para não disputar o HD.
+    bool verificarNomesAposPrimeiroSnapshot_ = false;
 
     // Pool própria pros Vaults: a de ingest fica saturada durante um lote, e
     // uma varredura de volume atrás de 5.000 arquivos nunca rodaria.

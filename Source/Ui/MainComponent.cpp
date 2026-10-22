@@ -953,6 +953,10 @@ void MainComponent::reconstruirLayoutProjeto() {
     mosaico_->aoMudarConteudoVisivel = [this] {
         atualizarPainelDeApoio();
         atualizarBarraMetricas();
+        if (verificarNomesAposPrimeiroSnapshot_ && mosaico_ && !mosaico_->snapshotPendente()) {
+            verificarNomesAposPrimeiroSnapshot_ = false;
+            verificarUnificacaoDeNomes();
+        }
     };
     mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> itemIds) { abrirMenuContextoItens(std::move(itemIds)); };
     mosaico_->aoRenomearItem = [this] {
@@ -1676,10 +1680,12 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     }
     addAndMakeVisible(*barraProgressoGlobal_);
 
+    const bool temItens = projetoAberto_ && projetoAberto_->contarItens() > 0;
+    verificarNomesAposPrimeiroSnapshot_ = !isCatalog && temItens;
     if (isCatalog) {
         mostrarCatalogHub();
     } else {
-        if (projetoAberto_ && projetoAberto_->contarItens() > 0) {
+        if (temItens) {
             mostrarGrid();
         } else {
             mostrarIntake();
@@ -1689,7 +1695,9 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     verificarVaultsConectados();
     verificarPresencaInicialAssets();
     verificarPapelMain();
-    verificarUnificacaoDeNomes();
+    // Projetos comuns fazem esta varredura quando o primeiro snapshot da
+    // grade termina; catálogo raiz não carrega essa grade aqui.
+    if (isCatalog) verificarUnificacaoDeNomes();
     if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
     startTimer(5000);
 }
