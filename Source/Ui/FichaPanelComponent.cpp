@@ -877,78 +877,36 @@ public:
             // curta na hora que aparece). Substituiu o antigo agrupamento
             // com ORIGINAL SOURCE MEDIUM (colOsm), que deixava PATH grudado
             // em DEVICE do outro lado e um vão vazio embaixo de AI GENERATED.
-            int colContentGroup = 0;
             auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1, LinhaUnificada*& notasFora) {
                 LinhaUnificada* cuPeople = nullptr;
                 LinhaUnificada* cuTags = nullptr;
 
-                for (auto& cu : camposUnificados_) {
-                    if (!cu || cu->bloco != bloco) continue;
+                std::vector<LinhaUnificada*> ordenados;
+                for (auto& campo : camposUnificados_) if (campo && campo->bloco == bloco) ordenados.push_back(campo.get());
+                if (bloco == BlocoFicha::UserAsset) {
+                    auto prioridade = [](const LinhaUnificada* campo) {
+                        const auto& id = campo->campoId;
+                        if (id == "subject" || id == "event_date") return 0;
+                        if (id == "lista" || id == "creator") return 1;
+                        if (id == "collection" || id == "source_media") return 2;
+                        if (id == "filename") return 4;
+                        if (id == "path") return 5;
+                        if (id == "ai_generated") return 6;
+                        return 3;
+                    };
+                    std::stable_sort(ordenados.begin(), ordenados.end(), [&](auto* a, auto* b) { return prioridade(a) < prioridade(b); });
+                }
+                for (auto* cu : ordenados) {
 
                     if (bloco == BlocoFicha::UserAsset) {
-                        if (cu->ehNotes)  { notasFora = cu.get(); continue; }
-                        if (cu->ehPeople) { cuPeople = cu.get(); continue; }
-                        if (cu->ehTags)   { cuTags = cu.get();   continue; }
-                        // item: SUBJECT sempre à esquerda, CREATOR sempre à
-                        // direita, os dois sempre na mesma linha — o
-                        // empacotamento "coluna mais curta primeiro" abaixo
-                        // não garante isso sozinho. SUBJECT é pulado aqui
-                        // (tratado junto quando o loop chega no CREATOR,
-                        // que já vem logo depois dele na ordem de inserção).
-                        // LIST e CONTENT também são tratados aqui: sempre na
-                        // coluna esquerda, nesta ordem, logo abaixo de SUBJECT.
-                        if (cu->campoId == "subject" || cu->campoId == "lista" || cu->campoId == "collection") {
-                            bool temCreator = false;
-                            for (auto& outro : camposUnificados_)
-                                if (outro && outro->bloco == bloco && outro->campoId == "creator") { temCreator = true; break; }
-                            if (temCreator) continue;
-                        }
-                        if (cu->campoId == "creator") {
-                            LinhaUnificada* cuSubject = nullptr;
-                            for (auto& outro : camposUnificados_) {
-                                if (outro && outro->bloco == bloco && outro->campoId == "subject") {
-                                    cuSubject = outro.get();
-                                    break;
-                                }
-                            }
-                            int yLinha = std::max(y0, y1);
-                            y0 = yLinha;
-                            y1 = yLinha;
-                            int rotuloW = colW - 85;
-                            int alturaLinha = 18 + tk.espacoPequeno;
-                            if (cuSubject) {
-                                cuSubject->rotulo->setBounds(x0, yLinha, rotuloW, 16);
-                                cuSubject->badge->setBounds(x0 + colW - 80, yLinha, 80, 16);
-                                cuSubject->editor->setBounds(x0, yLinha + 18, colW, 24);
-                            }
-                            cu->rotulo->setBounds(x1, yLinha, rotuloW, 16);
-                            cu->badge->setBounds(x1 + colW - 80, yLinha, 80, 16);
-                            cu->editor->setBounds(x1, yLinha + 18, colW, 24);
-                            y0 += alturaLinha + 24;
-                            y1 += alturaLinha + 24;
-                            // LIST e CONTENT: coluna esquerda, em sequência.
-                            for (const char* id : {"lista", "collection"}) {
-                                for (auto& outro : camposUnificados_) {
-                                    if (!outro || outro->bloco != bloco || outro->campoId != id) continue;
-                                    outro->rotulo->setBounds(x0, y0, rotuloW, 16);
-                                    outro->badge->setBounds(x0 + colW - 80, y0, 80, 16);
-                                    outro->editor->setBounds(x0, y0 + 18, colW, 24);
-                                    y0 += alturaLinha + 24;
-                                    break;
-                                }
-                            }
-                            colContentGroup = 0;  // PATH/AI GENERATED seguem o CONTENT (esquerda)
-                            continue;
-                        }
+                        if (cu->ehNotes)  { notasFora = cu; continue; }
+                        if (cu->ehPeople) { cuPeople = cu; continue; }
+                        if (cu->ehTags)   { cuTags = cu;   continue; }
                     }
 
                     bool useCol1 = (y1 < y0);
-                    if (bloco == BlocoFicha::UserAsset && (cu->campoId == "path" || cu->campoId == "ai_generated")) {
-                        useCol1 = (colContentGroup == 1);
-                    }
-                    if (bloco == BlocoFicha::UserAsset && cu->campoId == "collection") {
-                        colContentGroup = useCol1 ? 1 : 0;
-                    }
+                    if (bloco == BlocoFicha::UserAsset)
+                        useCol1 = cu->campoId == "event_date" || cu->campoId == "creator" || cu->campoId == "source_media";
 
                     int currX = useCol1 ? x1 : x0;
                     int& currY = useCol1 ? y1 : y0;
@@ -3041,7 +2999,6 @@ private:
 
         // Construct fields per category exactly as specified
         if (cat == MediaCategory::Audio) {
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -3065,13 +3022,13 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Audio, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Video) {
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -3094,13 +3051,13 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Video, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Image) {
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -3120,13 +3077,13 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Image, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else { // Docs
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -3144,6 +3101,7 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Docs, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
