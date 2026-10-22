@@ -6261,8 +6261,9 @@ void FichaPanelComponent::abrirPresets() {
                 const auto nome = dialogoSeguro->getTextEditorContents("nome").trim();
                 if (nome.isEmpty()) return;
                 auto* valores = new juce::DynamicObject();
-                // Apenas campos editoriais reutilizáveis; identidade e GPS ficam fora do preset.
-                for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "content_type", "collection_type", "source_media", "ai_generated", "lista"}) {
+                // O preset mora no card ASSET & USER METADATA e guarda só os campos dele (Subject, Event date, List,
+                // Creator, Content, Source medium, AI generated); identidade, GPS e Dublin Core ficam de fora.
+                for (const auto* campo : {"dc_subject", "ano", "lista", "dc_creator", "collection_type", "source_media", "ai_generated"}) {
                     const auto valorComum = seguro->projeto_.lerMetadado(ids.front(), campo).value_or("");
                     bool igualEmTodos = true;
                     for (size_t i = 1; i < ids.size(); ++i) {
@@ -6285,7 +6286,7 @@ void FichaPanelComponent::abrirPresets() {
         auto preset = dados.getProperty(juce::Identifier(nomes[static_cast<size_t>(indice)]), {});
         if (auto* objeto = preset.getDynamicObject()) {
             std::vector<std::pair<std::string, std::string>> campos;
-            for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "content_type", "collection_type", "source_media", "ai_generated", "lista"})
+            for (const auto* campo : {"dc_subject", "ano", "lista", "dc_creator", "collection_type", "source_media", "ai_generated"})
                 if (objeto->hasProperty(juce::Identifier(campo))) campos.emplace_back(campo, objeto->getProperty(juce::Identifier(campo)).toString().toStdString());
             seguro->projeto_.salvarMetadadoEmLote(ids, campos);
             seguro->mostrarSelecao(ids);
