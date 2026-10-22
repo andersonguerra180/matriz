@@ -305,6 +305,7 @@ private:
     };
     EscutaEventos escutaEventos_{*this};
     void atualizarFiltrosDeData();
+    void atualizarListasDoContentEmMemoria();
     bool refreshDataPendente_ = false;
     bool contagensAguardandoSnapshot_ = false;
     bool filtrosAguardandoSnapshot_ = false;

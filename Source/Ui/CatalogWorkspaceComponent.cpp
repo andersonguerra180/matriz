@@ -355,6 +355,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
         if (mosaico_) {
             mosaico_->atualizarItemEmMemoria(itemId);
+            atualizarListasDoContentEmMemoria();
             // O campo recém-gravado já está no snapshot em memória: refaz o
             // funil agora, sem esperar a contagem assíncrona nem reler o catálogo.
             aplicarFiltrosAdicionais();
@@ -1405,6 +1406,7 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
             } else {
                 collectionSelecionado_ = collectionDisponiveis_[static_cast<size_t>(sel - 1)].first;
             }
+            atualizarListasDoContentEmMemoria();
             aplicarFiltrosAdicionais();
             atualizarContagens();  // os outros grupos contam só o que passa por este filtro
         };
@@ -1432,6 +1434,41 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
         }
     }
     comboContentType_->setSelectedId(idSel, juce::dontSendNotification);
+}
+
+void CatalogWorkspaceComponent::atualizarListasDoContentEmMemoria() {
+    if (!mosaico_ || mosaico_->versaoSnapshot() == 0) return;
+
+    std::map<std::string, int> contagem;
+    std::map<std::string, std::string> grafia;
+    int semLista = 0;
+    for (const auto& item : mosaico_->todosItensEmMemoria()) {
+        if (collectionSelecionado_.has_value()) {
+            const bool temContent = item.collectionType.has_value() && !item.collectionType->empty();
+            const bool pertence = *collectionSelecionado_ == "Unknown"
+                ? !temContent
+                : (temContent && *item.collectionType == *collectionSelecionado_);
+            if (!pertence) continue;
+        }
+        if (!item.lista.has_value() || item.lista->empty()) {
+            ++semLista;
+            continue;
+        }
+        const auto chave = matriz::model::nomes::chave(*item.lista);
+        grafia.emplace(chave, *item.lista);
+        ++contagem[grafia[chave]];
+    }
+
+    listasDisponiveis_.clear();
+    for (const auto& par : contagem) listasDisponiveis_.push_back(par);
+    listasDisponiveis_.push_back({kSemLista, semLista});
+
+    if (listaSelecionada_.has_value()) {
+        const bool aindaExiste = std::any_of(listasDisponiveis_.begin(), listasDisponiveis_.end(),
+            [this](const auto& par) { return par.first == *listaSelecionada_; });
+        if (!aindaExiste) listaSelecionada_.reset();
+    }
+    construirFiltroLista();
 }
 
 void CatalogWorkspaceComponent::construirFiltroSubject() {
@@ -1976,6 +2013,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     collectionSelecionado_ = std::nullopt;
     subjectSelecionado_ = std::nullopt;
     listaSelecionada_ = std::nullopt;
+    atualizarListasDoContentEmMemoria();
 
     if (ocultarEditados_) {
         ocultarEditados_ = false;
