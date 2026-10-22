@@ -242,6 +242,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"ficha.lote_tipo_misto", "Selection has mixed media types. Select items of the same type to batch-edit their record sheet."},
         {"ficha.lote_tipo_misto_universais", "Selection has mixed media types  -  only Origin and Year are shared by every type, so only those can be edited together."},
         {"ficha.lote_titulo", "{n} materials selected"},
+        {"ficha.um_selecionado", "1 material selected"},
         {"ficha.lote_valores_multiplos", "Multiple values"},
         {"ficha.nao_classificado", "Not classified yet. Choose a media type to fill in its record sheet:"},
         {"ficha.nivel_faixa_adicionar", "Add track"},

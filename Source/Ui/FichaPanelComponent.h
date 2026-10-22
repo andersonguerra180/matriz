@@ -79,6 +79,11 @@ public:
 
 private:
     void abrirPresets();
+    void atualizarContagem();
+    // Faixa fixa acima dos cards: contagem à esquerda, Presets à direita. O
+    // viewport começa abaixo dela, então o card ASSET & USER METADATA fica na
+    // mesma posição com 1 ou N arquivos e nada fica sobreposto.
+    juce::Label contagem_;
     juce::TextButton presets_;
     std::vector<std::string> selecaoPreset_;
     ProjetoAberto& projeto_;

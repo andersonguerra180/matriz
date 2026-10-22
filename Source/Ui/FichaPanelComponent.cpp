@@ -3774,12 +3774,8 @@ public:
             return;
         }
 
-        cabecalho_ = std::make_unique<juce::Label>();
-        cabecalho_->setText(matriz::i18n::t("ficha.lote_titulo").replace("{n}", juce::String((int)itemIds_.size())),
-                             juce::dontSendNotification);
-        cabecalho_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteSubtitulo, juce::Font::bold)));
-        cabecalho_->setColour(juce::Label::textColourId, matriz::ui::tema().textoPrimario);
-        addAndMakeVisible(*cabecalho_);
+        // A contagem "N materials selected" mora na faixa fixa do FichaPanelComponent
+        // (junto do Presets), não mais aqui: o card não pode mudar de lugar entre 1 e N.
 
         std::set<std::string> tiposPresentes;
         bool algumNulo = false;
@@ -5886,6 +5882,7 @@ void FichaPanelComponent::mostrarItem(const std::string& itemId) {
     modoLote_ = false;
     viewport_->setViewedComponent(conteudo_.get(), false);
     conteudo_->construirParaItem(itemId);
+    atualizarContagem();
     resized();
     repaint();
 }
@@ -5916,8 +5913,20 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
     }
     viewport_->setViewedComponent(conteudoLote_.get(), false);
     conteudoLote_->mostrarSelecao(itemIds);
+    atualizarContagem();
     resized();
     repaint();
+}
+
+void FichaPanelComponent::atualizarContagem() {
+    const auto& tk = matriz::ui::tema();
+    const size_t n = selecaoPreset_.size();
+    contagem_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+    contagem_.setColour(juce::Label::textColourId, tk.textoPrimario);
+    contagem_.setText(n == 0 ? juce::String()
+                      : n == 1 ? matriz::i18n::t("ficha.um_selecionado")
+                               : matriz::i18n::t("ficha.lote_titulo").replace("{n}", juce::String((int) n)),
+                      juce::dontSendNotification);
 }
 
 void FichaPanelComponent::paint(juce::Graphics& g) {
@@ -5939,12 +5948,22 @@ void FichaPanelComponent::resized() {
         presets_.onClick = [this] { abrirPresets(); };
     }
     presets_.setEnabled(editavel_ && !selecaoPreset_.empty());
-    viewport_->setBounds(area);
+    if (contagem_.getParentComponent() == nullptr) {
+        contagem_.setMinimumHorizontalScale(0.7f);
+        contagem_.setJustificationType(juce::Justification::centredLeft);
+        contagem_.setInterceptsMouseClicks(false, false);
+        addAndMakeVisible(contagem_);
+        atualizarContagem();
+    }
     const auto& tk = matriz::ui::tema();
+    // Faixa fixa: mesma margem em cima, embaixo e nas laterais.
+    const int alturaControle = 24;
+    auto faixa = area.removeFromTop(alturaControle + 2 * tk.espacoPainel).reduced(tk.espacoPainel);
     const int larguraPreset = 170;
-    presets_.setBounds(area.getRight() - larguraPreset - tk.espacoPainel,
-                       area.getY() + tk.espacoPainel, larguraPreset, 24);
-    presets_.toFront(false);
+    presets_.setBounds(faixa.removeFromRight(larguraPreset));
+    faixa.removeFromRight(tk.espacoMedio);
+    contagem_.setBounds(faixa);
+    viewport_->setBounds(area);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     int altura = viewport_->getHeight();
     if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura, altura);
@@ -6014,6 +6033,7 @@ void FichaPanelComponent::abrirPresets() {
 }
 
 void FichaPanelComponent::lookAndFeelChanged() {
+    atualizarContagem();
     if (modoLote_ && conteudoLote_) {
         conteudoLote_->sendLookAndFeelChange();
         conteudoLote_->repaint();

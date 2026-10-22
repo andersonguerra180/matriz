@@ -250,6 +250,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"ficha.lote_tipo_misto", "A seleção tem tipos de mídia diferentes. Selecione itens do mesmo tipo pra editar a ficha em lote."},
         {"ficha.lote_tipo_misto_universais", "A seleção tem tipos de mídia diferentes — só Origem e Ano existem em todos os tipos, então só esses podem ser editados juntos."},
         {"ficha.lote_titulo", "{n} materiais selecionados"},
+        {"ficha.um_selecionado", "1 material selecionado"},
         {"ficha.lote_valores_multiplos", "Múltiplos valores"},
         {"ficha.nao_classificado", "Ainda não classificado. Escolha um tipo de mídia pra preencher a ficha:"},
         {"ficha.nivel_faixa_adicionar", "Adicionar faixa"},
