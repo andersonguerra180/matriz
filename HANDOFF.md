@@ -6,12 +6,18 @@ não devem ser revertidas.
 
 ## Alt-codex — estado atual, 2026-10-22
 
-- Branch atual: `alt-codex`. Arquivos não rastreados preexistentes em
+- **Integrada na `main` em `5839b75`** (`Merge alt-codex: desempenho,
+  metadata, duplicatas, containers e Phone Dump`). A `main` já continha 37
+  commits próprios depois do ancestral comum; a `alt-codex`, 71. Os dois
+  conflitos foram resolvidos mantendo os dois lados: manifesto de checksums
+  + planejamento de containers em `Consolidacao.cpp`, e fichas embutidas +
+  tipos de container em `ProjetoAberto.cpp`.
+- Branch de desenvolvimento: `alt-codex`. Arquivos não rastreados preexistentes em
   `Assets/`, `Reference/`, `cofre/` e listas locais continuam preservados e
   não entram nos commits.
 - Build Debug atual concluída com sucesso em
-  `build/matriz_artefacts/Debug/BKR Matriz.app`. Último commit funcional:
-  `a65d289`. As correções desta rodada foram compiladas, mas as suítes amplas
+  `build/matriz_artefacts/Debug/BKR Matriz.app`. Último commit funcional da
+  branch antes do handoff: `a65d289`. As correções desta rodada foram compiladas, mas as suítes amplas
   de self-test e ASan/TSan não foram executadas.
 - METADATA: filtros atualizam os campos do snapshot e refiltram em memória
   (`a42919f`); presets tiveram UTF-8/layout/salvamento em lote corrigidos
