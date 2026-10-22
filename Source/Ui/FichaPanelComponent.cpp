@@ -5650,7 +5650,14 @@ private:
                 auto existenteOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(dbGeoLote, id);
                 matriz::analytics::AssetGeolocation geo = existenteOpt.value_or(matriz::analytics::AssetGeolocation{});
                 geo.assetId = id;
-                if (geo.latitude && geo.longitude && (!geoLote_.overrideGeo || !geoLote_.overrideGeo->getToggleState())) continue;
+                if (geo.latitude && geo.longitude && (!geoLote_.overrideGeo || !geoLote_.overrideGeo->getToggleState())) {
+                    ++concluidos;
+                    if (ehLote) {
+                        ProgressoGlobal::obterInstancia().atualizarProgresso(
+                            kIdTarefa, concluidos, juce::String(concluidos) + " / " + juce::String((int) itemIds_.size()));
+                    }
+                    continue;
+                }
                 // Nunca reescreve por cima de uma fonte mais autoritativa
                 // (EXIF embutido, geocodificação) — só recalcula a fonte
                 // quando ela já era "do usuário" ou inexistente.
