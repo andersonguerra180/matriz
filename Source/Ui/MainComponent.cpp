@@ -2790,7 +2790,7 @@ void MainComponent::mostrarDialogoRelinkInicial(const matriz::vault::AssetPresen
             safeThis->projetoAberto_->aplicarBatchRelinkEmMemoria(inMemRelocated);
 
             if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
-            else if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+            if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
 
             juce::String msg = "ASSET RELOCATION\n\nResolved: " + juce::String(res.resolvedCount) +
                                "\nNot Found: " + juce::String(res.notFoundCount) +
@@ -2859,7 +2859,7 @@ void MainComponent::abrirDialogoRelinkOffline(const std::string& itemId) {
                 safeThis->projetoAberto_->transferirMarcacoes(itemId, novoItemId);
                 safeThis->projetoAberto_->salvar();
                 if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
-                else if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+                if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
                 if (safeThis->fichaPanel_) safeThis->fichaPanel_->mostrarItem(novoItemId);
             }
         });
@@ -2936,7 +2936,7 @@ void MainComponent::aoConversaRecebida(const juce::File& arquivo, juce::int64 ta
                 EventBus::obterInstancia().dispararItemAlterado("", "metadado");
                 if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
                 if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
-                else if (seguro->mosaico_) seguro->mosaico_->recarregar();
+                if (seguro->mosaico_) seguro->mosaico_->recarregar();
             });
         });
     } else {
@@ -2992,7 +2992,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
                     EventBus::obterInstancia().dispararItemAlterado("", "metadado");
                     if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
                     if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
-                    else if (seguro->mosaico_) seguro->mosaico_->recarregar();
+                    if (seguro->mosaico_) seguro->mosaico_->recarregar();
                 });
             });
 
