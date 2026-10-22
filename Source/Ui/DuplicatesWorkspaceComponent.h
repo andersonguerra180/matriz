@@ -41,6 +41,9 @@ private:
     void timerCallback() override;
 
     struct DuplicateMatch {
+        int ordemChegada = 0;
+        int totalRelacionados = 0;
+        std::string criadoEm;
         std::string itemId;
         std::string codigoAcervo;
         std::string titulo;
