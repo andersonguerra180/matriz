@@ -1263,25 +1263,25 @@ public:
                         osm->setBounds(x + padCardX, y, innerW, prefH);
                         y += prefH + tk.espacoPequeno;
                     } else {
-                        cu->editor->setBounds(x + padCardX, y, innerW, 24);
-                        y += 24 + tk.espacoPequeno;
+                        cu->editor->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                        y += kAlturaCampo + tk.espacoPequeno;
                     }
                 } else if (cu->ehPeople) {
-                    cu->editor->setBounds(x + padCardX, y, innerW, 26);
-                    y += 26 + tk.espacoPequeno;
+                    cu->editor->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                    y += kAlturaCampo + tk.espacoPequeno;
                 } else if (cu->ehTags) {
                     if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
                         chips->setBounds(x + padCardX, y, innerW, chips->getPreferredHeight());
                         y += chips->getPreferredHeight() + tk.espacoPequeno;
                     } else {
-                        cu->editor->setBounds(x + padCardX, y, innerW, 24);
-                        y += 24 + tk.espacoPequeno;
+                        cu->editor->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                        y += kAlturaCampo + tk.espacoPequeno;
                     }
                 } else if (cu->ehNotes) {
                     y = layoutLinhaNotas(x + padCardX, y, innerW, cu.get()) + tk.espacoPequeno;
                 } else {
-                    cu->editor->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoPequeno;
+                    cu->editor->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                    y += kAlturaCampo + tk.espacoPequeno;
                 }
             }
         };
@@ -1352,8 +1352,8 @@ public:
                 if (geolocalizacao_.labelCoords && geolocalizacao_.editorCoords) {
                     geolocalizacao_.labelCoords->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
-                    geolocalizacao_.editorCoords->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoPequeno;
+                    geolocalizacao_.editorCoords->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                    y += kAlturaCampo + tk.espacoPequeno;
                 }
 
                 // GET / OPEN row
@@ -1367,29 +1367,29 @@ public:
                 if (geolocalizacao_.labelAddress && geolocalizacao_.editorAddress) {
                     geolocalizacao_.labelAddress->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
-                    geolocalizacao_.editorAddress->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoPequeno;
+                    geolocalizacao_.editorAddress->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                    y += kAlturaCampo + tk.espacoPequeno;
                 }
 
                 if (geolocalizacao_.labelCity && geolocalizacao_.editorCity) {
                     geolocalizacao_.labelCity->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
-                    geolocalizacao_.editorCity->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoPequeno;
+                    geolocalizacao_.editorCity->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                    y += kAlturaCampo + tk.espacoPequeno;
                 }
 
                 if (geolocalizacao_.labelState && geolocalizacao_.editorState) {
                     geolocalizacao_.labelState->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
-                    geolocalizacao_.editorState->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoPequeno;
+                    geolocalizacao_.editorState->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                    y += kAlturaCampo + tk.espacoPequeno;
                 }
 
                 if (geolocalizacao_.labelCountry && geolocalizacao_.editorCountry) {
                     geolocalizacao_.labelCountry->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
-                    geolocalizacao_.editorCountry->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoPequeno;
+                    geolocalizacao_.editorCountry->setBounds(x + padCardX, y, innerW, kAlturaCampo);
+                    y += kAlturaCampo + tk.espacoPequeno;
                 }
 
                 // Favorite buttons row (largura estreita: botões com texto completo)
