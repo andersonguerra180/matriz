@@ -47,6 +47,8 @@ namespace {
 // modo de item único e no modo de seleção múltipla (lote), pra manter as
 // duas telas com o mesmo tamanho mínimo de caixa (item 1 da 3ª correção de UI).
 constexpr int kAlturaMinimaNotas = 110;
+// Altura dos campos de texto/dropdown da ficha (mapa: 28 px).
+constexpr int kAlturaCampo = 28;
 
 std::string autorAtual() { return juce::SystemStats::getFullUserName().toStdString(); }
 
@@ -899,10 +901,11 @@ public:
             // curta na hora que aparece). Substituiu o antigo agrupamento
             // com ORIGINAL SOURCE MEDIUM (colOsm), que deixava PATH grudado
             // em DEVICE do outro lado e um vão vazio embaixo de AI GENERATED.
+            // Ordem do mapa (esquerda | direita): Subject | Event date,
+            // List | Creator, Content | Source medium, People | Tags,
+            // File name | Path. Cada coluna cascateia sozinha, então o
+            // Source medium (mais alto) não abre vão ao lado de Content.
             auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1, LinhaUnificada*& notasFora) {
-                LinhaUnificada* cuPeople = nullptr;
-                LinhaUnificada* cuTags = nullptr;
-
                 std::vector<LinhaUnificada*> ordenados;
                 for (auto& campo : camposUnificados_) if (campo && campo->bloco == bloco) ordenados.push_back(campo.get());
                 if (bloco == BlocoFicha::UserAsset) {
@@ -911,10 +914,10 @@ public:
                         if (id == "subject" || id == "event_date") return 0;
                         if (id == "lista" || id == "creator") return 1;
                         if (id == "collection" || id == "source_media") return 2;
-                        if (id == "filename") return 4;
-                        if (id == "path") return 5;
+                        if (campo->ehPeople || campo->ehTags) return 3;
+                        if (id == "filename" || id == "path") return 4;
                         if (id == "ai_generated") return 6;
-                        return 3;
+                        return 5;
                     };
                     std::stable_sort(ordenados.begin(), ordenados.end(), [&](auto* a, auto* b) { return prioridade(a) < prioridade(b); });
                 }
@@ -923,13 +926,12 @@ public:
 
                     if (bloco == BlocoFicha::UserAsset) {
                         if (cu->ehNotes)  { notasFora = cu; continue; }
-                        if (cu->ehPeople) { cuPeople = cu; continue; }
-                        if (cu->ehTags)   { cuTags = cu;   continue; }
                     }
 
                     bool useCol1 = (y1 < y0);
                     if (bloco == BlocoFicha::UserAsset)
-                        useCol1 = cu->campoId == "event_date" || cu->campoId == "creator" || cu->campoId == "source_media";
+                        useCol1 = cu->campoId == "event_date" || cu->campoId == "creator" || cu->campoId == "source_media" ||
+                                  cu->campoId == "path" || cu->ehTags;
 
                     int currX = useCol1 ? x1 : x0;
                     int& currY = useCol1 ? y1 : y0;
@@ -945,53 +947,23 @@ public:
                             osm->setBounds(currX, currY, colW, prefH);
                             currY += prefH + tk.espacoPequeno;
                         } else {
-                            cu->editor->setBounds(currX, currY, colW, 24);
-                            currY += 24 + tk.espacoPequeno;
+                            cu->editor->setBounds(currX, currY, colW, kAlturaCampo);
+                            currY += kAlturaCampo + tk.espacoPequeno;
                         }
-                    } else if (cu->ehPeople) {
-                        cu->editor->setBounds(currX, currY, colW, 26);
-                        currY += 26 + tk.espacoPequeno;
                     } else if (cu->ehTags) {
                         if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
                             chips->setBounds(currX, currY, colW, chips->getPreferredHeight());
                             currY += chips->getPreferredHeight() + tk.espacoPequeno;
                         } else {
-                            cu->editor->setBounds(currX, currY, colW, 24);
-                            currY += 24 + tk.espacoPequeno;
+                            cu->editor->setBounds(currX, currY, colW, kAlturaCampo);
+                            currY += kAlturaCampo + tk.espacoPequeno;
                         }
                     } else if (cu->ehNotes) {
                         cu->editor->setBounds(currX, currY, colW, 64);
                         currY += 64 + tk.espacoPequeno;
                     } else {
-                        cu->editor->setBounds(currX, currY, colW, 24);
-                        currY += 24 + tk.espacoPequeno;
-                    }
-                }
-
-                if (bloco == BlocoFicha::UserAsset && (cuPeople || cuTags)) {
-                    // PEOPLE/TAGS seguem juntas, sempre na coluna direita —
-                    // já não precisam mais disputar lado com NOTES.
-                    int px = x1;
-                    int& py = y1;
-
-                    if (cuPeople) {
-                        cuPeople->rotulo->setBounds(px, py, colW - 85, 16);
-                        cuPeople->badge->setBounds(px + colW - 80, py, 80, 16);
-                        py += 18;
-                        cuPeople->editor->setBounds(px, py, colW, 26);
-                        py += 26 + tk.espacoPequeno;
-                    }
-
-                    if (cuTags) {
-                        cuTags->rotulo->setBounds(px, py, colW - 85, 16);
-                        cuTags->badge->setBounds(px + colW - 80, py, 80, 16);
-                        py += 18;
-                        int chipH = 26;
-                        if (auto* chips = dynamic_cast<TagChipsEditor*>(cuTags->editor.get())) {
-                            chipH = chips->getPreferredHeight();
-                        }
-                        cuTags->editor->setBounds(px, py, colW, chipH);
-                        py += chipH + tk.espacoPequeno;
+                        cu->editor->setBounds(currX, currY, colW, kAlturaCampo);
+                        currY += kAlturaCampo + tk.espacoPequeno;
                     }
                 }
             };
@@ -2463,7 +2435,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2639,7 +2611,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[DROPDOWN]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2698,7 +2670,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? "[USER]" : "[USER]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2810,7 +2782,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2872,7 +2844,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? "[PESSOAS / TAGS]" : "[PEOPLE / TAGS]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2917,7 +2889,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? "[TAGS]" : "[TAGS]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2960,7 +2932,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -4723,7 +4695,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[DROPDOWN]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // sem selo: só área de aviso rápido
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
