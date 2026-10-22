@@ -6,6 +6,8 @@
 #include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
 
+#include <algorithm>
+
 namespace matriz::ui {
 
 namespace {
@@ -173,7 +175,10 @@ std::vector<PainelMetadadosArquivo::Card> PainelMetadadosArquivo::lerCards(Proje
 // ---------------------------------------------------------------------------
 class PainelMetadadosArquivo::Conteudo : public juce::Component {
 public:
+    void definirCompacto(bool compacto) { compacto_ = compacto; }
+
     void definir(std::vector<Card> cards) {
+        if (compacto_) { definirCompactoImpl(std::move(cards)); return; }
         removeAllChildren();
         linhas_.clear();
         titulos_.clear();
@@ -213,12 +218,13 @@ public:
 
     int alturaPara(int largura) {
         setSize(largura, 10);  // a largura primeiro: a altura dos textos depende dela
-        const int altura = organizar(largura);
+        const int altura = compacto_ ? organizarCompacto(largura) : organizar(largura);
         setSize(largura, altura);  // sem isto o conteúdo ficava com 10 px de altura e o painel parecia vazio
         return altura;
     }
 
     void paint(juce::Graphics& g) override {
+        if (compacto_) { pintarCompacto(g); return; }
         const auto& tk = tema();
         for (const auto& r : fundosCards_) {
             g.setColour(tk.painel);
@@ -229,6 +235,344 @@ public:
     }
 
 private:
+
+    // ── visual compacto (ficha fixa do STRUCTURE) ─────────────────────────────────────────────────────────
+    enum class Icone { Nenhum, Calendario, Local, Etiqueta, Tecnico, Camera };
+    struct Celula {
+        std::unique_ptr<juce::Label> rotulo;
+        std::unique_ptr<juce::TextEditor> valor;
+        std::unique_ptr<juce::Label> extra;  // bytes exatos em cinza (só o Size)
+        bool largo = false, mono = false, grande = false, linhaData = false;
+    };
+    struct CartaoC {
+        bool arquivo = false;
+        Icone icone = Icone::Nenhum;
+        std::unique_ptr<juce::Label> titulo;       // cabeçalho (o card do arquivo usa o nome)
+        std::unique_ptr<juce::Label> nome, tipo;   // só no card do arquivo
+        juce::String selo;
+        juce::Colour corSelo;
+        std::vector<Celula> celulas;
+    };
+    struct ChipIcone { juce::Rectangle<int> r; Icone icone; };
+    struct SeloDesenhado { juce::Rectangle<int> r; juce::String texto; juce::Colour cor; };
+
+    std::unique_ptr<juce::Label> novoRotuloC(const juce::String& t) {
+        auto l = std::make_unique<juce::Label>();
+        l->setText(t, juce::dontSendNotification);
+        l->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+        l->setColour(juce::Label::textColourId, tema().textoSecundario);
+        l->setBorderSize({0, 0, 0, 0});
+        addAndMakeVisible(*l);
+        return l;
+    }
+
+    std::unique_ptr<juce::TextEditor> novoValorC(const juce::String& t, float tamanho, bool negrito, bool mono, bool multi, bool direita) {
+        auto v = std::make_unique<juce::TextEditor>();
+        v->setMultiLine(multi, multi);  // multi: quebra de linha, nada truncado
+        v->setReadOnly(true);
+        v->setCaretVisible(false);
+        v->setScrollbarsShown(false);
+        v->setBorder({});
+        v->setJustification(direita ? juce::Justification::right : juce::Justification::left);
+        const int estilo = negrito ? juce::Font::bold : juce::Font::plain;
+        v->setFont(mono ? juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), tamanho, estilo))
+                        : juce::Font(juce::FontOptions(tamanho, estilo)));
+        v->setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+        v->setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+        v->setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+        v->setColour(juce::TextEditor::textColourId, tema().textoPrimario);
+        v->setText(t, false);
+        addAndMakeVisible(*v);
+        return v;
+    }
+
+    static juce::String comMilhares(juce::int64 n) {
+        auto txt = juce::String(n);
+        for (int i = txt.length() - 3; i > 0; i -= 3) txt = txt.substring(0, i) + "," + txt.substring(i);
+        return txt;
+    }
+
+    void definirCompactoImpl(std::vector<Card> cards) {
+        removeAllChildren();
+        cartoes_.clear();
+        linhas_.clear();
+        titulos_.clear();
+        cards_.clear();
+        const auto& tk = tema();
+        auto achar = [&](const char* titulo) -> const Card* {
+            for (const auto& c : cards) if (c.titulo == titulo) return &c;
+            return nullptr;
+        };
+        auto valorDe = [](const Card* c, const char* rotulo) -> juce::String {
+            if (c != nullptr)
+                for (const auto& l : c->linhas) if (l.rotulo == rotulo) return l.valor;
+            return {};
+        };
+        auto celulaSimples = [&](const juce::String& rotulo, const juce::String& valor) {
+            Celula ce;
+            ce.rotulo = novoRotuloC(rotulo);
+            ce.valor = novoValorC(valor, tk.tamanhoFonteCorpo, false, false, true, false);
+            ce.largo = valor.length() > 34 || valor.containsChar('\n');
+            return ce;
+        };
+        auto cartaoGrade = [&](const char* tituloOrigem, const juce::String& tituloNovo, Icone icone) {
+            const Card* c = achar(tituloOrigem);
+            if (c == nullptr || c->linhas.empty()) return;
+            CartaoC cc;
+            cc.icone = icone;
+            cc.titulo = novoRotuloC(tituloNovo);
+            cc.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)).withExtraKerningFactor(0.12f));
+            cc.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            for (const auto& l : c->linhas) cc.celulas.push_back(celulaSimples(l.rotulo, l.valor));
+            cartoes_.push_back(std::move(cc));
+        };
+
+        // ARQUIVO: nome em destaque, tipo de conteúdo embaixo, formato em selo, tamanho legível, caminho mono.
+        if (const Card* f = achar("FILE")) {
+            CartaoC cc;
+            cc.arquivo = true;
+            cc.nome = novoRotuloC(valorDe(f, "Name"));
+            cc.nome->setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
+            cc.nome->setColour(juce::Label::textColourId, tk.textoPrimario);
+            const auto tipoConteudo = valorDe(f, "Content type");
+            if (tipoConteudo.isNotEmpty()) {
+                cc.tipo = novoRotuloC(tipoConteudo);
+                cc.tipo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            }
+            cc.selo = valorDe(f, "Format");
+            const auto categoria = matriz::ingest::categoriaPorExtensao(cc.selo.toLowerCase());
+            switch (categoria) {
+                case matriz::ingest::CategoriaMidia::Video: cc.corSelo = juce::Colour(0xff7a5cc7); break;
+                case matriz::ingest::CategoriaMidia::Audio: cc.corSelo = juce::Colour(0xff2f8f83); break;
+                case matriz::ingest::CategoriaMidia::Imagem: cc.corSelo = juce::Colour(0xff3b7dd8); break;
+                default: cc.corSelo = juce::Colour(0xffc27c2e); break;
+            }
+            const auto tamanho = valorDe(f, "Size");
+            if (tamanho.isNotEmpty()) {
+                Celula ce;
+                ce.rotulo = novoRotuloC("Size");
+                ce.grande = true;
+                ce.valor = novoValorC(tamanho.upToFirstOccurrenceOf(" (", false, false), 17.0f, true, false, false, false);
+                const auto bytes = tamanho.fromFirstOccurrenceOf("(", false, false).upToFirstOccurrenceOf(" bytes", false, false).trim();
+                if (bytes.isNotEmpty()) {
+                    ce.extra = novoRotuloC(comMilhares(bytes.getLargeIntValue()) + " bytes");
+                }
+                cc.celulas.push_back(std::move(ce));
+            }
+            if (tipoConteudo.isNotEmpty()) cc.celulas.push_back(celulaSimples("Content type", tipoConteudo));
+            const auto codigo = valorDe(f, "Asset code");
+            if (codigo.isNotEmpty()) cc.celulas.push_back(celulaSimples("Asset code", codigo));
+            const auto caminho = valorDe(f, "Original path");
+            if (caminho.isNotEmpty()) {
+                Celula ce;
+                ce.rotulo = novoRotuloC("Original path");
+                ce.valor = novoValorC(caminho, tk.tamanhoFontePequena, false, true, true, false);
+                ce.largo = ce.mono = true;
+                cc.celulas.push_back(std::move(ce));
+            }
+            cartoes_.push_back(std::move(cc));
+        }
+
+        cartaoGrade("TECHNICAL", "TECHNICAL", Icone::Tecnico);
+
+        // DATES: a data original deixa de ser card próprio; Original, Created e Modified em linhas, valor à direita.
+        {
+            const Card* dt = achar("ORIGINAL DATE");
+            const Card* f = achar("FILE");
+            std::vector<std::pair<juce::String, juce::String>> linhasDatas;
+            juce::String original = valorDe(dt, "Date taken");
+            const bool usouCriacao = original.isEmpty();
+            if (usouCriacao) original = valorDe(dt, "Creation date");
+            if (original.isNotEmpty()) linhasDatas.push_back({"Original (creation)", original});
+            if (dt != nullptr)
+                for (const auto& l : dt->linhas) {
+                    if (l.rotulo == "Date taken") continue;
+                    if (l.rotulo == "Creation date" && usouCriacao) continue;
+                    linhasDatas.push_back({l.rotulo, l.valor});
+                }
+            const auto criado = valorDe(f, "Created");
+            const auto modificado = valorDe(f, "Modified");
+            if (criado.isNotEmpty()) linhasDatas.push_back({"Created", criado});
+            if (modificado.isNotEmpty()) linhasDatas.push_back({"Modified", modificado});
+            if (!linhasDatas.empty()) {
+                CartaoC cc;
+                cc.icone = Icone::Calendario;
+                cc.titulo = novoRotuloC("DATES");
+                cc.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)).withExtraKerningFactor(0.12f));
+                cc.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+                for (const auto& [rot, val] : linhasDatas) {
+                    Celula ce;
+                    ce.linhaData = true;
+                    ce.rotulo = novoRotuloC(rot);
+                    ce.rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+                    ce.valor = novoValorC(val, tk.tamanhoFonteCorpo, true, false, false, true);
+                    cc.celulas.push_back(std::move(ce));
+                }
+                cartoes_.push_back(std::move(cc));
+            }
+        }
+
+        cartaoGrade("LOCATION / GPS", "LOCATION", Icone::Local);
+        cartaoGrade("DESCRIPTIVE", "DESCRIPTIVE", Icone::Etiqueta);
+        cartaoGrade("CAMERA / EXIF", "CAMERA / EXIF", Icone::Camera);
+        (void) tk;
+    }
+
+    // Devolve a altura da célula de meia largura / largura total já posicionada em (x, y, w).
+    int posicionarCelula(Celula& ce, int x, int y, int w) {
+        ce.rotulo->setBounds(x, y, w, 16);
+        const int yv = y + 16;
+        int h;
+        if (ce.grande) {
+            h = 26;
+            ce.valor->setBounds(x, yv, w, h);
+        } else {
+            ce.valor->setBounds(x, yv, w, 20);
+            h = std::max(20, ce.valor->getTextHeight() + 4);
+            ce.valor->setBounds(x, yv, w, h);
+        }
+        int total = 16 + h;
+        if (ce.extra) {
+            ce.extra->setBounds(x, yv + h, w, 16);
+            total += 16;
+        }
+        return total;
+    }
+
+    int organizarCompacto(int largura) {
+        constexpr int kMargem = 8, kPad = 14, kGap = 10, kColGap = 14, kEntre = 10;
+        fundosC_.clear();
+        chips_.clear();
+        selos_.clear();
+        separadores_.clear();
+        int y = kMargem;
+        for (auto& c : cartoes_) {
+            const int topo = y;
+            y += kPad;
+            const int xi = kMargem + kPad;
+            const int w = largura - 2 * (kMargem + kPad);
+            if (c.arquivo) {
+                const int larguraSelo = c.selo.isEmpty() ? 0 : 22 + juce::GlyphArrangement::getStringWidthInt(
+                                            juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)), c.selo);
+                c.nome->setBounds(xi, y, std::max(20, w - larguraSelo - 8), 26);
+                if (larguraSelo > 0) selos_.push_back({juce::Rectangle<int>(xi + w - larguraSelo, y + 2, larguraSelo, 22), c.selo, c.corSelo});
+                y += 26;
+                if (c.tipo) { c.tipo->setBounds(xi, y, w, 20); y += 20; }
+                y += kEntre;
+            } else {
+                chips_.push_back({juce::Rectangle<int>(xi, y, 26, 26), c.icone});
+                c.titulo->setBounds(xi + 26 + 8, y, std::max(20, w - 34), 26);
+                y += 26 + kEntre;
+            }
+            const int colW = (w - kColGap) / 2;
+            int coluna = 0, yLinha = y, alturaLinha = 0;
+            auto fechaLinha = [&] {
+                if (coluna != 0) { y = yLinha + alturaLinha + kEntre; coluna = 0; alturaLinha = 0; }
+            };
+            for (auto& ce : c.celulas) {
+                if (ce.linhaData) {
+                    fechaLinha();
+                    separadores_.push_back({xi, y, w, 1});
+                    ce.rotulo->setBounds(xi, y + 5, w / 2, 22);
+                    ce.valor->setBounds(xi + w / 2, y + 4, w - w / 2, 24);
+                    y += 33;
+                    continue;
+                }
+                if (ce.largo) {
+                    fechaLinha();
+                    y += posicionarCelula(ce, xi, y, w) + kEntre;
+                    continue;
+                }
+                if (coluna == 0) yLinha = y;
+                alturaLinha = std::max(alturaLinha, posicionarCelula(ce, xi + coluna * (colW + kColGap), yLinha, colW));
+                if (++coluna == 2) { y = yLinha + alturaLinha + kEntre; coluna = 0; alturaLinha = 0; }
+            }
+            fechaLinha();
+            y += kPad - kEntre;
+            fundosC_.push_back({kMargem, topo, largura - 2 * kMargem, y - topo});
+            y += kGap;
+        }
+        return y + kMargem - kGap;
+    }
+
+    static void desenharIcone(juce::Graphics& g, Icone icone, juce::Rectangle<float> chip, juce::Colour cor) {
+        const float cx = chip.getCentreX(), cy = chip.getCentreY();
+        g.setColour(cor);
+        const juce::PathStrokeType traco(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+        juce::Path p;
+        switch (icone) {
+            case Icone::Calendario:
+                g.drawRoundedRectangle(cx - 6.0f, cy - 5.0f, 12.0f, 11.0f, 2.0f, 1.3f);
+                g.drawLine(cx - 6.0f, cy - 1.5f, cx + 6.0f, cy - 1.5f, 1.3f);
+                g.drawLine(cx - 3.0f, cy - 7.0f, cx - 3.0f, cy - 4.0f, 1.3f);
+                g.drawLine(cx + 3.0f, cy - 7.0f, cx + 3.0f, cy - 4.0f, 1.3f);
+                break;
+            case Icone::Local:
+                p.startNewSubPath(cx, cy + 7.0f);
+                p.cubicTo(cx - 7.0f, cy - 1.0f, cx - 5.5f, cy - 7.0f, cx, cy - 7.0f);
+                p.cubicTo(cx + 5.5f, cy - 7.0f, cx + 7.0f, cy - 1.0f, cx, cy + 7.0f);
+                g.strokePath(p, traco);
+                g.fillEllipse(cx - 1.8f, cy - 4.3f, 3.6f, 3.6f);
+                break;
+            case Icone::Etiqueta:
+                p.startNewSubPath(cx - 7.0f, cy);
+                p.lineTo(cx - 1.0f, cy - 6.0f);
+                p.lineTo(cx + 6.0f, cy - 6.0f);
+                p.lineTo(cx + 6.0f, cy + 1.0f);
+                p.lineTo(cx, cy + 7.0f);
+                p.closeSubPath();
+                g.strokePath(p, traco);
+                g.fillEllipse(cx + 1.0f, cy - 4.0f, 2.6f, 2.6f);
+                break;
+            case Icone::Tecnico:
+                for (int i = 0; i < 3; ++i) {
+                    const float yy = cy - 5.0f + 5.0f * static_cast<float>(i);
+                    g.drawLine(cx - 6.0f, yy, cx + 6.0f, yy, 1.3f);
+                    g.fillEllipse(cx - 4.0f + 4.0f * static_cast<float>((i * 2) % 3), yy - 2.0f, 4.0f, 4.0f);
+                }
+                break;
+            case Icone::Camera:
+                g.drawRoundedRectangle(cx - 7.0f, cy - 4.5f, 14.0f, 11.0f, 2.0f, 1.3f);
+                g.drawEllipse(cx - 3.0f, cy - 2.0f, 6.0f, 6.0f, 1.3f);
+                break;
+            case Icone::Nenhum: break;
+        }
+    }
+
+    void pintarCompacto(juce::Graphics& g) {
+        const auto& tk = tema();
+        for (const auto& r : fundosC_) {
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(r.toFloat(), tk.raioMedio);
+            g.setColour(tk.borda.withAlpha(0.6f));
+            g.drawRoundedRectangle(r.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        }
+        for (const auto& sep : separadores_) {
+            g.setColour(tk.borda.withAlpha(0.55f));
+            g.fillRect(sep);
+        }
+        for (const auto& chip : chips_) {
+            const bool local = chip.icone == Icone::Local;
+            const auto cor = local ? juce::Colour(0xff3a7ac9) : tk.textoSecundario;
+            g.setColour(local ? cor.withAlpha(0.16f) : tk.painelAlt.withAlpha(0.7f));
+            g.fillRoundedRectangle(chip.r.toFloat(), 7.0f);
+            desenharIcone(g, chip.icone, chip.r.toFloat(), cor);
+        }
+        for (const auto& selo : selos_) {
+            g.setColour(selo.cor.withAlpha(0.18f));
+            g.fillRoundedRectangle(selo.r.toFloat(), static_cast<float>(selo.r.getHeight()) * 0.5f);
+            g.setColour(selo.cor);
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            g.drawText(selo.texto, selo.r, juce::Justification::centred, false);
+        }
+    }
+
+    bool compacto_ = false;
+    std::vector<CartaoC> cartoes_;
+    std::vector<juce::Rectangle<int>> fundosC_, separadores_;
+    std::vector<ChipIcone> chips_;
+    std::vector<SeloDesenhado> selos_;
+
     struct Par {
         std::unique_ptr<juce::Label> rotulo;
         std::unique_ptr<juce::TextEditor> valor;
@@ -298,6 +642,8 @@ void PainelMetadadosArquivo::resized() {
     viewport_.setBounds(getLocalBounds());
     if (viewport_.isVisible()) conteudo_->alturaPara(viewport_.getMaximumVisibleWidth());
 }
+
+void PainelMetadadosArquivo::definirLayoutCompacto(bool compacto) { conteudo_->definirCompacto(compacto); }
 
 void PainelMetadadosArquivo::mostrarItem(const std::string& itemId) {
     const int geracao = ++geracao_;

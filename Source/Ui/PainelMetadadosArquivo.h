@@ -31,6 +31,10 @@ public:
     explicit PainelMetadadosArquivo(ProjetoAberto& projeto);
     ~PainelMetadadosArquivo() override;
 
+    // Visual "ficha fixa" (STRUCTURE): nome em destaque, tamanho legível, caminho mono, datas juntas,
+    // Location/Descriptive em grade 2 x 2. Mesmos dados; só muda a apresentação.
+    void definirLayoutCompacto(bool compacto);
+
     // itemId vazio: mostra a frase discreta de "nada selecionado".
     void mostrarItem(const std::string& itemId);
 
