@@ -1967,6 +1967,22 @@ int rodarLoteSelfTest() {
             checar(carregou, "Catalog grid loaded the " + juce::String(kItensPorLado) + " items");
             checar(pa->contarItens() == kItensPorLado && pa->contarItens() == static_cast<int>(pa->listarItens().size()),
                    "contarItens() (SQL COUNT, no disk access) matches listarItens()");
+            // Flags de AI/GPS precisam sobreviver à leitura do catálogo (zero é coordenada válida).
+            {
+                const auto alvo = mosaico->todosItensEmMemoria().back().id;
+                const auto campoId = matriz::model::novoUuid();
+                reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) VALUES (?, ?, 'raiz', 0, 'ai_generated', 'AI Generated / Gerado por IA', 'humano', ?)",
+                        {matriz::db::Value::of(campoId), matriz::db::Value::of(alvo), matriz::db::Value::of(matriz::model::agoraIso8601())});
+                matriz::analytics::AssetGeolocation geo;
+                geo.assetId = alvo; geo.latitude = 0.0; geo.longitude = 0.0;
+                matriz::analytics::AssetGeolocationRepository::salvar(reg, geo);
+                const auto itens = pa->listarItens();
+                const auto it = std::find_if(itens.begin(), itens.end(), [&](const auto& item) { return item.id == alvo; });
+                checar(it != itens.end() && it->aiGenerated, "AI flag survives a catalog snapshot");
+                checar(it != itens.end() && it->temGeolocalizacao, "GPS filter recognizes zero latitude/longitude");
+                reg.run("DELETE FROM item_campo WHERE id = ?", {matriz::db::Value::of(campoId)});
+                matriz::analytics::AssetGeolocationRepository::remover(reg, alvo);
+            }
             // GET EXIF grava a OTHER METADATA sem tocar nas notas do usuário;
             // rodar de novo substitui (não duplica).
             {
