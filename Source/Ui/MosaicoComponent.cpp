@@ -129,7 +129,6 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
         // resultado quando chegar: descarta-o e pede um novo logo depois (mesmo padrão de atualizarItemEmMemoria).
         if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
         ++geracaoSnapshot_;
-        snapshotPendente_ = false;
         const auto nests = ProjetoAberto::mapaDeNests(projeto_.projeto().registro());
         const juce::File pastaDoProjeto = projeto_.projeto().pasta();
         auto aplicar = [&](std::vector<ItemResumo>& lista) {
@@ -399,6 +398,11 @@ void MosaicoComponent::recarregar() {
                 // o resultado foi descartado e aoMudarConteudoVisivel não
                 // dispara para uma geração superada. Se atualizarItemEmMemoria
                 // pediu um recarregar de reposição, honra agora.
+                // O job que mantinha snapshotPendente_ terminou de fato. Só
+                // agora libera o slot; limpar esse flag em
+                // atualizarItemEmMemoria() permitia enfileirar outros
+                // snapshots completos enquanto este ainda lia o banco.
+                self->snapshotPendente_ = false;
                 if (self->recarregarAoTerminarSnapshot_) {
                     self->recarregarAoTerminarSnapshot_ = false;
                     self->recarregar();
@@ -433,7 +437,6 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     // esperando aquele snapshot nunca é avisado do desfecho.
     if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
     ++geracaoSnapshot_;
-    snapshotPendente_ = false;
 
     ItemResumo* it = itemEmTodos(itemId);
     if (it == nullptr) return;
