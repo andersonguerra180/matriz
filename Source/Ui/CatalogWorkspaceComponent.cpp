@@ -710,6 +710,11 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
                 if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
                 atualizarRotuloSelecionados();
                 break;
+            case 7: // HIDE FILES WITH GEO LOCATION
+                ocultarComGeo_ = ligado;
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
             case 6: // SHOW BOUNCE LIST
                 mostrarApenasBounce_ = ligado;
                 atualizarBotaoBounce();
@@ -728,15 +733,16 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             {4, "SHOW RECENTLY INGESTED", mostrarApenasRecentes_},
             {5, "INCLUDE HIDDEN", incluirOcultosNaSelecao_},
             {6, "SHOW BOUNCE LIST", mostrarApenasBounce_},
+            {7, "HIDE FILES WITH GEO LOCATION", ocultarComGeo_},
         };
         juce::PopupMenu menu;
         for (const auto& o : opcoes) menu.addItem(o.id, o.rotulo, true, o.ligado);
         juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
-        const bool estados[7] = {false, ocultarEditados_, mostrarApenasRejeitados_, ocultarNaoSelecionados_,
-                                 mostrarApenasRecentes_, incluirOcultosNaSelecao_, mostrarApenasBounce_};
+        const bool estados[8] = {false, ocultarEditados_, mostrarApenasRejeitados_, ocultarNaoSelecionados_,
+                                 mostrarApenasRecentes_, incluirOcultosNaSelecao_, mostrarApenasBounce_, ocultarComGeo_};
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFiltroOpcoes_.get()),
                            [safeThis, aplicarOpcao, estados](int resultado) {
-                               if (safeThis == nullptr || resultado < 1 || resultado > 6) return;
+                               if (safeThis == nullptr || resultado < 1 || resultado > 7) return;
                                aplicarOpcao(resultado, !estados[resultado]);
                                safeThis->sincronizarFiltroOpcoesDropdown();
                            });
@@ -800,7 +806,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
 void CatalogWorkspaceComponent::sincronizarFiltroOpcoesDropdown() {
     if (!btnFiltroOpcoes_) return;
     const int ativos = (ocultarEditados_ ? 1 : 0) + (mostrarApenasRejeitados_ ? 1 : 0) + (ocultarNaoSelecionados_ ? 1 : 0)
-                     + (mostrarApenasRecentes_ ? 1 : 0) + (incluirOcultosNaSelecao_ ? 1 : 0) + (mostrarApenasBounce_ ? 1 : 0);
+                     + (mostrarApenasRecentes_ ? 1 : 0) + (incluirOcultosNaSelecao_ ? 1 : 0) + (mostrarApenasBounce_ ? 1 : 0) + (ocultarComGeo_ ? 1 : 0);
     juce::String texto = "FILTER OPTIONS";
     if (ativos > 0) texto += " (" + juce::String(ativos) + ")";
     texto += "  " + juce::String::fromUTF8("\xe2\x96\xbe");
@@ -1268,8 +1274,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         return false;
     };
 
-    if (filtroHerdadoIds_) anyFilter = true;
+    if (filtroHerdadoIds_ || ocultarComGeo_) anyFilter = true;
     for (const auto& item : itens) {
+        if (ocultarComGeo_ && item.temGeolocalizacao) continue;
         if (filtroHerdadoIds_ && !filtroHerdadoIds_->count(item.id)) continue;
         if (libChave == "selected") {
             if (selectedIds.find(item.id) == selectedIds.end()) continue;
@@ -1566,11 +1573,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
         itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
     } catch (...) {}
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
+    const bool ocultarGeo = ocultarComGeo_;
+    poolContagens_.addJob([ocultarGeo, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
             auto itens = itensCopia.empty() ? proj->listarItens() : std::move(itensCopia);
+            if (ocultarGeo) itens.erase(std::remove_if(itens.begin(), itens.end(), [](const ItemResumo& item) { return item.temGeolocalizacao; }), itens.end());
             if (soRecentes) {
                 itens.erase(std::remove_if(itens.begin(), itens.end(),
                                            [&](const ItemResumo& r) { return !soRecentes->count(r.id); }),
@@ -1983,6 +1992,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     }
 
+    ocultarComGeo_ = false;
     mostrarApenasBounce_ = false;  // ALL ASSETS zera tudo, inclusive a Bounce List
     atualizarBotaoBounce();
     mostrarApenasRejeitados_ = false;

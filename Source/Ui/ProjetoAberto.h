@@ -106,6 +106,7 @@ struct ItemResumo {
     bool marcadoBounce = false;   // tag B (Bounce List): lista persistente de arquivos marcados para exportar
     bool marcadoRejeitado = false; // tag R no grid (METADATA): só marca; apagar é decisão do operador (SHOW REJECTED)
     bool aiGenerated = false;
+    bool temGeolocalizacao = false;
     bool metadadosEditados = false;
     bool marcadoRevisado = false; // atalho manual "E" (Tag as Edited) — só o operador liga/desliga
     bool pastaAtiva = true;

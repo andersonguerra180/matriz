@@ -236,6 +236,7 @@ private:
     bool ocultarEditados_ = false;
     bool ocultarNaoSelecionados_ = false;
     bool mostrarApenasRecentes_ = false;
+    bool ocultarComGeo_ = false;
     bool mostrarApenasBounce_ = false;     // soma com os outros filtros (não zera nada)
     bool refreshBouncePendente_ = false;   // agrupa eventos de marcação B numa única refiltragem
     void atualizarBotaoBounce();           // rótulo/cor: OFF, ou ON com a contagem "(n)"

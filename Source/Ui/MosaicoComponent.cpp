@@ -446,6 +446,11 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     it->marcadoPublicacao = projeto_.itemMarcadoPublicacao(itemId);
     it->tags = projeto_.lerTags(itemId);
     it->aiGenerated = !projeto_.lerMetadado(itemId, "ai_generated").value_or("").empty();
+    {
+        auto geo = projeto_.projeto().registro().prepare("SELECT 1 FROM asset_geolocation WHERE asset_id = ? AND latitude IS NOT NULL AND longitude IS NOT NULL");
+        geo.bind(1, matriz::db::Value::of(itemId));
+        it->temGeolocalizacao = geo.step();
+    }
     it->etapaProducao = projeto_.valorCampo(itemId, "raiz", 0, "etapa_producao").value_or("");
     it->versaoEscolhida = projeto_.valorCampo(itemId, "raiz", 0, "versao_escolhida").value_or("") == "true";
     it->metadadosEditados = true;

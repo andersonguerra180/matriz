@@ -357,7 +357,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "i.lista, "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'etapa_producao'), "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'versao_escolhida'), "
-        "EXISTS(SELECT 1 FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'ai_generated' AND TRIM(COALESCE(c.valor, '')) != '') "
+        "EXISTS(SELECT 1 FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'ai_generated' AND TRIM(COALESCE(c.valor, '')) != ''), "
+        "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = i.id AND g.latitude IS NOT NULL AND g.longitude IS NOT NULL) "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -440,6 +441,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         if (!stmt.columnIsNull(31)) r.etapaProducao = stmt.columnText(31);
         if (!stmt.columnIsNull(32)) r.versaoEscolhida = stmt.columnText(32) == "true";
         r.aiGenerated = stmt.columnInt(33) != 0;
+        r.temGeolocalizacao = stmt.columnInt(34) != 0;
         if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
         else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
