@@ -6,7 +6,7 @@ não devem ser revertidas.
 
 ## Alt-codex — estado atual, 2026-10-22
 
-- **Integrada na `main` em `5839b75`** (`Merge alt-codex: desempenho,
+- **Integrada na `main` em `74c8e26`** (`Merge alt-codex: desempenho,
   metadata, duplicatas, containers e Phone Dump`). A `main` já continha 37
   commits próprios depois do ancestral comum; a `alt-codex`, 71. Os dois
   conflitos foram resolvidos mantendo os dois lados: manifesto de checksums
@@ -17,34 +17,34 @@ não devem ser revertidas.
   não entram nos commits.
 - Build Debug atual concluída com sucesso em
   `build/matriz_artefacts/Debug/BKR Matriz.app`. Último commit funcional da
-  branch antes do handoff: `a65d289`. As correções desta rodada foram compiladas, mas as suítes amplas
+  branch antes do handoff: `d3307d8`. As correções desta rodada foram compiladas, mas as suítes amplas
   de self-test e ASan/TSan não foram executadas.
 - METADATA: filtros atualizam os campos do snapshot e refiltram em memória
-  (`a42919f`); presets tiveram UTF-8/layout/salvamento em lote corrigidos
-  (`32f101a`); LIST agora depende de CONTENT (`8afe12f`); HIDE FILES WITH GEO
-  LOCATION considera qualquer campo preenchido da ficha GEO (`240767b`);
+  (`84a90ef`); presets tiveram UTF-8/layout/salvamento em lote corrigidos
+  (`f74c7bc`); LIST agora depende de CONTENT (`cec7544`); HIDE FILES WITH GEO
+  LOCATION considera qualquer campo preenchido da ficha GEO (`45cdd5d`);
   coordenadas embutidas travam toda a ficha GEO até OVERRIDE explícito
-  (`cf2c49c`).
+  (`fea21f1`).
 - Intake — consultas por cartão: removidas duas varreduras sem uso de
-  `itensSemPasta()` ao filtrar/contar (`28cfc6b`). Os caminhos de miniatura
+  `itensSemPasta()` ao filtrar/contar (`cec4424`). Os caminhos de miniatura
   agora são carregados uma vez no snapshot, sem consulta SQLite por cartão
-  (`9c2409c`).
+  (`3384058`).
 - Intake — acervo real diagnosticado em
   `/Volumes/BUNKER 4TB/BACKUP FINAL/Fotos/Project`: 497 itens em quarentena,
   todos com original acessível, mas zero linhas correspondentes em
   `indice.sqlite/miniatura`. Para itens sem índice, somente os originais dos
   cartões visíveis são carregados no pool e mantidos no cache da grade
-  (`6be4ca3`). Esta recuperação vale para qualquer acervo; se o original
+  (`097f415`). Esta recuperação vale para qualquer acervo; se o original
   estiver realmente offline, permanece o placeholder.
 - Clique numa foto do Intake bloqueava a message thread por cerca de 30 s:
   `FichaPanelComponent::construirMetadadosUnificados()` abria o original do
   Google Drive via Exiv2/decoder quando largura e altura estavam ausentes.
   A ficha agora usa apenas a análise técnica já gravada e nunca força o
-  download do original na message thread (`7d75527`).
+  download do original na message thread (`0d2fcf2`).
 - Phone Dump/QR: fechar e reabrir o painel reutilizava a porta 8765 com um
   token novo; a página ainda aberta no celular recebia 403 e mandava escanear
   novamente. O token automático agora dura por toda a execução do app
-  (`a65d289`). Fechar/reabrir somente o painel mantém a página válida; reiniciar
+  (`d3307d8`). Fechar/reabrir somente o painel mantém a página válida; reiniciar
   o app gera outro token e exige novo QR. Rejeições registram no log se foram
   causadas por token antigo ou endereço fora da rede local, sem registrar o
   token. Uploads com 403 continuam sem gravar arquivo.
@@ -64,7 +64,7 @@ não devem ser revertidas.
 
 ## Alt-codex — desempenho, 2026-10-21
 
-- Branch `alt-codex`, criada de `feat/import-menu` em `5a3d9b1`. Os arquivos
+- Branch `alt-codex`, criada de `feat/import-menu` em `d110591`. Os arquivos
   não rastreados preexistentes (Assets, Reference, cofre etc.) foram preservados.
 - Primeiro defeito: `CatalogWorkspaceComponent::aplicarFiltrosAdicionais()`
   chamava `MosaicoComponent::recarregar()` depois de `definirFiltroItens()`,
@@ -141,9 +141,9 @@ grande, ver perf.log de 2026-10-07 23:13) e atualizarPainelDetalhe (consulta por
 
 ## Lote de 19 modificações (2026-10-04/05, branch `windows-port`)
 
-Commits (ver `git log`): Fase 0 `4d604c8` (17), `fabd9fa` (18), `008bf9e` (19) + race do observador de SQL;
-Fase 1 `f11c1d5` (2), `e56fd8e` (11), marcas persistentes (3); Fase 2 `096b735` (1); Fase 3 `c793aaa` (6-10, 15);
-Fase 4 `548c604` (5, 12, 13); Fase 5 `1f81b78` (4, 14); Fase 6 `d1783af` (16). Decisões que não devem ser revertidas:
+Commits (ver `git log`): Fase 0 `be29e6a` (17), `f699169` (18), `c70907f` (19) + race do observador de SQL;
+Fase 1 `db8fd17` (2), `3f92d89` (11), marcas persistentes (3); Fase 2 `601252d` (1); Fase 3 `6eddb88` (6-10, 15);
+Fase 4 `47ca567` (5, 12, 13); Fase 5 `44031dd` (4, 14); Fase 6 `c0e7ed9` (16). Decisões que não devem ser revertidas:
 
 - **Autocorreções saíram de `Project::abrir()`**: passos 5/6 (tipo_midia, caminho_absoluto_origem) + limpeza de `intake_marca_r`
   rodam em `Project::executarAutocorrecoes()` numa thread própria (blocos de 500/transação); passo 6 não repete a busca por 7 dias
