@@ -7,6 +7,14 @@
 #include "PainelInconsistenciasComponent.h"
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
+#include "ImportarMenu.h"
+#include "GeoAcoes.h"
+#include "CapaProjeto.h"
+#include "DocumentPreviewComponent.h"
+#include "JanelaContainerDdp.h"
+#include "MosaicoComponent.h"
+#include "IntakeWorkspaceComponent.h"
+#include "OriginalSourceMedium.h"
 #include "../Ingest/LightroomImporter.h"
 
 #include <JuceHeader.h>
@@ -992,6 +1000,783 @@ int rodarTestLightroom() {
         checar(false, juce::String("teste lightroom: ") + e.what());
     }
     tmpRoot.deleteRecursively();
+
+    std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
+    return falhas == 0 ? 0 : 1;
+}
+
+// Janela IMPORT: o contexto do card chega aos itens (CONTENT, source medium, tags, sufixo) sem tocar no resto.
+int rodarTestImportarComContexto() {
+    std::cout << "== IMPORT window context (ingerirArquivos com SobreMaterial) ==\n";
+    int falhas = 0;
+    auto checar = [&](bool condicao, const juce::String& descricao) {
+        std::cout << (condicao ? "  OK   " : "  FAIL ") << descricao << "\n";
+        if (!condicao) ++falhas;
+    };
+
+    juce::File tmpRoot = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_importar_ctx_test_" + juce::Uuid().toDashedString());
+    try {
+        tmpRoot.createDirectory();
+        const auto gerarTom = [&](const char* nome) {
+            juce::File f = tmpRoot.getChildFile(nome);
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "sine=frequency=440:duration=1", f.getFullPathName()});
+            return f;
+        };
+        const juce::File samples = gerarTom("samples.wav"), fita = gerarTom("fita.wav"), rede = gerarTom("rede.wav"),
+                         sufixo = gerarTom("sufixo.wav"), neutro = gerarTom("neutro.wav"), local = gerarTom("local.wav");
+
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Teste IMPORT contexto";
+        params.prefixoNomenclatura = "CTXTST";
+        auto projeto = matriz::model::Project::criar(tmpRoot.getChildFile("projeto"), params);
+        matriz::db::Database& registro = projeto->registro();
+
+        MainComponent mainComponent;
+        mainComponent.aoConcluirLoteIngestParaTeste = [](int, const juce::StringArray&) {};
+        mainComponent.abrirProjeto(std::move(projeto));
+        checar(mainComponent.temProjetoAberto(), "MainComponent abriu o projeto de teste");
+
+        const auto ingerir = [&](const juce::File& f, std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
+            mainComponent.ingerirArquivos({f}, true, std::move(sobre));
+            esperarIngestTerminar(mainComponent);
+        };
+        const auto coluna = [&](const char* titulo, const char* col) -> std::string {
+            auto st = registro.prepare(std::string("SELECT ") + col + " FROM item WHERE titulo LIKE ?");
+            st.bind(1, matriz::db::Value::of(std::string(titulo) + "%"));
+            return st.step() && !st.columnIsNull(0) ? st.columnText(0) : std::string();
+        };
+
+        ingerir(samples, contextoDaFolhaImportar("audio.production.samples"));
+        checar(coluna("samples", "collection_type") == "Sample Pack", "audio.production.samples grava CONTENT = Sample Pack");
+
+        // Vídeo: o formato de origem vem da ficha (campo "source_media"), somado ao que o card já implica.
+        {
+            auto daFicha = std::make_shared<matriz::ingest::SobreMaterial>();
+            OriginalSourceMediumInfo info;
+            info.medium = "VHS";
+            daFicha->campos.push_back({ "source_media", info.serialize() });
+            ingerir(fita, mesclarContextosImportar(contextoDaFolhaImportar("videos.digital"), daFicha));
+            checar(coluna("fita", "source_media").find("VHS") != std::string::npos, "ficha de video grava SOURCE MEDIUM = VHS (JSON em item.source_media)");
+        }
+
+        ingerir(rede, contextoDaFolhaImportar("other.social.instagram"));
+        {
+            auto st = registro.prepare("SELECT COUNT(*) FROM item_tag t JOIN item i ON i.id = t.item_id WHERE i.titulo = 'rede' "
+                                       "AND t.tag IN ('Social media', 'Instagram')");
+            st.step();
+            checar(st.columnInt(0) == 2, "other.social.instagram soma as tags 'Social media' e 'Instagram'");
+            auto fts = registro.prepare("SELECT COUNT(*) FROM busca_fts f JOIN item i ON i.id = f.item_id WHERE i.titulo = 'rede' AND f.conteudo = 'Instagram'");
+            fts.step();
+            auto mapa = registro.prepare("SELECT COUNT(*) FROM busca_fts_map m JOIN item i ON i.id = m.item_id WHERE i.titulo = 'rede' AND m.conteudo = 'Instagram'");
+            mapa.step();
+            checar(fts.columnInt(0) == 1 && mapa.columnInt(0) == 1, "a tag entra UMA vez em busca_fts, com a linha correspondente em busca_fts_map");
+        }
+
+        auto comSufixo = std::make_shared<matriz::ingest::SobreMaterial>();
+        comSufixo->sufixoTitulo = "2026";
+        ingerir(sufixo, comSufixo);
+        checar(coluna("sufixo", "titulo") == "sufixo - 2026", "sufixo do titulo e somado uma vez");
+
+        // Pasta inteira (expansão assíncrona + checagem de duplicatas antes do lote): o contexto tem que sobreviver à cadeia toda.
+        {
+            juce::File pasta = tmpRoot.getChildFile("caixa_de_discos");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=330:duration=1",
+                             pasta.getChildFile("lado_a.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=550:duration=1",
+                             pasta.getChildFile("lado_b.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, contextoDaFolhaImportar("audio.preservation.vinyl"));
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int comTag = 0;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*) FROM item_tag t JOIN item i ON i.id = t.item_id "
+                                           "WHERE i.titulo LIKE 'lado_%' AND t.tag = 'Vinyl transcription'");
+                st.step();
+                comTag = static_cast<int>(st.columnInt(0));
+                if (comTag == 2) break;
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(comTag == 2, "pasta inteira: os 2 arquivos de dentro recebem a tag 'Vinyl transcription' do card (" + juce::String(comTag) + ")");
+        }
+
+        // Localização padrão da ficha de fotos: entra como USER_CITY quando o arquivo não tem geolocalização própria.
+        {
+            auto comGeo = std::make_shared<matriz::ingest::SobreMaterial>();
+            comGeo->geoPadrao.cidade = "Rio de Janeiro";
+            comGeo->geoPadrao.pais = "Brazil";
+            ingerir(local, comGeo);
+            auto st = registro.prepare("SELECT g.city, g.country, g.source FROM asset_geolocation g JOIN item i ON i.id = g.asset_id WHERE i.titulo = 'local'");
+            const bool achou = st.step();
+            checar(achou && st.columnText(0) == "Rio de Janeiro" && st.columnText(1) == "Brazil" && st.columnText(2) == "USER_CITY",
+                   "localizacao padrao da ficha entra em asset_geolocation (USER_CITY)");
+        }
+
+        // DDP master: conjunto que entra junto vira CONTAINER ("ddp") no Intake e o contexto marca cada arquivo.
+        {
+            const auto ctxDdp = contextoDaFolhaImportar("audio.preservation.ddp");
+            checar(ctxDdp != nullptr && ctxDdp->containerOrigem == "ddp", "audio.preservation.ddp pede container 'ddp'");
+            juce::File pasta = tmpRoot.getChildFile("master_ddp");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=1",
+                             pasta.getChildFile("faixa_um.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=260:duration=1",
+                             pasta.getChildFile("faixa_dois.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, ctxDdp);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int containers = 0;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*) FROM nest WHERE origem = 'ddp'");
+                st.step();
+                containers = static_cast<int>(st.columnInt(0));
+                if (containers == 1) break;
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(containers == 1, "pasta DDP vira 1 container 'ddp' no Intake (" + juce::String(containers) + ")");
+            auto membros = registro.prepare("SELECT COUNT(*) FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE n.origem = 'ddp'");
+            membros.step();
+            checar(membros.columnInt(0) == 2, "o container 'ddp' tem os 2 arquivos");
+        }
+
+        // Capa do container (vinil): a imagem escolhida na ficha vira a capa do nest e fica em .miniaturas do projeto.
+        {
+            juce::File pasta = tmpRoot.getChildFile("lado_a_vinil");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=1",
+                             pasta.getChildFile("faixa_1.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=360:duration=1",
+                             pasta.getChildFile("faixa_2.wav").getFullPathName()});
+            juce::File capa = tmpRoot.getChildFile("capa_vinil.png");
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=orange:s=800x800", "-frames:v", "1",
+                             capa.getFullPathName()});
+            const std::map<std::string, std::string> respostasVelhas = { { "artist", "Banda Velha" }, { "album", "Disco Velho" } };
+            auto ctxVinil = std::make_shared<matriz::ingest::SobreMaterial>(
+                *mesclarContextosImportar(contextoDaFolhaImportar("audio.preservation.vinyl"), contextoDeRespostasImportar("audio.preservation.vinyl", respostasVelhas)));
+            ctxVinil->capaContainer = capa.getFullPathName().toStdString();
+            checar(ctxVinil->containerOrigem == "vinyl", "audio.preservation.vinyl pede container 'vinyl'");
+            mainComponent.ingerirArquivos({pasta}, true, ctxVinil);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            std::string capaGravada;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT capa_imagem FROM nest WHERE origem = 'vinyl' AND capa_imagem IS NOT NULL LIMIT 1");
+                if (st.step()) { capaGravada = st.columnText(0); break; }
+            }
+            esperarIngestTerminar(mainComponent);
+            const juce::File arquivoCapa = mainComponent.projetoAberto()->projeto().pasta().getChildFile(juce::String(capaGravada));
+            checar(!capaGravada.empty() && arquivoCapa.existsAsFile() && arquivoCapa.getSize() > 0,
+                   "capa do container 'vinyl' gravada em .miniaturas e registrada no nest (" + juce::String(capaGravada) + ")");
+            // A miniatura do Intake para o item-capa do container é a imagem escolhida, não a forma de onda.
+            auto capaItem = registro.prepare("SELECT capa_item_id FROM nest WHERE origem = 'vinyl' AND capa_imagem IS NOT NULL LIMIT 1");
+            const bool achouCapaItem = capaItem.step();
+            checar(achouCapaItem && mainComponent.projetoAberto()->capaImagemDoContainer(capaItem.columnText(0)).has_value(),
+                   "capaImagemDoContainer devolve a imagem para o item-capa");
+
+            // Editar o questionário inicial: as respostas ficam guardadas no container e trocá-las tira a resposta antiga dos arquivos.
+            {
+                auto ninho = registro.prepare("SELECT id FROM nest WHERE origem = 'vinyl' AND capa_imagem IS NOT NULL LIMIT 1");
+                const bool achou = ninho.step();
+                const std::string nestId = achou ? ninho.columnText(0) : std::string();
+                auto* proj = mainComponent.projetoAberto();
+                std::string folha;
+                std::map<std::string, std::string> guardadas;
+                checar(achou && questionarioDeJson(proj->questionarioDoContainer(nestId), folha, guardadas) && folha == "audio.preservation.vinyl" &&
+                           guardadas["artist"] == "Banda Velha",
+                       "o container guarda o questionário inicial (card + respostas)");
+                const auto assuntoDosMembros = [&] {
+                    std::string todos;
+                    for (const auto& id : proj->membrosDoNest(nestId)) todos += "[" + proj->lerMetadado(id, "dc_subject").value_or("") + "]";
+                    return todos;
+                };
+                checar(assuntoDosMembros().find("Banda Velha") != std::string::npos, "antes de editar: SUBJECT dos arquivos tem a resposta antiga");
+                const std::map<std::string, std::string> novas = { { "artist", "Banda Nova" }, { "album", "Disco Novo" } };
+                const auto antigo = contextoDeRespostasImportar(folha, guardadas);
+                const auto novo = contextoDeRespostasImportar(folha, novas);
+                const bool ok = antigo && novo && proj->reaplicarQuestionarioDoContainer(nestId, *antigo, *novo, questionarioParaJson(*novo));
+                const auto depois = assuntoDosMembros();
+                checar(ok && depois.find("Banda Nova") != std::string::npos && depois.find("Banda Velha") == std::string::npos,
+                       "editar o questionário troca a resposta antiga pela nova em todos os arquivos (" + juce::String(depois) + ")");
+                {
+                    auto n = registro.prepare("SELECT nome FROM nest WHERE id = ?");
+                    n.bind(1, matriz::db::Value::of(nestId));
+                    const bool tem = n.step();
+                    checar(tem && n.columnText(0) == "Disco Novo", "o álbum da ficha vira o nome do container (nest.nome) e a LIST dos arquivos");
+                    const auto itens = proj->membrosDoNest(nestId);
+                    checar(!itens.empty() && proj->lerMetadado(itens.front(), "lista").value_or("") == "Disco Novo", "LIST dos arquivos = álbum");
+                }
+                // Janela do projeto: o bloco da capa mostra o nome do container e o artista; trocar e remover a capa funcionam.
+                {
+                    CapaProjetoComponent cp(*proj, nestId, CapaProjetoComponent::Modo::Detalhado);
+                    cp.setSize(900, 330);
+                    checar(cp.nomeParaTeste() == "Disco Novo" && cp.artistaParaTeste() == "Banda Nova" && cp.temCapaParaTeste(),
+                           "PROJECT cover block shows the container name, the artist and the cover");
+                    cp.removerCapaParaTeste();
+                    auto semCapa = registro.prepare("SELECT capa_imagem FROM nest WHERE id = ?");
+                    semCapa.bind(1, matriz::db::Value::of(nestId));
+                    checar(semCapa.step() && semCapa.columnIsNull(0) && !cp.temCapaParaTeste(), "Remove clears the container cover");
+                    cp.trocarCapaParaTeste(capa);
+                    const auto t0 = juce::Time::getMillisecondCounter();
+                    while (!cp.temCapaParaTeste() && juce::Time::getMillisecondCounter() - t0 < 10000)
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                    checar(cp.temCapaParaTeste(), "Change cover sets a new cover on the container");
+                    std::string folhaC;
+                    std::map<std::string, std::string> respC;
+                    checar(questionarioDeJson(proj->questionarioDoContainer(nestId), folhaC, respC) && respC["capa"] == capa.getFullPathName().toStdString(),
+                           "Edit Project Info opens with the cover that was changed outside it");
+                }
+                std::string folha2;
+                std::map<std::string, std::string> guardadas2;
+                checar(questionarioDeJson(proj->questionarioDoContainer(nestId), folha2, guardadas2) && guardadas2["artist"] == "Banda Nova",
+                       "o questionário guardado passa a ser o novo");
+            }
+        }
+
+        // Edit Project Info de ponta a ponta, pelo caminho real: ficha preenchida na tela -> importação -> container -> reabrir a ficha.
+        {
+            juce::File pasta2 = tmpRoot.getChildFile("lado_b_vinil");
+            pasta2.createDirectory();
+            for (int i = 1; i <= 2; ++i)
+                gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=" + std::to_string(200 + i * 40) + ":duration=1",
+                                 pasta2.getChildFile("b_" + juce::String(i) + ".wav").getFullPathName()});
+            const auto girar = [](int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); };
+            std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha;
+            PainelOverlay ficha;
+            ficha.setBounds(0, 0, 1100, 760);
+            mostrarFichaImportar(ficha, "audio.preservation.vinyl", [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial> sm) { daFicha = sm; });
+            girar(50);
+            const juce::String ladoEscolhido = ficha.valorDoCampo("side").isEmpty() ? juce::String() : juce::String();
+            juce::ignoreUnused(ladoEscolhido);
+            ficha.definirValorCampo("artist", "Artista Real");
+            ficha.definirValorCampo("album", "Album Real");
+            ficha.definirValorCampo("context", "Notas do disco");
+            // Escolha: o 2º rótulo da lista de Lado (qualquer idioma) tem que voltar igual ao reabrir.
+            ficha.selecionarOpcaoDoCampoParaTeste("side", 2);
+            const juce::String ladoFicha = ficha.valorDoCampo("side");
+            ficha.concluirExterno(1);
+            girar(50);
+            checar(daFicha != nullptr && daFicha->folhaId == "audio.preservation.vinyl" && daFicha->respostas.count("album") && daFicha->respostas.at("album") == "Album Real",
+                   "the ficha result carries the card id and the answers (for Edit Project Info)");
+            if (daFicha != nullptr) {
+                auto contexto = mesclarContextosImportar(contextoDaFolhaImportar("audio.preservation.vinyl"), daFicha);
+                mainComponent.ingerirArquivos({pasta2}, true, contexto);
+                const auto t0 = juce::Time::getMillisecondCounter();
+                std::string nestReal;
+                while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                    if (mainComponent.ingestEmAndamento()) continue;
+                    auto st = registro.prepare("SELECT id FROM nest WHERE origem = 'vinyl' AND nome = 'Album Real' LIMIT 1");
+                    if (st.step()) { nestReal = st.columnText(0); break; }
+                }
+                esperarIngestTerminar(mainComponent);
+                checar(!nestReal.empty(), "a container made from the real ficha path is named after the album");
+                if (!nestReal.empty()) {
+                    PainelOverlay reaberta;
+                    reaberta.setBounds(0, 0, 1100, 760);
+                    editarQuestionarioDoContainer(reaberta, *mainComponent.projetoAberto(), nestReal, "vinyl", [](bool) {});
+                    girar(80);
+                    checar(reaberta.valorDoCampo("artist") == "Artista Real" && reaberta.valorDoCampo("album") == "Album Real" &&
+                               reaberta.valorDoCampo("context") == "Notas do disco",
+                           "Edit Project Info opens with the text answers filled in");
+                    checar(ladoFicha.isNotEmpty() && reaberta.valorDoCampo("side") == ladoFicha, "...and with the choice answers filled in (" + reaberta.valorDoCampo("side") + ")");
+                }
+            }
+        }
+
+        // YouTube Production: vídeo + thumbnail + roteiro entram juntos e viram UM container 'youtube'. A thumbnail é a capa, o vídeo
+        // representa o container e só ele recebe título e descrição (Dublin Core).
+        {
+            juce::File dir = tmpRoot.getChildFile("youtube_arquivos");
+            dir.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=10:duration=4",
+                             "-pix_fmt", "yuv420p", dir.getChildFile("video_final.mp4").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=purple:s=640x360", "-frames:v", "1",
+                             dir.getChildFile("thumb.png").getFullPathName()});
+            dir.getChildFile("roteiro.txt").replaceWithText("roteiro do video");
+            auto ctxYt = std::make_shared<matriz::ingest::SobreMaterial>(*contextoDaFolhaImportar("videos.youtube"));
+            checar(ctxYt->containerOrigem == "youtube" && ctxYt->capaFrameDoVideo, "videos.youtube pede container 'youtube' com o video como representante");
+            ctxYt->capaContainer = dir.getChildFile("thumb.png").getFullPathName().toStdString();
+            ctxYt->camposDoVideo = { { "dc_title", "Meu vlog" }, { "dc_description", "Descricao do vlog" } };
+            mainComponent.ingerirArquivos({ dir.getChildFile("video_final.mp4"), dir.getChildFile("thumb.png"), dir.getChildFile("roteiro.txt") }, true, ctxYt);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int containers = 0;
+            std::string capa, itemCapa;
+            while (juce::Time::getMillisecondCounter() - t0 < 40000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*), COALESCE(MAX(capa_imagem), ''), COALESCE(MAX(capa_item_id), '') FROM nest WHERE origem = 'youtube'");
+                st.step();
+                containers = static_cast<int>(st.columnInt(0));
+                capa = st.columnText(1);
+                itemCapa = st.columnText(2);
+                if (containers == 1 && !capa.empty() && !itemCapa.empty()) {
+                    auto v = registro.prepare("SELECT tipo_midia FROM item WHERE id = ?");
+                    v.bind(1, matriz::db::Value::of(itemCapa));
+                    if (v.step() && v.columnText(0) == "digital_video") break;
+                }
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(containers == 1, "video + thumbnail + roteiro viram 1 container 'youtube' (" + juce::String(containers) + ")");
+            checar(!capa.empty() && mainComponent.projetoAberto()->projeto().pasta().getChildFile(juce::String(capa)).existsAsFile(), "a thumbnail vira a capa do container");
+            auto v = registro.prepare("SELECT tipo_midia FROM item WHERE id = ?");
+            v.bind(1, matriz::db::Value::of(itemCapa));
+            checar(v.step() && v.columnText(0) == "digital_video", "o video e o item que representa o container (abre o preview dele)");
+            auto d = registro.prepare("SELECT dc_title, dc_description FROM item WHERE titulo = 'video_final'");
+            checar(d.step() && d.columnText(0) == "Meu vlog" && d.columnText(1) == "Descricao do vlog", "titulo e descricao entram na ficha Dublin Core do video");
+            auto n = registro.prepare("SELECT COUNT(*) FROM item WHERE titulo IN ('thumb', 'roteiro') AND dc_description IS NOT NULL AND dc_description <> ''");
+            n.step();
+            checar(n.columnInt(0) == 0, "a thumbnail e o roteiro nao recebem a descricao do video");
+        }
+
+        // NEST (e não container): arquivos com tema em comum (sample pack) ficam num nest sem origem.
+        {
+            const auto ctxSamples = contextoDaFolhaImportar("audio.production.samples");
+            checar(ctxSamples != nullptr && ctxSamples->agruparComoNest && ctxSamples->containerOrigem.empty(), "sample pack pede NEST, nao container");
+            juce::File pasta = tmpRoot.getChildFile("pacote_de_samples");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=100:duration=1", pasta.getChildFile("kick.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", pasta.getChildFile("snare.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, ctxSamples);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int nests = 0;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*) FROM nest WHERE origem IS NULL");
+                st.step();
+                nests = static_cast<int>(st.columnInt(0));
+                if (nests == 1) break;
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(nests == 1, "sample pack importado junto vira 1 NEST sem origem (" + juce::String(nests) + ")");
+            auto membros = registro.prepare("SELECT COUNT(*) FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE n.origem IS NULL");
+            membros.step();
+            checar(membros.columnInt(0) == 2, "o nest tem os 2 arquivos");
+        }
+
+        // Music Production: a DAW da ficha vira o ícone do container (sem capa); com capa, vale a capa.
+        {
+            const auto base = contextoDaFolhaImportar("audio.production.project");
+            checar(base != nullptr && base->containerOrigem == "production", "audio.production.project pede container 'production'");
+            const auto comDaw = std::make_shared<matriz::ingest::SobreMaterial>(*base);
+            comDaw->iconeContainer = "ci_daw_pro_tools_png";
+            juce::File pasta = tmpRoot.getChildFile("sessao_pro_tools");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=150:duration=1", pasta.getChildFile("stem_1.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=170:duration=1", pasta.getChildFile("stem_2.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, comDaw);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            std::string icone;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT icone FROM nest WHERE origem = 'production' AND icone IS NOT NULL LIMIT 1");
+                if (st.step()) { icone = st.columnText(0); break; }
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(icone == "ci_daw_pro_tools_png", "a DAW escolhida vira o icone do container de producao (" + juce::String(icone) + ")");
+        }
+
+        // GRID: o container aprovado do INTAKE continua container (ícone/capa e contagem), não vira um NEST com "N".
+        {
+            registro.run("UPDATE item SET em_quarentena = 0", {});
+            MosaicoComponent mosaico(*mainComponent.projetoAberto());
+            mosaico.setBounds(0, 0, 1300, 800);
+            mosaico.recarregarSincrono();
+            const auto t0 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t0 < 3000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            mosaico.createComponentSnapshot(mosaico.getLocalBounds());
+            const auto t1 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t1 < 4000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            juce::Image img = mosaico.createComponentSnapshot(mosaico.getLocalBounds());
+            juce::File png = juce::File::getCurrentWorkingDirectory().getChildFile("test-output/grid_containers.png");
+            png.getParentDirectory().createDirectory();
+            png.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(png.createOutputStream())) juce::PNGImageFormat().writeImageToStream(img, *out);
+            std::cout << "  ..  foto do Grid: " << png.getFullPathName() << "\n";
+            registro.run("UPDATE item SET em_quarentena = 1", {});  // volta ao estado do INTAKE para o resto do teste
+        }
+
+        // Janela do container DDP: lista de arquivos à esquerda, player de CD no meio, metadados à direita. Sem um DDP de verdade aqui,
+        // usa uma pasta sintética (DDPID + IMAGE.DAT de silêncio) só para conferir o desenho e a lista.
+        {
+            juce::File ddp = tmpRoot.getChildFile("ddp_sintetico");
+            ddp.createDirectory();
+            ddp.getChildFile("DDPID").replaceWithText("DDP 2.00");
+            {
+                juce::MemoryBlock silencio(588 * 75 * 6);  // 6 s de CD (588 amostras estéreo por quadro, 4 bytes cada = 2352 bytes)
+                silencio.setSize(2352 * 75 * 6, true);
+                ddp.getChildFile("IMAGE.DAT").replaceWithData(silencio.getData(), silencio.getSize());
+            }
+            {  // PQDESCR em texto (DDP 2.00): faixa 1 aos 00:02:00, faixa 2 aos 00:03:00 e lead-out aos 00:06:00
+                const auto registro64 = [](const char* faixa, const char* indice, const char* msf) {
+                    std::string r = std::string("VVVS") + faixa + indice + "  " + msf;
+                    r.resize(64, ' ');
+                    return r;
+                };
+                const std::string pq = registro64("01", "01", "000200") + registro64("02", "01", "000300") + registro64("AA", "01", "000600");
+                ddp.getChildFile("PQDESCR").replaceWithData(pq.data(), pq.size());
+            }
+            auto stNest = registro.prepare("SELECT id FROM nest WHERE origem = 'ddp' LIMIT 1");
+            if (stNest.step()) {
+                JanelaContainerDdp janela(*mainComponent.projetoAberto(), stNest.columnText(0), ddp);
+                std::cout << "  ..  janela DDP: carregada=" << (janela.carregado() ? "sim" : "nao") << " erro=" << janela.erro() << "\n";
+                if (janela.carregado()) {
+                    checar(janela.numeroDeArquivosParaTeste() == 2, "a janela do DDP lista os 2 arquivos do container");
+                    janela.resized();
+                    const auto t0 = juce::Time::getMillisecondCounter();
+                    while (juce::Time::getMillisecondCounter() - t0 < 1500) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                    juce::Image img = janela.createComponentSnapshot(janela.getLocalBounds());
+                    juce::File png = juce::File::getCurrentWorkingDirectory().getChildFile("test-output/janela_ddp.png");
+                    png.getParentDirectory().createDirectory();
+                    png.deleteFile();
+                    if (auto out = std::unique_ptr<juce::FileOutputStream>(png.createOutputStream())) juce::PNGImageFormat().writeImageToStream(img, *out);
+                    std::cout << "  ..  foto da janela DDP: " << png.getFullPathName() << "\n";
+                }
+            }
+        }
+
+        // Foto do Intake (miniaturas) com os containers 'ddp' e 'vinyl' já criados — para olhar como o container aparece.
+        {
+            IntakeWorkspaceComponent intake(*mainComponent.projetoAberto());
+            intake.setBounds(0, 0, 1500, 900);
+            intake.definirModoVisao(IntakeWorkspaceComponent::ModoVisao::Icones);
+            intake.recarregar();
+            const auto t0 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t0 < 4000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            intake.createComponentSnapshot(intake.getLocalBounds());  // 1ª pintura pede as miniaturas
+            const auto t1 = juce::Time::getMillisecondCounter();
+            while (juce::Time::getMillisecondCounter() - t1 < 6000) juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            juce::Image img = intake.createComponentSnapshot(intake.getLocalBounds());
+            juce::File png = juce::File::getCurrentWorkingDirectory().getChildFile("test-output/intake_containers.png");
+            png.getParentDirectory().createDirectory();
+            png.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(png.createOutputStream())) juce::PNGImageFormat().writeImageToStream(img, *out);
+            std::cout << "  ..  foto do Intake: " << png.getFullPathName() << "\n";
+        }
+
+        ingerir(neutro, nullptr);
+        checar(coluna("neutro", "collection_type").empty() && coluna("neutro", "source_media").empty(),
+               "sem contexto (card neutro / arrastar) o item entra como antes: sem CONTENT nem SOURCE MEDIUM");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("teste importar contexto: ") + e.what());
+    }
+    tmpRoot.deleteRecursively();
+
+#if JUCE_MAC
+    // PDF no preview: o NSView do documento fica onde o componente está, mesmo depois de a janela mudar de tamanho
+    // (docResize jogava a origem para (0,0): o PDF ficava torto, grudado no canto da janela).
+    {
+        const juce::File dirPdf = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("matriz_pdf_torto_" + juce::Uuid().toDashedString());
+        dirPdf.createDirectory();
+        const juce::File pdf = dirPdf.getChildFile("teste.pdf");
+        pdf.replaceWithText("%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+                            "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R/Size 4>>\n%%EOF\n");
+        juce::Component host;
+        host.setOpaque(true);
+        host.addToDesktop(juce::ComponentPeer::windowHasTitleBar);
+        host.setBounds(100, 100, 700, 600);
+        auto* previa = new DocumentPreviewComponent();
+        host.addAndMakeVisible(previa);
+        previa->setBounds(150, 60, 400, 300);
+        host.setVisible(true);
+        const bool carregou = previa->carregar(pdf);
+        for (int i = 0; i < 10; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
+        previa->setBounds(210, 90, 450, 420);  // a janela mudou de layout depois de o PDF abrir
+        for (int i = 0; i < 10; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
+        double x = -1, y = -1;
+        const bool tem = previa->origemNativaParaTeste(x, y);
+        const double esperadoX = 210 + 4, esperadoY = 90 + 36 + 4;  // posição do componente + margem + barra de navegação
+        const bool ok = carregou && tem && std::abs(x - esperadoX) < 2.0 && std::abs(y - esperadoY) < 2.0;
+        std::cout << (ok ? "  OK   " : "  FAIL ") << "PDF no preview fica na posição do componente depois de a janela mudar (x=" << x << " y=" << y
+                  << ", esperado " << esperadoX << "," << esperadoY << ")\n";
+        if (!ok) ++falhas;
+        delete previa;
+        dirPdf.deleteRecursively();
+    }
+#endif
+
+    // GEO LOCATION: OPEN abre o Google Maps nas coordenadas; sem coordenadas válidas usa o endereço; sem nada, não abre.
+    {
+        using matriz::ui::geoacoes::Local;
+        using matriz::ui::geoacoes::urlDoGoogleMaps;
+        checar(urlDoGoogleMaps(Local{ "-16.4435, -39.0643", "", "", "", "" }) ==
+                   "https://www.google.com/maps/search/?api=1&query=" + juce::URL::addEscapeChars("-16.443500,-39.064300", true),
+               "GEO OPEN: coordenadas válidas viram a busca por lat,lng");
+        const auto porEndereco = urlDoGoogleMaps(Local{ "", "Av. Paulista, 1000", "Sao Paulo", "SP", "Brasil" });
+        checar(porEndereco.contains("Paulista") && porEndereco.contains("Paulo"), "GEO OPEN: sem coordenadas usa endereço + cidade + estado + país");
+        checar(urlDoGoogleMaps(Local{ "0, 0", "", "", "", "" }).isEmpty() && urlDoGoogleMaps(Local{}).isEmpty(),
+               "GEO OPEN: coordenada 0,0 ou campos vazios não abrem nada");
+        checar(urlDoGoogleMaps(Local{ "99, 500", "Rua X", "", "", "" }).contains("Rua"), "GEO OPEN: coordenada fora do intervalo cai no endereço");
+    }
+
+    std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
+    return falhas == 0 ? 0 : 1;
+}
+
+// Renderiza a janela IMPORT (raiz, sub-janelas) e a ficha de vídeo em PNG (./test-output) para conferir o visual.
+int rodarTestImportarVisual() {
+    std::cout << "== IMPORT window snapshots ==\n";
+    int falhas = 0;
+    juce::File saida = juce::File::getCurrentWorkingDirectory().getChildFile("test-output");
+    saida.createDirectory();
+    const auto salvar = [&](juce::Component& c, const juce::String& nome) {
+        juce::Image img = c.createComponentSnapshot(c.getLocalBounds());
+        juce::File arquivo = saida.getChildFile(nome + ".png");
+        arquivo.deleteFile();
+        if (auto stream = std::unique_ptr<juce::FileOutputStream>(arquivo.createOutputStream())) {
+            juce::PNGImageFormat png;
+            png.writeImageToStream(img, *stream);
+        }
+        const bool ok = img.isValid() && img.getWidth() > 0;
+        std::cout << (ok ? "  OK   " : "  FAIL ") << nome << " -> " << arquivo.getFullPathName() << "\n";
+        if (!ok) ++falhas;
+    };
+    const auto girar = [](int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); };
+
+    matriz::i18n::carregar("en");
+    PainelOverlay overlay;
+    overlay.setBounds(0, 0, 1100, 760);
+    std::optional<std::string> escolha;
+    bool terminou = false;
+    mostrarMenuImportar(overlay, [&](std::optional<std::string> id, std::vector<std::string>) { escolha = id; terminou = true; });
+    girar(100);
+    salvar(overlay, "imp_01_raiz");
+
+    overlay.concluirExterno(103);  // Photos
+    girar(150);
+    salvar(overlay, "imp_01b_photos");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(105);  // Audio
+    girar(150);
+    salvar(overlay, "imp_02_audio");
+    overlay.concluirExterno(100);  // Production
+    girar(150);
+    salvar(overlay, "imp_03_audio_production");
+    overlay.concluirExterno(1);    // VOLTAR
+    girar(150);
+    overlay.concluirExterno(101);  // Preservation
+    girar(150);
+    salvar(overlay, "imp_03b_audio_preservation");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(102);  // General
+    girar(150);
+    salvar(overlay, "imp_03c_audio_general");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(1);    // VOLTAR (raiz)
+    girar(150);
+    overlay.concluirExterno(104);  // Videos
+    girar(150);
+    salvar(overlay, "imp_04_videos");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(107);  // Other
+    girar(150);
+    salvar(overlay, "imp_05_other");
+    overlay.concluirExterno(102);  // Social Media
+    girar(150);
+    salvar(overlay, "imp_06_social");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(101);  // Multimedia
+    girar(150);
+    salvar(overlay, "imp_07_multimedia");
+    overlay.concluirExterno(0);
+    girar(100);
+    std::cout << (terminou && !escolha.has_value() ? "  OK   " : "  FAIL ") << "cancelar encerra sem escolha\n";
+    if (!(terminou && !escolha.has_value())) ++falhas;
+
+    {
+        PainelOverlay overlayAudio;
+        overlayAudio.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayAudio, "audio.production.project", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayAudio, "imp_09_ficha_audio_producao");
+        PainelOverlay overlayVinil;
+        overlayVinil.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayVinil, "audio.preservation.vinyl", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayVinil, "imp_10_ficha_audio_vinil");
+        {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarListaDeContasParaTeste(o);
+            girar(100);
+            salvar(o, "imp_18_drive_lista");
+        }
+        const char* fichasVisuais[][2] = { { "photos.folder", "imp_13_ficha_fotos" }, { "documents.web", "imp_15_ficha_docs_web" }, { "other.multimedia.interactive", "imp_16_ficha_interativo" },
+                                           { "other.social.other", "imp_17_ficha_rede_outra" },
+                                           { "audio.preservation.vinyl", "imp_19_ficha_vinil" }, { "audio.preservation.tape", "imp_20_ficha_fita" },
+                                           { "audio.general.field", "imp_21_ficha_campo" }, { "audio.general.film_sound", "imp_22_ficha_film_sound" },
+                                           { "audio.general.voice_over", "imp_23_ficha_locucao" }, { "documents.scanned", "imp_24_ficha_docs_escaneado" },
+                                           { "other.design", "imp_25_ficha_design" }, { "files.optical", "imp_14_ficha_arquivos_optico" },
+                                           { "audio.production.midi", "imp_26_ficha_midi" }, { "audio.production.tools", "imp_27_ficha_tools" },
+                                           { "photos.camera_card", "imp_28_ficha_cartao_camera" }, { "videos.youtube", "imp_30_ficha_youtube" } };
+        for (const auto& fv : fichasVisuais) {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarFichaImportar(o, fv[0], [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+            girar(100);
+            salvar(o, fv[1]);
+        }
+        // Toda ficha tem que concluir com CONTINUE (era o que faltava testar: o DDP quebrava aqui) e com PULAR.
+        {
+            int total = 0, concluiram = 0;
+            for (const auto& id : idsDasFolhasDoMenuImportar()) {
+                if (!folhaImportarTemFicha(id)) continue;
+                for (int botao : { 1, 2 }) {
+                    PainelOverlay o;
+                    o.setBounds(0, 0, 1100, 760);
+                    bool respondeu = false;
+                    mostrarFichaImportar(o, id, [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) { respondeu = true; });
+                    girar(30);
+                    o.concluirExterno(botao);
+                    girar(30);
+                    ++total;
+                    if (respondeu) ++concluiram;
+                    else std::cout << "  FAIL ficha sem resposta: " << id << " botao " << botao << "\n";
+                }
+            }
+            const bool ok = total > 0 && total == concluiram;
+            std::cout << (ok ? "  OK   " : "  FAIL ") << "todas as fichas concluem com CONTINUE e PULAR (" << concluiram << "/" << total << ")\n";
+            if (!ok) ++falhas;
+        }
+
+        // Metadata pós-questionário: cada ficha preenche SUBJECT / LIST / TAGS / NOTES do jeito pedido.
+        {
+            const auto responder = [&](const std::string& folha, const std::vector<std::pair<juce::String, juce::String>>& valores) {
+                PainelOverlay o;
+                o.setBounds(0, 0, 1100, 760);
+                std::shared_ptr<const matriz::ingest::SobreMaterial> r;
+                mostrarFichaImportar(o, folha, [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial> sm) { r = sm; });
+                girar(30);
+                for (const auto& [id, v] : valores) o.definirValorCampo(id, v);
+                o.concluirExterno(1);
+                girar(30);
+                return r;
+            };
+            const auto lista = [](const matriz::ingest::SobreMaterial& sm) {
+                for (const auto& c : sm.campos) if (c.first == "lista") return c.second;
+                return std::string();
+            };
+            const auto temTag = [](const matriz::ingest::SobreMaterial& sm, const std::string& t) {
+                return std::find(sm.tags.begin(), sm.tags.end(), t) != sm.tags.end();
+            };
+            const auto confere = [&](bool ok, const char* nome) {
+                std::cout << (ok ? "  OK   " : "  FAIL ") << nome << "\n";
+                if (!ok) ++falhas;
+            };
+            if (auto sm = responder("audio.production.tools", { { "asset_name", "Valhalla VintageVerb" }, { "tool_function", "Reverb, Plate" } }); sm)
+                confere(lista(*sm) == "Valhalla VintageVerb" && temTag(*sm, "Reverb") && temTag(*sm, "Plate") && sm->subject.find("Tools") == std::string::npos,
+                        "Tools: LIST = nome, função = tags, SUBJECT = tipo (não 'Tools')");
+            else confere(false, "Tools: ficha respondeu");
+            if (auto sm = responder("audio.production.samples", { { "pack_name", "Drums Vol 1" }, { "sound_type", "Kick, Snare" } }); sm)
+                confere(sm->subject == "Sample Pack" && lista(*sm) == "Drums Vol 1" && temTag(*sm, "Kick") && temTag(*sm, "Snare"),
+                        "Sample Pack: SUBJECT = Sample Pack, LIST = nome do pack, tipo de som = tags");
+            else confere(false, "Sample Pack: ficha respondeu");
+            if (auto sm = responder("audio.production.midi", { { "colecao", "Album Demos" }, { "ecossistema", "Logic Pro" }, { "origem_hw", "Akai MPC2000" } }); sm)
+                confere(sm->subject == "Midi" && lista(*sm) == "Album Demos" && temTag(*sm, "Logic Pro") && temTag(*sm, "Akai MPC2000"),
+                        "MIDI: SUBJECT = Midi, LIST = nome do projeto, ecossistema e hardware = tags");
+            else confere(false, "MIDI: ficha respondeu");
+            if (auto sm = responder("audio.production.project", { { "artist", "Banda X" }, { "project", "Cancao Y" }, { "description", "Mix final aprovado" } }); sm)
+                confere(sm->subject == "Banda X" && lista(*sm) == "Cancao Y" && sm->descricao.find("Mix final aprovado") != std::string::npos,
+                        "Music Production: SUBJECT = artista/banda, LIST = projeto/música, descrição = NOTES");
+            else confere(false, "Music Production: ficha respondeu");
+            if (auto sm = responder("videos.youtube", { { "nome", "Meu video" }, { "sobre", "um dois tres quatro cinco seis" } }); sm)
+                confere(lista(*sm) == "um dois tres quatro" && sm->subject.find("Meu video") == std::string::npos,
+                        "YouTube: LIST = do que se trata (máx. 4 palavras), o nome do vídeo não vira SUBJECT");
+            else confere(false, "YouTube: ficha respondeu");
+        }
+
+        // VOLTAR: a escolha de uma folha devolve o caminho de grupos, e reabrir com esse caminho cai no mesmo nível.
+        {
+            std::string idRecebido;
+            std::vector<std::string> caminhoRecebido;
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarMenuImportar(o, [&](std::optional<std::string> id, std::vector<std::string> caminho) {
+                if (id.has_value()) idRecebido = *id;
+                caminhoRecebido = caminho;
+            });
+            girar(50);
+            o.concluirExterno(105); girar(80);  // Audio
+            o.concluirExterno(101); girar(80);  // Preservation
+            o.concluirExterno(102); girar(80);  // Vinyl transcription
+            const std::vector<std::string> esperado = { "audio", "audio.preservation" };
+            const bool caminhoOk = idRecebido == "audio.preservation.vinyl" && caminhoRecebido == esperado;
+            std::cout << (caminhoOk ? "  OK   " : "  FAIL ") << "a folha escolhida devolve o caminho de grupos (" << idRecebido << ")\n";
+            if (!caminhoOk) ++falhas;
+
+            PainelOverlay o2;
+            o2.setBounds(0, 0, 1100, 760);
+            mostrarMenuImportar(o2, [](std::optional<std::string>, std::vector<std::string>) {}, caminhoRecebido);
+            girar(80);
+            const bool reabriu = o2.tituloParaTeste().containsIgnoreCase("preservation") && o2.totalBotoesParaTeste() == 2;
+            std::cout << (reabriu ? "  OK   " : "  FAIL ") << "reabrir com o caminho volta ao mesmo card, com VOLTAR (" << o2.tituloParaTeste() << ")\n";
+            if (!reabriu) ++falhas;
+
+            // Toda ficha ganha VOLTAR quando há para onde voltar, e ele chama o retorno em vez de concluir.
+            bool voltou = false, concluiu = false;
+            PainelOverlay o3;
+            o3.setBounds(0, 0, 1100, 760);
+            mostrarFichaImportar(o3, "audio.preservation.vinyl", [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) { concluiu = true; },
+                                 [&] { voltou = true; });
+            girar(50);
+            const bool quatroBotoes = o3.totalBotoesParaTeste() == 4;
+            salvar(o3, "imp_29_ficha_com_voltar");
+            o3.concluirExterno(3);
+            girar(50);
+            const bool fichaOk = quatroBotoes && voltou && !concluiu;
+            std::cout << (fichaOk ? "  OK   " : "  FAIL ") << "a ficha tem VOLTAR (4 botoes) e ele nao conclui a importacao\n";
+            if (!fichaOk) ++falhas;
+        }
+
+        {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarPerguntaOutroYoutube(o, "Meu vlog de domingo", 2, [](int) {});
+            girar(80);
+            salvar(o, "imp_31_youtube_outro");
+        }
+
+        {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarArquivosYoutube(o, {}, [](int, ArquivosYoutube) {});
+            girar(80);
+            salvar(o, "imp_32_youtube_arquivos");
+        }
+
+        PainelOverlay overlayDdp;
+        overlayDdp.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayDdp, "audio.preservation.ddp", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayDdp, "imp_12_ficha_ddp");
+        PainelOverlay overlayCustom;
+        overlayCustom.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayCustom, "other.custom", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayCustom, "imp_11_ficha_outro");
+    }
+
+    PainelOverlay overlayFicha;
+    overlayFicha.setBounds(0, 0, 1100, 760);
+    bool fichaRespondeu = false;
+    mostrarFichaImportar(overlayFicha, "videos.digital", [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) { fichaRespondeu = true; });
+    girar(100);
+    salvar(overlayFicha, "imp_08_ficha_video");
+    overlayFicha.concluirExterno(2);
+    girar(50);
+    std::cout << (fichaRespondeu ? "  OK   " : "  FAIL ") << "PULAR conclui a ficha\n";
+    if (!fichaRespondeu) ++falhas;
 
     std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;

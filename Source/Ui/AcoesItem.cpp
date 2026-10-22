@@ -1,5 +1,6 @@
 #include "ConflitosMergeDialog.h"
 #include "AcoesItem.h"
+#include "ContainerVisual.h"
 #include "PastaPickerWindow.h"
 #include "../Diag/Watchdog.h"
 
@@ -38,6 +39,7 @@ enum Comando {
     kSubstituirArquivo,
     kObterExif,
     kRevisarConflitosMerge,
+    kEditarQuestionario,
     // Ids das pastas de destino ("Enviar para pasta") começam aqui, pra
     // nunca colidirem com os comandos fixos acima por mais que a lista de
     // pastas cresça.
@@ -529,9 +531,17 @@ void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& ite
 }
 
 juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
-                              ResolvedorItemEmMemoria emMemoria) {
+                              ResolvedorItemEmMemoria emMemoria, bool comEditarQuestionario) {
     juce::PopupMenu menu;
     bool umSo = itemIds.size() == 1;
+
+    // Container de importação: o questionário inicial pode ser editado depois (as respostas voltam preenchidas).
+    if (comEditarQuestionario && umSo) {
+        if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && ehOrigemComFicha(juce::String(nest->origem))) {
+            menu.addItem(kEditarQuestionario, matriz::i18n::t("imp.editar_questionario"));
+            menu.addSeparator();
+        }
+    }
 
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
     menu.addItem(kLimparMetadados, matriz::i18n::t("menu.limpar_metadados") + " (C)");
@@ -586,8 +596,8 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kCopiarCaminho, matriz::i18n::t("acoes.copiar_caminho"), umSo);
     menu.addItem(kVerDuplicatas, matriz::i18n::t("acoes.ver_duplicatas"), umSo);
     // Fase 4: valores que perderam ao juntar duplicatas.
-    if (umSo && projeto.temConflitoMergePendente(itemIds.front()))
-        menu.addItem(kRevisarConflitosMerge, matriz::i18n::t("acoes.revisar_conflitos"));
+    if (std::any_of(itemIds.begin(), itemIds.end(), [&](const auto& id) { return projeto.temConflitoMergePendente(id); }))
+        menu.addItem(kRevisarConflitosMerge, umSo ? matriz::i18n::t("acoes.revisar_conflitos") : juce::String("Batch Merge Conflicts"));
     return menu;
 }
 
@@ -603,6 +613,12 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kRenomear:
             renomear(projeto, itemIds, ganchos);
+            break;
+
+        case kEditarQuestionario:
+            if (ganchos.aoEditarQuestionario)
+                if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && ehOrigemComFicha(juce::String(nest->origem)))
+                    ganchos.aoEditarQuestionario(nest->nestId, nest->origem);
             break;
 
         case kRenomearEmLote:
@@ -748,10 +764,9 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
         }
 
         case kRevisarConflitosMerge: {
-            const std::string id = itemIds.front();
             std::vector<ConflitosMergeDialog::Linha> linhas;
-            for (const auto& c : projeto.conflitosMergePendentes(id))
-                linhas.push_back({c.historicoId, c.campo, matriz::model::merge::resumoDoValor(c.campo, c.valorAtual),
+            for (const auto& id : itemIds) for (const auto& c : projeto.conflitosMergePendentes(id))
+                linhas.push_back({c.historicoId, c.campo, juce::String::fromUTF8(id.c_str()) + ": " + matriz::model::merge::resumoDoValor(c.campo, c.valorAtual),
                                   matriz::model::merge::resumoDoValor(c.campo, c.valorAlternativo) + "  (" +
                                       juce::String::fromUTF8(c.origem.c_str()) + ")"});
             if (linhas.empty()) break;
@@ -759,8 +774,14 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             std::weak_ptr<bool> vivo = projeto.tokenVida();
             ConflitosMergeDialog::mostrar(matriz::i18n::t("merge.revisar_titulo"), matriz::i18n::t("merge.revisar_intro"),
                                           matriz::i18n::t("merge.col_atual"), matriz::i18n::t("merge.col_outro"),
-                                          std::move(linhas), [p, vivo, id](bool ok, std::set<std::string> trocar) {
-                                              if (ok && vivo.lock()) p->revisarConflitosMerge(id, std::move(trocar));
+                                          std::move(linhas), [p, vivo, itemIds](bool ok, std::set<std::string> trocar) {
+                                              if (ok && vivo.lock()) p->resolverDuplicatasEmSegundoPlano(itemIds,
+                                                  [itemIds, trocar](matriz::db::Database& db) {
+                                                      for (const auto& id : itemIds) matriz::model::merge::revisarConflitos(db, id, trocar);
+                                                      return std::vector<ProjetoAberto::ResultadoSanitizacao>{};
+                                                  }, [](bool sucesso, std::vector<ProjetoAberto::ResultadoSanitizacao>) {
+                                                      if (sucesso) EventBus::obterInstancia().dispararItemAlterado({}, "metadado");
+                                                  }, "Batch Merge Conflicts");
                                           });
             break;
         }

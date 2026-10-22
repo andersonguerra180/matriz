@@ -34,7 +34,9 @@ void desenharRotuloSecao(juce::Graphics& g, const juce::String& texto, juce::Rec
                          juce::Colour cor, juce::Justification just = juce::Justification::centredLeft);
 
 // Ícones vetoriais simples usados na navegação, no Home e nos nós de arquivo.
-enum class IconeUi { Home, Backup, Explorer, Stats, Arquivo, Pasta, Logo, PainelEsquerdo, PainelDireito, Play, Pause, Stop, Fechar, Cadeado, Celular, Ferramentas };
+enum class IconeUi { Home, Backup, Explorer, Stats, Arquivo, Pasta, Logo, PainelEsquerdo, PainelDireito, Play, Pause, Stop, Fechar, Cadeado, Celular, Ferramentas,
+    PhoneGallery, WhatsappChat, SocialMedia, StorageUnit, Documents, Photography, Sound, Videos, YouTube, Other, PastaMais,
+    Web, Multimedia, Disco, CdRom, Cassete, Link };
 void desenharIcone(juce::Graphics& g, IconeUi icone, juce::Rectangle<float> area, juce::Colour cor);
 
 // ── Botão quadrado só com ícone (liga/desliga) ────────────────────────────

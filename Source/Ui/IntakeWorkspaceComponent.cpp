@@ -4,11 +4,13 @@
 // ==============================================================================
 
 #include "IntakeWorkspaceComponent.h"
+#include "GeoAcoes.h"
 #include "GeoFavoritosGerenciar.h"
 #include "FloatingPreviewWindow.h"
 #include "PainelMetadadosArquivo.h"
 #include "GoogleDriveContas.h"
 #include "TraducaoContent.h"
+#include "TiposContainer.h"
 #include "../Ficha/AutocompleteHistorico.h"
 
 #include <AssetsBinaryData.h>
@@ -23,6 +25,9 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "LogosTipoArquivo.h"
 #include "PainelImportarWhatsapp.h"
+#include "ImportarMenu.h"
+#include "ContainerVisual.h"
+#include "JanelaPlayerDdp.h"
 #include "../Celular/ExistentesProjeto.h"
 #include "../Diag/Watchdog.h"
 #include "../I18n/Strings.h"
@@ -61,22 +66,6 @@ juce::Colour corParaCategoria(const juce::String& cat) {
     if (cat == "Document") return juce::Colour(0xff10b981); // Emerald
     if (cat == "Project") return juce::Colour(0xffec4899); // Pink
     return juce::Colour(0xff94a3b8); // Slate gray
-}
-
-// Logo da origem do container (galeria do celular, Drive, Bridge, Lightroom, WhatsApp).
-const juce::Image& logoDaOrigem(const juce::String& origem) {
-    static const juce::Image galeria = juce::ImageFileFormat::loadFrom(AssetsBinaryData::gallery_png, AssetsBinaryData::gallery_pngSize);
-    static const juce::Image drive = juce::ImageFileFormat::loadFrom(AssetsBinaryData::googledrive_png, AssetsBinaryData::googledrive_pngSize);
-    static const juce::Image bridge = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
-    static const juce::Image lightroom = juce::ImageFileFormat::loadFrom(AssetsBinaryData::lrlogo_png, AssetsBinaryData::lrlogo_pngSize);
-    static const juce::Image whatsapp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::whatsapp_png, AssetsBinaryData::whatsapp_pngSize);
-    static const juce::Image vazio;
-    if (origem == "gallery") return galeria;
-    if (origem == "drive") return drive;
-    if (origem == "bridge") return bridge;
-    if (origem == "lightroom") return lightroom;
-    if (origem == "whatsapp") return whatsapp;
-    return vazio;
 }
 
 juce::String rotuloDaOrigem(const juce::String& origem) {
@@ -263,97 +252,31 @@ private:
     juce::ThreadPool pool_{2};
 };
 
-class GoogleDriveIconButton : public juce::Button {
+// Botão do card IMPORT: pasta com "+" bem visível. Abre a janela de cards de importação.
+class ImportarIconButton : public juce::Button {
 public:
-    GoogleDriveIconButton() : juce::Button("GoogleDrive") {
-        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::googledrive_png, AssetsBinaryData::googledrive_pngSize);
+    explicit ImportarIconButton(const juce::String& texto) : juce::Button("Import") {
+        setButtonText(texto);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
-    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
+    void paintButton(juce::Graphics& g, bool destacado, bool pressionado) override {
         const auto& tk = tema();
-        auto r = getLocalBounds().toFloat();
-        
-        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
-                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
-        g.fillRoundedRectangle(r, 6.0f);
-        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff1a73e8) : tk.borda);
-        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
+        auto r = getLocalBounds().toFloat().reduced(0.5f);
+        juce::Colour fundo = tk.acento;
+        if (pressionado) fundo = fundo.darker(0.15f);
+        else if (destacado) fundo = fundo.brighter(0.12f);
+        g.setColour(fundo);
+        g.fillRoundedRectangle(r, 12.0f);
 
-        if (img_.isValid()) {
-            auto iconArea = r.reduced(4.0f);
-            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
-                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
-                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-        } else {
-            g.setColour(juce::Colour(0xff1a73e8));
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-            g.drawText("GD", getLocalBounds(), juce::Justification::centred);
-        }
+        auto interno = r.reduced(6.0f);
+        auto texto = interno.removeFromBottom(16.0f);
+        const float lado = juce::jmin(interno.getHeight(), 36.0f);
+        desenharIcone(g, IconeUi::PastaMais, interno.withSizeKeepingCentre(lado, lado), tk.textoSobreAcento);
+        g.setColour(tk.textoSobreAcento);
+        g.setFont(fonteUi(11.5f, juce::Font::bold).withExtraKerningFactor(0.1f));
+        g.drawText(getButtonText(), texto, juce::Justification::centred, false);
     }
-private:
-    juce::Image img_;
-};
-
-class LightroomIconButton : public juce::Button {
-public:
-    LightroomIconButton() : juce::Button("Lightroom") {
-        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::lrlogo_png, AssetsBinaryData::lrlogo_pngSize);
-    }
-
-    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
-        const auto& tk = tema();
-        auto r = getLocalBounds().toFloat();
-        
-        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
-                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
-        g.fillRoundedRectangle(r, 6.0f);
-        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff31a8ff) : tk.borda);
-        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
-
-        if (img_.isValid()) {
-            auto iconArea = r.reduced(4.0f);
-            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
-                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
-                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-        } else {
-            g.setColour(juce::Colour(0xff31a8ff));
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-            g.drawText("Lr", getLocalBounds(), juce::Justification::centred);
-        }
-    }
-private:
-    juce::Image img_;
-};
-
-class BridgeIconButton : public juce::Button {
-public:
-    BridgeIconButton() : juce::Button("AdobeBridge") {
-        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
-    }
-
-    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
-        const auto& tk = tema();
-        auto r = getLocalBounds().toFloat();
-        
-        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
-                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
-        g.fillRoundedRectangle(r, 6.0f);
-        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff4d9fff) : tk.borda);
-        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
-
-        if (img_.isValid()) {
-            auto iconArea = r.reduced(4.0f);
-            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
-                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
-                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-        } else {
-            g.setColour(juce::Colour(0xff4d9fff));
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-            g.drawText("Br", getLocalBounds(), juce::Justification::centred);
-        }
-    }
-private:
-    juce::Image img_;
 };
 
 // Cell component for Selection Checkbox
@@ -1033,7 +956,32 @@ public:
         btnSalvarFavorito_->onClick = [this] { salvarComoFavorito(); };
         addAndMakeVisible(*btnSalvarFavorito_);
 
-        setSize(380, 450);
+        // GET (local atual pelo IP) e OPEN (Google Maps), como em todas as fichas de GEO LOCATION.
+        btnGet_ = std::make_unique<juce::TextButton>(i18n::t("imp.ficha.geo.get"));
+        btnGet_->setTooltip("Fill in with the current location (approximate, by IP)");
+        btnGet_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnGet_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnGet_->onClick = [this] {
+            juce::Component::SafePointer<juce::Component> seguro(this);
+            matriz::ui::geoacoes::obterLocalAtual([this, seguro](matriz::ui::geoacoes::Local l) {
+                if (seguro == nullptr) return;
+                if (l.coords.isNotEmpty()) edCoords_->setText(l.coords);
+                if (l.cidade.isNotEmpty()) edCity_->setText(l.cidade);
+                if (l.estado.isNotEmpty()) edState_->setText(l.estado);
+                if (l.pais.isNotEmpty()) edCountry_->setText(l.pais);
+            });
+        };
+        addAndMakeVisible(*btnGet_);
+        btnOpen_ = std::make_unique<juce::TextButton>(i18n::t("imp.ficha.geo.open"));
+        btnOpen_->setTooltip(i18n::t("imp.ficha.geo.open.dica"));
+        btnOpen_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnOpen_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnOpen_->onClick = [this] {
+            matriz::ui::geoacoes::abrirNoGoogleMaps({ edCoords_->getText(), edAddress_->getText(), edCity_->getText(), edState_->getText(), edCountry_->getText() });
+        };
+        addAndMakeVisible(*btnOpen_);
+
+        setSize(380, 482);
     }
 
     void resized() override {
@@ -1063,6 +1011,12 @@ public:
         layoutSubfield(lblState_, edState_);
         layoutSubfield(lblCountry_, edCountry_);
 
+        {
+            auto linhaGet = area.removeFromTop(26);
+            btnGet_->setBounds(linhaGet.removeFromLeft((linhaGet.getWidth() - 8) / 2));
+            linhaGet.removeFromLeft(8);
+            btnOpen_->setBounds(linhaGet);
+        }
         area.removeFromTop(4);
         auto rodape = area.removeFromBottom(28);
         btnApply_->setBounds(rodape.removeFromRight(150));
@@ -1213,6 +1167,7 @@ private:
     matriz::db::Database& registro_;
     std::unique_ptr<juce::Label> lblTitle_;
     std::unique_ptr<juce::TextButton> btnFavoritos_;
+    std::unique_ptr<juce::TextButton> btnGet_, btnOpen_;
     std::unique_ptr<juce::Label> lblCoords_;
     std::unique_ptr<juce::TextEditor> edCoords_;
     std::unique_ptr<juce::Label> lblAddress_;
@@ -1465,12 +1420,21 @@ public:
         noThumbnail_.clear();
     }
 
+    // Capa de container (vinil, fita) chega depois do item: a miniatura já guardada (forma de onda da 1ª faixa) é refeita.
+    void esquecerMiniaturaDoItem(const std::string& itemId) {
+        const juce::ScopedLock sl(lock_);
+        cache_.erase(itemId);
+        noThumbnail_.erase(itemId);
+    }
+
     bool temMiniaturaEmCache(const std::string& itemId) const {
         const juce::ScopedLock sl(lock_);
         return cache_.count(itemId) > 0;
     }
 
-    void pedirMiniatura(const std::string& itemId) {
+    void pedirMiniatura(const std::string& itemId, const juce::String& capaContainer,
+                        const juce::String& caminhoMiniatura, const juce::String& caminhoOrigem,
+                        const juce::String& extensao) {
         {
             const juce::ScopedLock sl(lock_);
             if (loading_.count(itemId) || cache_.count(itemId) || noThumbnail_.count(itemId)) return;
@@ -1478,24 +1442,40 @@ public:
         }
 
         juce::Component::SafePointer<ThumbnailsGridComponent> safeThis(this);
-        ProjetoAberto* proj = &owner_.projeto_;
-
-        poolThumbnails_.addJob([safeThis, proj, itemId]() mutable {
-            auto caminho = proj->caminhoMiniaturaPrincipal(itemId);
+        poolThumbnails_.addJob([safeThis, itemId, capaContainer, caminhoMiniatura, caminhoOrigem, extensao]() mutable {
+            // Container com capa própria (vinil, fita): a capa escolhida na ficha vale como miniatura dele.
+            std::optional<juce::String> caminho;
+            if (capaContainer.isNotEmpty() && juce::File(capaContainer).existsAsFile()) caminho = capaContainer;
+            if (!caminho && caminhoMiniatura.isNotEmpty()) caminho = caminhoMiniatura;
             juce::Image img;
             if (caminho) img = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
             bool temCaminho = caminho.has_value();
 
-            if (!img.isValid()) {
-                if (auto arq = proj->arquivoPrincipal(itemId)) {
-                    juce::File f(arq->caminhoAbsoluto);
-                    juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
-                    juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
-                    if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
-                    if (logoFile.isNotEmpty()) {
-                        img = matriz::ui::carregarLogoDeTipo(logoFile);
-                        if (img.isValid()) temCaminho = true;
+            // Imports antigos e arquivos que chegaram como placeholder de nuvem
+            // podem não ter uma linha em indice.sqlite. O Intake ainda precisa
+            // mostrar a foto: carrega somente o original visível, no pool, e o
+            // mantém no cache da grade sem consultar o banco por cartão.
+            if (!img.isValid() && caminhoOrigem.isNotEmpty()) {
+                const juce::File origem(caminhoOrigem);
+                if (origem.existsAsFile()) {
+                    img = juce::ImageFileFormat::loadFrom(origem);
+                    if (img.isValid() && (img.getWidth() > 512 || img.getHeight() > 512)) {
+                        const double escala = juce::jmin(512.0 / img.getWidth(), 512.0 / img.getHeight());
+                        img = img.rescaled(juce::jmax(1, juce::roundToInt(img.getWidth() * escala)),
+                                           juce::jmax(1, juce::roundToInt(img.getHeight() * escala)),
+                                           juce::Graphics::ResamplingQuality::mediumResamplingQuality);
                     }
+                    if (img.isValid()) temCaminho = true;
+                }
+            }
+
+            if (!img.isValid()) {
+                const auto ext = extensao.toLowerCase().replace(".", "");
+                juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
+                if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
+                if (logoFile.isNotEmpty()) {
+                    img = matriz::ui::carregarLogoDeTipo(logoFile);
+                    if (img.isValid()) temCaminho = true;
                 }
             }
 
@@ -1566,12 +1546,18 @@ public:
                     if (it != cache_.end()) img = it->second;
                 }
 
-                if (img.isValid()) {
+                if (ehContainerGrafico(item.containerOrigem)) {
+                    // Container de verdade: ícone do tipo (DDP, produção, vinil, fita) ou a capa escolhida na ficha.
+                    g.setColour(tk.painelAlt);
+                    g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
+                    desenharContainerGrafico(g, thumbArea.toFloat(), item.containerOrigem, item.containerIcone, item.containerCapaCaminho);
+                } else if (img.isValid()) {
                     g.setColour(tk.painelAlt);
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
                     g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
                 } else {
-                    pedirMiniatura(item.id);
+                    pedirMiniatura(item.id, item.containerCapaCaminho, item.caminhoMiniatura,
+                                   item.caminhoOrigem, item.extensao);
                     g.setColour(corCat.withAlpha(0.12f));
                     g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
                     g.setColour(corCat);
@@ -1601,10 +1587,12 @@ public:
             }
 
             // Top-Left Type / Category Badge (adjacent to checkbox)
-            juce::String catBadgeText = item.categoria.toUpperCase();
+            // Container PROJECT: a tag PROJECT ocupa o lugar do selo de categoria.
+            const bool ehProjeto = ehOrigemProject(item.containerOrigem);
+            juce::String catBadgeText = ehProjeto ? i18n::t("projeto.tag") : item.categoria.toUpperCase();
             int catBadgeW = juce::jmax(36, static_cast<int>(catBadgeText.length()) * 7 + 8);
             juce::Rectangle<int> catBadgeRect(thumbArea.getX() + 28, thumbArea.getY() + 6, catBadgeW, 18);
-            g.setColour(corCat.withAlpha(0.85f));
+            g.setColour((ehProjeto ? juce::Colour(0xffb8860b) : corCat).withAlpha(0.85f));
             g.fillRoundedRectangle(catBadgeRect.toFloat(), 4.0f);
             g.setColour(juce::Colours::white);
             g.setFont(font9Bold);
@@ -1613,7 +1601,9 @@ public:
             // Container de importação / conversa de WhatsApp: logo da origem (+ contagem) no canto inferior direito.
             if (item.containerOrigem.isNotEmpty()) {
                 juce::Rectangle<int> selo(thumbArea.getRight() - 32, thumbArea.getBottom() - 32, 28, 28);
-                desenharSeloContainer(g, selo, item.containerOrigem, 0);
+                // O ícone grande do container já diz o que ele é; o selo só aparece quando a capa é uma imagem qualquer.
+                if (!ehContainerGrafico(item.containerOrigem) || item.containerCapaCaminho.isNotEmpty())
+                    desenharSeloContainer(g, selo, item.containerOrigem, 0);
                 if (item.containerTotal > 0) {
                     const juce::String n(item.containerTotal);
                     const int w = juce::jmax(22, juce::GlyphArrangement::getStringWidthInt(font10Bold, n) + 10);
@@ -1910,20 +1900,21 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
             "Album", "EP", "Single", "Compilation", "Soundtrack",
             "Stems", "Multitracks", "Sample Pack", "Sample", "Preset", "DAW Session",
             "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-            "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master"
+            "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Raw Audio"
         }},
         { "VIDEO", {
             "Raw Footage", "Home Video", "Music Video", "Film",
             "Documentary", "Corporate Video", "Commercial", "Live Performance",
             "NLE Project", "Social Media Video",
-            "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of"
+            "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial"
         }},
         { "IMAGE", {
             "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional",
-            "Image Edit Project", "Graphics", "Logo", "3D", "YouTube Thumbnail"
+            "Image Edit Project", "Graphics", "Logo", "3D", "YouTube Thumbnail",
+            "Exhibition", "Raw Photos", "Technical Photography"
         }},
         { "DOCUMENT", {
-            "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report",
+            "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Personal Document", "Manual", "Report",
             "Reference", "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
             "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"
         }}
@@ -1996,11 +1987,7 @@ public:
 
     void mouseUp(const juce::MouseEvent& e) override {
         if (!e.mouseWasDraggedSinceMouseDown()) {
-            if (owner_.aoPedirIngerirArquivos) {
-                owner_.aoPedirIngerirArquivos();
-            } else if (owner_.btnIngerir_ && owner_.btnIngerir_->onClick) {
-                owner_.btnIngerir_->onClick();
-            }
+            owner_.abrirMenuImportar();
         }
     }
 
@@ -2166,56 +2153,12 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     lblTamanho_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblTamanho_);
 
-    auto btnIngerirPill = std::make_unique<PillButton>(i18n::t("intake.btn_ingerir"));
-    btnIngerirPill->tamanhoFonte = 13.0f;
-    btnIngerirPill->onClick = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
-    btnIngerirPill->setTooltip(i18n::t("intake.tooltip_ingerir"));
-    btnIngerir_ = std::move(btnIngerirPill);
+    // IMPORT: um botão só. Arquivos/pastas, Google Drive, celular, Lightroom, Bridge e o resto vivem na janela de cards.
+    auto btnImportar = std::make_unique<ImportarIconButton>(i18n::t("imp.botao"));
+    btnImportar->setTooltip(i18n::t("imp.botao.dica"));
+    btnImportar->onClick = [this] { abrirMenuImportar(); };
+    btnIngerir_ = std::move(btnImportar);
     addAndMakeVisible(*btnIngerir_);
-
-    auto btnCel = std::make_unique<PillButton>(i18n::t("light.cel.importar"));
-    btnCel->tamanhoFonte = 12.0f;
-    btnCel->desenharCelular = true;
-    btnCel->corFundoCustom = tk.painelAlt;
-    btnCel->corTextoCustom = tk.textoPrimario;
-    btnCel->corBordaCustom = tk.borda;
-    btnCel->setTooltip(i18n::t("light.cel.botaoDica"));
-    btnCel->onClick = [this] { abrirReceberDoCelular(); };
-    btnReceberCelular_ = std::move(btnCel);
-    addAndMakeVisible(*btnReceberCelular_);
-
-    // Botão Google Drive — com logo googledrive.png
-    auto btnGD = std::make_unique<GoogleDriveIconButton>();
-    btnGD->onClick = [this] {
-        // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
-        juce::Component::SafePointer<IntakeWorkspaceComponent> safeThis(this);
-        escolherContaGoogleDrive(btnGoogleDrive_.get(), [safeThis](const juce::File& gdFolder) {
-            if (!safeThis) return;
-            if (safeThis->aoIngerirDeGoogleDrive) safeThis->aoIngerirDeGoogleDrive(gdFolder);
-            else if (safeThis->aoPedirIngerirArquivos) safeThis->aoPedirIngerirArquivos();
-        });
-    };
-    btnGoogleDrive_ = std::move(btnGD);
-    addAndMakeVisible(*btnGoogleDrive_);
-
-    auto btnLR = std::make_unique<LightroomIconButton>();
-    btnLR->setTooltip(i18n::t("intake.importar_lightroom"));
-    btnLR->onClick = [this] {
-        if (aoIngerirDeLightroom) {
-            aoIngerirDeLightroom();
-        }
-    };
-    btnLightroom_ = std::move(btnLR);
-    addAndMakeVisible(*btnLightroom_);
-
-    // Adobe Bridge: pasta catalogada no Bridge entra no INTAKE normal, com o XMP já aplicado nos itens.
-    auto btnBR = std::make_unique<BridgeIconButton>();
-    btnBR->setTooltip(i18n::t("intake.importar_bridge"));
-    btnBR->onClick = [this] {
-        if (aoIngerirDeBridge) aoIngerirDeBridge();
-    };
-    btnBridge_ = std::move(btnBR);
-    addAndMakeVisible(*btnBridge_);
 
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     // CLOSE PROJECT / RETURN TO CATALOG saíram da barra desta aba (e de todas
@@ -2560,7 +2503,9 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
             it.containerOrigem = juce::String::fromUTF8(item.nestOrigem.c_str());
             it.containerTotal = item.nestTotal;
             it.containerNestId = item.nestId;
-            if (item.nestOrigem != "whatsapp") it.nomeArquivo = rotuloDaOrigem(it.containerOrigem) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
+            it.containerCapaCaminho = juce::String::fromUTF8(item.nestCapaImagem.c_str());
+            it.containerIcone = juce::String::fromUTF8(item.nestIcone.c_str());
+            if (item.nestOrigem != "whatsapp") it.nomeArquivo = (item.nestNome.empty() ? rotuloDaOrigem(it.containerOrigem) : juce::String::fromUTF8(item.nestNome.c_str())) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
                              i18n::t("intake.container_arquivos").replace("{n}", juce::String(item.nestTotal));
             it.titulo = it.nomeArquivo;
         } else if (it.collection == "WhatsApp Chat") {
@@ -2587,6 +2532,9 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
 
         it.caminhoOrigem = !item.caminhoAbsolutoOrigem.empty() ? juce::String::fromUTF8(item.caminhoAbsolutoOrigem.c_str())
                                                               : juce::String::fromUTF8(item.caminhoRelativoArquivo.c_str());
+        if (!item.miniaturaCaminhoRelativo.empty())
+            it.caminhoMiniatura = projeto_.projeto().pasta().getChildFile(
+                juce::String::fromUTF8(item.miniaturaCaminhoRelativo.c_str())).getFullPathName();
 
         // IMPORT FROM PHONE (galeria/WhatsApp): chega com Original Source Medium = Internal Storage / Smartphone,
         // o que também o faz passar pelo filtro PHONE DUMP. Só preenche quando ainda não há medium definido.
@@ -2696,10 +2644,6 @@ void IntakeWorkspaceComponent::atualizarComboAno() {
 
 void IntakeWorkspaceComponent::atualizarFiltragem() {
     indicesFiltrados_.clear();
-    std::set<std::string> itensExtraidos;
-    try {
-        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
-    } catch (...) {}
 
     auto ehDump = [&](const ItemIntake& it) -> bool {
         // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
@@ -2766,11 +2710,6 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     contagemDoc_ = 0;
     contagemOther_ = 0;
     contagemPhoneDump_ = 0;
-
-    std::set<std::string> itensExtraidos;
-    try {
-        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
-    } catch (...) {}
 
     auto ehDump = [&](const ItemIntake& it) -> bool {
         // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
@@ -2877,6 +2816,10 @@ void IntakeWorkspaceComponent::recarregar() {
             self->snapshotPendente_ = false;
             if (self->gridComponent_) self->gridComponent_->esquecerSemMiniatura();
             self->aplicarItensQuarentena(std::move(quarentena));
+            if (self->gridComponent_)
+                for (const auto& it : self->todosItens_)
+                    if (self->itemEhContainer(it) && ehContainerGrafico(it.containerOrigem))
+                        self->gridComponent_->esquecerMiniaturaDoItem(it.id);
             if (self->recarregarAoTerminarSnapshot_) {
                 self->recarregarAoTerminarSnapshot_ = false;
                 self->recarregar();
@@ -3450,6 +3393,12 @@ void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
     if (nestId.empty()) return;
     auto membros = projeto_.membrosDoNest(nestId);
     if (membros.empty()) return;
+    for (const auto& it : todosItens_) {
+        if (it.id != itemId || it.containerOrigem != "ddp") continue;
+        // Master DDP: o duplo clique abre o player de CD (disco, faixas e reprodução), não a grade de miniaturas.
+        abrirContainerDdp(projeto_, nestId);
+        return;
+    }
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
     auto* conteudo = new ContainerGridComponent(
         projeto_, std::move(membros),
@@ -3476,7 +3425,8 @@ void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
 void IntakeWorkspaceComponent::abrirPreviewDoItem(const std::string& itemId) {
     if (itemId.empty()) return;
     for (const auto& it : todosItens_)  // container de importação: duplo clique abre o grid de miniaturas (não o preview)
-        if (it.id == itemId && itemEhContainer(it) && it.containerOrigem != "whatsapp") { abrirGridDoContainer(itemId); return; }  // WhatsApp abre a conversa
+        if (it.id == itemId && itemEhContainer(it) && it.containerOrigem != "whatsapp" && it.containerOrigem != "youtube" &&
+            (!ehOrigemProject(it.containerOrigem) || it.containerOrigem == "ddp")) { abrirGridDoContainer(itemId); return; }  // WhatsApp abre a conversa; YouTube, vinil, fita e produção abrem a janela do projeto (preview com a capa); DDP, o player de CD
     janelaPreview_.reset();  // duplo clique em outro arquivo troca o preview
     juce::Component::SafePointer<IntakeWorkspaceComponent> safe(this);
     auto aoFechar = [safe] {
@@ -3931,12 +3881,51 @@ void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<in
     m.addItem(2, isPt ? juce::String::fromUTF8("Mostrar Origem") : "Show at Source");
     m.addSeparator();
     m.addItem(3, isPt ? juce::String::fromUTF8("Obter Informações...") : "Get Info...");
+    const auto& itemClicado = todosItens_[static_cast<size_t>(itemIndex)];
+    const bool ehContainer = itemEhContainer(itemClicado) && ehOrigemComFicha(itemClicado.containerOrigem);
+    if (ehContainer) {
+        m.addSeparator();
+        m.addItem(4, i18n::t("imp.editar_questionario"));
+    }
+    const std::string nestDoClique = itemClicado.containerNestId, origemDoClique = itemClicado.containerOrigem.toStdString();
 
     juce::Component::SafePointer<IntakeWorkspaceComponent> safeThis(this);
+
+    // Group as Project Container / Change Container Type / Ungroup Container: sobre a selecao (ou o item clicado, se ele nao esta nela).
+    {
+        std::vector<std::string> idsDoMenu;
+        if (itemClicado.selecionado) {
+            for (const auto& it : todosItens_) if (it.selecionado && it.containerOrigem != "whatsapp") idsDoMenu.push_back(it.id);
+        } else if (itemClicado.containerOrigem != "whatsapp") {
+            idsDoMenu.push_back(itemClicado.id);
+        }
+        matriz::ui::HospedeOverlay hospede;
+        hospede.abrir = [safeThis]() -> PainelOverlay* {
+            if (safeThis == nullptr || safeThis->overlayAtual_ != nullptr) return nullptr;
+            safeThis->overlayAtual_ = std::make_unique<PainelOverlay>();
+            safeThis->addAndMakeVisible(*safeThis->overlayAtual_);
+            safeThis->resized();
+            return safeThis->overlayAtual_.get();
+        };
+        hospede.fechar = [safeThis] {
+            if (safeThis == nullptr) return;
+            safeThis->overlayAtual_.reset();
+            safeThis->resized();
+        };
+        hospede.aoMudarDados = [safeThis] { if (safeThis != nullptr) safeThis->recarregar(); };
+        juce::PopupMenu grupo;
+        matriz::ui::adicionarMenuProjectContainer(grupo, projeto_, idsDoMenu, hospede);
+        if (grupo.getNumItems() > 0) {
+            m.addSeparator();
+            for (juce::PopupMenu::MenuItemIterator it(grupo); it.next();) m.addItem(it.getItem());
+        }
+    }
     m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(screenPos.x, screenPos.y, 1, 1)),
-        [safeThis, itemIndex](int result) {
+        [safeThis, itemIndex, nestDoClique, origemDoClique](int result) {
             if (!safeThis) return;
-            if (result == 1) {
+            if (result == 4) {
+                safeThis->editarQuestionarioDoContainerDoItem(nestDoClique, origemDoClique);
+            } else if (result == 1) {
                 safeThis->alternarMarcaRDeItem(itemIndex);
             } else if (result == 2) {
                 safeThis->abrirArquivoOrigem(itemIndex);
@@ -4212,33 +4201,13 @@ void IntakeWorkspaceComponent::resized() {
                                                           sidebar.getWidth() + 8, sidebar.getY() - cardTop + kCardPad));
     };
 
-    // 0. IMPORT — comandos de entrada de arquivo
-    if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_ && btnBridge_) {
-        for (juce::Component* c : {static_cast<juce::Component*>(btnIngerir_.get()),
-                                   static_cast<juce::Component*>(btnReceberCelular_.get()),
-                                   static_cast<juce::Component*>(btnGoogleDrive_.get()),
-                                   static_cast<juce::Component*>(btnLightroom_.get()),
-                                   static_cast<juce::Component*>(btnBridge_.get())}) {
-            if (c && c->getParentComponent() != this) addAndMakeVisible(*c);
-        }
+    // 0. IMPORT — um único botão que abre a janela de importação
+    if (btnIngerir_) {
+        if (btnIngerir_->getParentComponent() != this) addAndMakeVisible(*btnIngerir_);
         iniciarCard();
         secaoHeaderBounds_.push_back({i18n::t("intake.secao_import"), sidebar.removeFromTop(kHeaderH)});
         sidebar.removeFromTop(4);
-        btnIngerir_->setBounds(sidebar.removeFromTop(28));
-        sidebar.removeFromTop(4);
-        if (btnReceberCelular_) {
-            btnReceberCelular_->setBounds(sidebar.removeFromTop(28));
-            sidebar.removeFromTop(4);
-        }
-        {
-            auto importRow = sidebar.removeFromTop(28);
-            int terco = (importRow.getWidth() - 12) / 3;
-            btnGoogleDrive_->setBounds(importRow.removeFromLeft(terco));
-            importRow.removeFromLeft(6);
-            btnLightroom_->setBounds(importRow.removeFromLeft(terco));
-            importRow.removeFromLeft(6);
-            btnBridge_->setBounds(importRow);
-        }
+        btnIngerir_->setBounds(sidebar.removeFromTop(64));
         finalizarCard();
         sidebar.removeFromTop(8);
     }
@@ -4362,7 +4331,224 @@ void IntakeWorkspaceComponent::resized() {
     }
 }
 
-void IntakeWorkspaceComponent::abrirReceberDoCelular() {
+// `caminho`: grupos até onde a janela deve abrir (o VOLTAR de uma ficha reabre o menu no mesmo lugar).
+void IntakeWorkspaceComponent::abrirMenuImportar(std::vector<std::string> caminho) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarMenuImportar(*overlayAtual_, [seguro](std::optional<std::string> id, std::vector<std::string> caminhoAteAqui) {
+        juce::MessageManager::callAsync([seguro, id, caminhoAteAqui] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (id.has_value()) seguro->tratarEscolhaImportar(*id, caminhoAteAqui);
+        });
+    }, std::move(caminho));
+    resized();
+}
+
+// O que cada card da janela IMPORT faz. Os fluxos que já existiam (celular, Drive, Lightroom, Bridge) seguem iguais;
+// as demais folhas ainda usam o seletor de arquivos e pastas de sempre (as fichas de contexto entram por categoria).
+void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id, const std::vector<std::string>& caminho) {
+    if (id == "phone") {
+        juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+        abrirReceberDoCelular([seguro, caminho] {  // VOLTAR do card do celular: reabre a janela IMPORT no mesmo lugar
+            juce::MessageManager::callAsync([seguro, caminho] {
+                if (seguro == nullptr) return;
+                seguro->overlayAtual_.reset();
+                seguro->escolhaImportacaoAtual_.reset();
+                seguro->resized();
+                seguro->abrirMenuImportar(caminho);
+            });
+        });
+        return;
+    }
+    if (id == "drive") {
+        // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
+        juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+        escolherContaGoogleDrive(btnIngerir_.get(), [seguro](const juce::File& gdFolder) {
+            if (!seguro) return;
+            if (seguro->aoIngerirDeGoogleDrive) seguro->aoIngerirDeGoogleDrive(gdFolder);
+            else if (seguro->aoPedirIngerirArquivos) seguro->aoPedirIngerirArquivos();
+        });
+        return;
+    }
+    if (id.rfind("drive.", 0) == 0) {
+        // Conta escolhida na sub-janela do card Google Drive.
+        const auto contas = contasGoogleDrive();
+        const size_t n = static_cast<size_t>(juce::String(id.substr(6)).getIntValue());
+        if (n < contas.size()) {
+            matriz::app::gravarUltimaContaGoogleDrive(contas[n].rotulo);
+            if (aoIngerirDeGoogleDrive) aoIngerirDeGoogleDrive(contas[n].pasta);
+            else if (aoPedirIngerirArquivos) aoPedirIngerirArquivos();
+        }
+        return;
+    }
+    if (id == "photos.lightroom") { if (aoIngerirDeLightroom) aoIngerirDeLightroom(); return; }
+    if (id == "photos.bridge") { if (aoIngerirDeBridge) aoIngerirDeBridge(); return; }
+    if (id == "videos.youtube") { abrirFluxoYoutube(caminho); return; }
+    if (folhaImportarTemFicha(id)) { abrirFichaDeImportacao(id, caminho); return; }
+    abrirSeletorDeImportacao(id);
+}
+
+// Ficha de contexto da folha (ex.: formato de origem do vídeo) antes do seletor de arquivos.
+void IntakeWorkspaceComponent::abrirFichaDeImportacao(const std::string& id, const std::vector<std::string>& caminho) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarFichaImportar(*overlayAtual_, id, [seguro, id](bool continuar, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
+        juce::MessageManager::callAsync([seguro, id, continuar, daFicha] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (continuar) seguro->abrirSeletorDeImportacao(id, daFicha);
+        });
+    }, [seguro, caminho] {  // VOLTAR: reabre a janela IMPORT no grupo de onde a ficha veio
+        juce::MessageManager::callAsync([seguro, caminho] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            seguro->abrirMenuImportar(caminho);
+        });
+    });
+    resized();
+}
+
+// ── YouTube Production ───────────────────────────────────────────────────────────────────────────────────
+// Botão direito num container > Editar questionário inicial: a ficha reabre com as respostas guardadas.
+void IntakeWorkspaceComponent::editarQuestionarioDoContainerDoItem(const std::string& nestId, const std::string& origem) {
+    if (overlayAtual_ != nullptr || nestId.empty()) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    editarQuestionarioDoContainer(*overlayAtual_, projeto_, nestId, origem, [seguro](bool aplicou) {
+        juce::MessageManager::callAsync([seguro, aplicou] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (aplicou) seguro->recarregar();
+        });
+    });
+    resized();
+}
+
+void IntakeWorkspaceComponent::abrirFluxoYoutube(const std::vector<std::string>& caminho) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarFichaImportar(*overlayAtual_, "videos.youtube", [seguro](bool continuar, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
+        juce::MessageManager::callAsync([seguro, continuar, daFicha] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (continuar) seguro->escolherArquivosYoutube(daFicha, {});
+            else seguro->youtubePendentes_.clear();
+        });
+    }, [seguro, caminho] {  // VOLTAR: abandona o que foi cadastrado e reabre o card anterior
+        juce::MessageManager::callAsync([seguro, caminho] {
+            if (seguro == nullptr) return;
+            seguro->youtubePendentes_.clear();
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            seguro->abrirMenuImportar(caminho);
+        });
+    });
+    resized();
+}
+
+// Os arquivos de UM vídeo: o vídeo (obrigatório), a thumbnail e o roteiro. Os três entram juntos e viram um container.
+void IntakeWorkspaceComponent::escolherArquivosYoutube(std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha, const juce::String& aviso) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarArquivosYoutube(*overlayAtual_, aviso, [seguro, daFicha](int botao, ArquivosYoutube arquivos) {
+        juce::MessageManager::callAsync([seguro, daFicha, botao, arquivos] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (botao == 3) { seguro->abrirFluxoYoutube({ "videos" }); return; }  // VOLTAR: refaz a ficha do vídeo
+            if (botao != 1) { seguro->youtubePendentes_.clear(); return; }
+            if (!arquivos.video.existsAsFile()) { seguro->escolherArquivosYoutube(daFicha, i18n::t("imp.ficha.youtube.sem_video")); return; }
+
+            auto contexto = std::make_shared<matriz::ingest::SobreMaterial>(*mesclarContextosImportar(contextoDaFolhaImportar("videos.youtube"), daFicha));
+            juce::Array<juce::File> arquivosDoLote;
+            arquivosDoLote.add(arquivos.video);
+            if (arquivos.thumbnail.existsAsFile()) {
+                arquivosDoLote.add(arquivos.thumbnail);
+                contexto->capaContainer = arquivos.thumbnail.getFullPathName().toStdString();  // a thumbnail cadastrada é a capa
+            }
+            if (arquivos.roteiro.existsAsFile()) {
+                arquivosDoLote.add(arquivos.roteiro);
+                // Sem descrição digitada, um roteiro em texto simples preenche a descrição do vídeo.
+                bool temDescricao = false;
+                for (const auto& c : contexto->camposDoVideo) if (c.first == "dc_description" && !c.second.empty()) temDescricao = true;
+                const auto ext = arquivos.roteiro.getFileExtension().toLowerCase();
+                if (!temDescricao && (ext == ".txt" || ext == ".md")) {
+                    const juce::String texto = arquivos.roteiro.loadFileAsString().trim().substring(0, 4000);
+                    if (texto.isNotEmpty()) contexto->camposDoVideo.push_back({ "dc_description", texto.toStdString() });
+                }
+            }
+            seguro->youtubePendentes_.push_back({ arquivosDoLote, contexto });
+            juce::String nome = arquivos.video.getFileNameWithoutExtension();
+            for (const auto& c : contexto->camposDoVideo) if (c.first == "dc_title" && !c.second.empty()) nome = juce::String::fromUTF8(c.second.c_str());
+            seguro->perguntarOutroYoutube(nome);
+        });
+    });
+    resized();
+}
+
+void IntakeWorkspaceComponent::perguntarOutroYoutube(const juce::String& nomeDoVideo) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarPerguntaOutroYoutube(*overlayAtual_, nomeDoVideo, static_cast<int>(youtubePendentes_.size()), [seguro](int escolha) {
+        juce::MessageManager::callAsync([seguro, escolha] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (escolha == 1) seguro->importarYoutubePendentes();
+            else if (escolha == 2) seguro->abrirFluxoYoutube({ "videos" });
+            else seguro->youtubePendentes_.clear();
+        });
+    });
+    resized();
+}
+
+// Cada vídeo vira um lote próprio (e um container próprio): vídeo + thumbnail + roteiro + o contexto da ficha dele.
+void IntakeWorkspaceComponent::importarYoutubePendentes() {
+    auto pendentes = std::move(youtubePendentes_);
+    youtubePendentes_.clear();
+    for (const auto& [arquivos, contexto] : pendentes) {
+        if (aoIngerirComContexto) aoIngerirComContexto(arquivos, contexto);
+        else if (aoIngerirArquivosDireto) aoIngerirArquivosDireto(arquivos);
+    }
+}
+
+// Seletor de arquivos e pastas do card escolhido; o que o card implica (ver contextoDaFolhaImportar) vai junto.
+void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
+    if (!aoIngerirComContexto && !aoIngerirArquivosDireto) {
+        if (aoPedirIngerirArquivos) aoPedirIngerirArquivos();
+        return;
+    }
+    const auto contexto = mesclarContextosImportar(contextoDaFolhaImportar(id), std::move(daFicha));
+    auto seletor = std::make_shared<juce::FileChooser>(i18n::t("imp.titulo") + " - " + i18n::t("imp.node." + id));
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |
+                             juce::FileBrowserComponent::canSelectDirectories | juce::FileBrowserComponent::canSelectMultipleItems,
+                         [seguro, seletor, contexto](const juce::FileChooser& fc) {
+                             const auto escolhidos = fc.getResults();
+                             if (seguro == nullptr || escolhidos.isEmpty()) return;
+                             if (seguro->aoIngerirComContexto) seguro->aoIngerirComContexto(escolhidos, contexto);
+                             else if (seguro->aoIngerirArquivosDireto) seguro->aoIngerirArquivosDireto(escolhidos);
+                         });
+}
+
+void IntakeWorkspaceComponent::abrirReceberDoCelular(std::function<void()> aoVoltar) {
     if (overlayAtual_ != nullptr) return;
     overlayAtual_ = std::make_unique<PainelOverlay>();
     addAndMakeVisible(*overlayAtual_);
@@ -4375,7 +4561,7 @@ void IntakeWorkspaceComponent::abrirReceberDoCelular() {
             seguro->resized();
             if (modo.has_value()) seguro->iniciarReceberDoCelular(*modo);
         });
-    }, &escolhaImportacaoAtual_);
+    }, &escolhaImportacaoAtual_, std::move(aoVoltar));
     resized();
 }
 
@@ -4441,8 +4627,9 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
         btnVisaoIcones_->setTooltip(i18n::t("intake.tooltip_icones"));
     }
     if (btnIngerir_) {
-        btnIngerir_->setButtonText(i18n::t("intake.btn_ingerir"));
-        btnIngerir_->setTooltip(i18n::t("intake.tooltip_ingerir"));
+        btnIngerir_->setButtonText(i18n::t("imp.botao"));
+        btnIngerir_->setTooltip(i18n::t("imp.botao.dica"));
+        btnIngerir_->repaint();
     }
     if (chkSelectAllHeader_) {
         chkSelectAllHeader_->setTooltip(matriz::i18n::localeAtivo().startsWith("pt") ? juce::String::fromUTF8("Selecionar / Desmarcar Todos") : "Select / Deselect All");
@@ -4469,10 +4656,6 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     // por updatePill, que zeraria essa cor a cada mudança de tema/locale.
     if (btnGeolocationLote_) {
         btnGeolocationLote_->setButtonText("GEO LOCATION");
-    }
-    if (btnReceberCelular_) {
-        btnReceberCelular_->setButtonText(i18n::t("light.cel.importar"));
-        btnReceberCelular_->setTooltip(i18n::t("light.cel.botaoDica"));
     }
     if (btnConfirmarSelecao_) {
         btnConfirmarSelecao_->setButtonText(i18n::t("intake.btn_enviar_selecionados"));

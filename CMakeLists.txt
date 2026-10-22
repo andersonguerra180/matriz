@@ -82,6 +82,13 @@ juce_add_binary_data(MatrizI18nAssets
     HEADER_NAME I18nBinaryData.h
     SOURCES i18n/en.yaml i18n/pt_BR.yaml)
 
+# Ícones do menu IMPORT (Assets/Icons/container_icons/ci_<categoria>_<nome>.png): um recurso embutido por arquivo
+# (ci_aud_midi.png -> AssetsBinaryData::ci_aud_midi_png). Trocar um PNG exige recompilar; arquivo novo, reconfigurar.
+file(GLOB MATRIZ_ICONES_IMPORTAR CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icons/container_icons/*.png")
+
+# Ícone genérico do card Link (vídeo): só entra no binário se o arquivo existir (GLOB reavalia ao soltar o arquivo na pasta).
+file(GLOB MATRIZ_ICONE_VIDEOWEB CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icons/videoweb.png")
+
 # Assets embutidos no binário
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
@@ -92,6 +99,21 @@ juce_add_binary_data(MatrizAssets
         Assets/android.png
         Assets/apple.png
         Assets/whatsapp.jpg
+        ${MATRIZ_ICONES_IMPORTAR}
+        ${MATRIZ_ICONE_VIDEOWEB}
+        # Logos das redes sociais do menu IMPORT
+        Assets/Icons/instagram.jpeg
+        Assets/Icons/meta.png
+        Assets/Icons/tiktok.jpeg
+        Assets/Icons/x.png
+        # Logos originais Adobe, YouTube e o ícone Tools do menu IMPORT
+        Assets/Icons/lrlogo_original.png
+        Assets/Icons/youtube.png
+        Assets/Icons/Tools.png
+        "Assets/Icons/Film Sound.png"
+        "Assets/Icons/Tape Cassette Rip.png"
+        Assets/Icons/Other.png
+        Assets/Icons/DDP.png
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
         "Assets/adobeaftereffects.png"
@@ -562,6 +584,7 @@ target_sources(matriz PRIVATE
     Source/Ui/CatalogoComponent.cpp
     Source/Ui/ConsolidacaoDialogo.cpp
     Source/Ui/SelecionarTipoMidiaDialogo.cpp
+    Source/Ui/TiposContainer.cpp
     Source/Ui/InitialRelinkDialog.cpp
     Source/Ui/OfflineAssetRelinkDialog.cpp
     Source/Ui/MainComponent.cpp
@@ -642,6 +665,15 @@ target_sources(matriz PRIVATE
     Source/Ui/OverlayComponent.cpp
     Source/Ui/PainelReceberCelular.cpp
     Source/Ui/PainelImportarWhatsapp.cpp
+    Source/Ui/ImportarMenu.cpp
+    Source/Ui/ImportarFichas.cpp
+    Source/Ui/ContainerVisual.cpp
+    Source/Ui/GeoAcoes.cpp
+    Source/Ui/CapaProjeto.cpp
+    Source/Ui/JanelaContainerDdp.cpp
+    Source/Ui/JanelaPlayerDdp.cpp
+    Source/Ddp/DdpModel.cpp
+    Source/Ddp/DdpPlayback.cpp
     Source/Ui/ConversaWhatsappComponent.cpp
     Source/ProvaData/ExportadorTrecho.cpp
     Source/ProvaData/OpenTimestamps.cpp

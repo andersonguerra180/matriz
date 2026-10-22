@@ -809,6 +809,17 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // proposta_id = id da pasta raiz da proposta (em todas as pastas dela); origem_caminho = pasta de origem.
     // Container de importação no Intake (galeria do celular, Drive, Bridge, Lightroom): nest com origem.
     garantirColuna(registro, "nest", "origem", "TEXT");
+    // Capa escolhida na ficha de importação (vinil, fita): JPEG em .miniaturas, caminho relativo à pasta do projeto.
+    garantirColuna(registro, "nest", "capa_imagem", "TEXT");
+    // Ícone do container escolhido na ficha (ex.: a DAW da produção): nome do recurso embutido (ci_daw_pro_tools_png).
+    garantirColuna(registro, "nest", "icone", "TEXT");
+    // Questionário inicial do container (JSON: folha + respostas), para editar depois pelo botão direito.
+    garantirColuna(registro, "nest", "questionario", "TEXT");
+    // Nome do container (álbum / projeto / vídeo, vindo da ficha): é o que o container mostra no lugar do nome do arquivo-capa.
+    garantirColuna(registro, "nest", "nome", "TEXT");
+    // Tipo escolhido em "Group as Project Container" (ex.: "audio.album", "videos.youtube"). NULL = container do IMPORT de antes
+    // desta coluna (vale o que `origem` diz) ou nest comum. Projetos antigos abrem iguais.
+    garantirColuna(registro, "nest", "tipo_container", "TEXT");
     garantirColuna(registro, "acervo_pasta", "proposta_id", "TEXT");
     garantirColuna(registro, "acervo_pasta", "origem_caminho", "TEXT");
     registro.exec(
@@ -1201,6 +1212,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // 5. Garantir que os índices de performance para acervos grandes existam
     try {
         registro.exec("CREATE INDEX IF NOT EXISTS idx_item_quarentena_criado ON item(em_quarentena, criado_em)");
+        registro.exec(
+            "CREATE INDEX IF NOT EXISTS idx_item_catalogo_codigo ON item(codigo_acervo) "
+            "WHERE COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata'");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_item_master ON arquivo(item_id, eh_master)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_estado_sincronizacao ON arquivo(estado_sincronizacao)");
         // FKs ON DELETE CASCADE sem índice na coluna filha: cada DELETE FROM item

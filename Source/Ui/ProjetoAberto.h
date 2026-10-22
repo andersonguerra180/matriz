@@ -17,6 +17,7 @@
 #include "../Consolidacao/Consolidacao.h"
 #include "../Consolidacao/MainEdit.h"
 #include "../Ficha/FichaDefinition.h"
+#include "../Ingest/SobreMaterial.h"
 #include "../Model/Project.h"
 #include "../Preservation/Preservation.h"
 
@@ -44,7 +45,14 @@ struct ItemResumo {
     std::string nestCapaId;
     int nestTotal = 0;
     bool nestCapa = false;
-    std::string nestOrigem;  // não vazio = nest é um CONTAINER de importação (gallery|drive|bridge|lightroom)
+    std::string nestOrigem;  // não vazio = nest é um CONTAINER de importação (gallery|drive|bridge|lightroom|ddp|production|vinyl|tape)
+    std::string nestCapaImagem;  // caminho absoluto da capa do container (vinil/fita), vazio se não tem
+    std::string nestIcone;       // recurso do ícone escolhido na ficha (ex.: ci_daw_pro_tools_png), vazio = ícone da origem
+    std::string nestNome;        // nome do container (ficha); a capa do container mostra este nome em `titulo`
+    // Produção musical: etapa do arquivo (REC | MIX | MSTR | FINAL, campo etapa_producao) e se é a melhor versão / BEST TAKE
+    // (campo versao_escolhida). Vazio / false = sem etapa / não escolhida. Também vale para vídeos de um container.
+    std::string etapaProducao;
+    bool versaoEscolhida = false;
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
 
     // Só preenchido pra tipo_midia="release" (campos release.artista_principal
@@ -97,6 +105,8 @@ struct ItemResumo {
     bool marcadoWatermark = false;
     bool marcadoBounce = false;   // tag B (Bounce List): lista persistente de arquivos marcados para exportar
     bool marcadoRejeitado = false; // tag R no grid (METADATA): só marca; apagar é decisão do operador (SHOW REJECTED)
+    bool aiGenerated = false;
+    bool temGeolocalizacao = false;
     bool metadadosEditados = false;
     bool marcadoRevisado = false; // atalho manual "E" (Tag as Edited) — só o operador liga/desliga
     bool pastaAtiva = true;
@@ -283,6 +293,8 @@ public:
 
     // Valor atual de um campo (nível raiz, nivel_indice=0) do item, ou
     // nullopt se nunca foi preenchido.
+    // Campo da ficha no nível raiz (item_campo, fonte 'humano'): etapa_producao, versao_escolhida...
+    void definirCampoRaiz(const std::string& itemId, const std::string& campoId, const std::string& valor);
     std::optional<std::string> valorCampo(const std::string& itemId, const std::string& nivel, int nivelIndice,
                                            const std::string& campoId) const;
 
@@ -902,6 +914,10 @@ public:
     struct NestInfo {
         std::string nestId, capaId;
         std::string origem;  // container de importação do Intake; vazio = nest comum
+        std::string capaImagem;  // caminho relativo da capa (nest.capa_imagem); vazio = sem capa própria
+        std::string icone;       // nest.icone; vazio = ícone da origem
+        std::string nome;        // nest.nome (ficha); vazio = sem nome próprio
+        std::string tipo;        // nest.tipo_container (ex.: "audio.album"); vazio = container do IMPORT antigo ou nest comum
         int total = 0;
     };
     // item -> nest (só nests com 2+ membros). Uma consulta, usada ao montar a lista da grade.
@@ -912,6 +928,48 @@ public:
     // CONTAINER de importação (Intake): agrupa os itens recém-ingeridos de uma importação (galeria do celular, Drive,
     // Bridge, Lightroom) num nest com `origem`. Sem Undo (é estado de triagem, não edição). Itens já em nest ficam de fora.
     std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem);
+    // "Group as Project Container": container criado DEPOIS da importação, por arquivos já no projeto. `tipo` = nest.tipo_container,
+    // `origem` = origem do player do tipo (youtube, ddp...) ou a genérica; `nome` vazio = sem nome próprio. Devolve "" se há menos de
+    // 2 itens ou algum já está em nest/container. Capa = o 1º por data. Fora da message thread; sem eventos (quem chama dispara).
+    std::string criarContainerDeTipo(const std::vector<std::string>& itemIds, const std::string& tipo, const std::string& origem,
+                                     const std::string& nome);
+    // Change Container Type: troca tipo e origem; os membros ficam. Questionário guardado de outro cartão é descartado
+    // (as respostas dele já estão nos arquivos). Fora da message thread.
+    bool trocarTipoDoContainer(const std::string& nestId, const std::string& tipo, const std::string& origem);
+    // CONTENT (collection_type) só onde está vazio, numa transação só. Devolve quantos itens receberam. O evento "metadado"
+    // sai pela message thread.
+    int definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor);
+    // O contexto da ficha do IMPORT (tags, source medium, SUBJECT, notas, geo, campos...) aplicado a arquivos que ja estao no projeto,
+    // numa transacao. CONTENT fica de fora (ver definirContentSeVazio); os campos so do video (camposDoVideo) vao so para
+    // `videoPrincipalId`. Fora da message thread. Devolve quantos itens foram tocados.
+    int aplicarContextoDeImportacao(const std::vector<std::string>& itemIds, const matriz::ingest::SobreMaterial& sobre,
+                                    const std::string& videoPrincipalId);
+    // Capa do container (vinil, fita): reduz a imagem, grava em .miniaturas e guarda o caminho no nest. Roda fora da message thread.
+    bool definirCapaDoContainer(const std::string& nestId, const juce::File& imagem);
+    // Ícone do container escolhido na ficha (nome do recurso embutido). Fora da message thread.
+    bool definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso);
+    bool definirNomeDoContainer(const std::string& nestId, const std::string& nome);
+    // Tira a capa própria do container (volta ao ícone do tipo). Também limpa a resposta "capa" do questionário guardado.
+    bool removerCapaDoContainer(const std::string& nestId);
+    // Atualiza UMA resposta do questionário guardado (valor vazio = remove). Mantém Edit Project Info coerente com a capa trocada fora dele.
+    void definirRespostaDoQuestionario(const std::string& nestId, const std::string& chave, const std::string& valor);
+    // Questionário inicial do container (JSON {"folha": ..., "respostas": {...}}), guardado para ser editado depois.
+    std::string questionarioDoContainer(const std::string& nestId) const;
+    std::string origemDoContainer(const std::string& nestId) const;  // nest.origem ("" = não é container)
+    std::string tipoDoContainer(const std::string& nestId) const;    // nest.tipo_container ("" = container do IMPORT antigo ou nest comum)
+    void definirQuestionarioDoContainer(const std::string& nestId, const std::string& json);
+    // Editar o questionário: tira dos arquivos do container o que o contexto ANTIGO tinha posto, aplica o NOVO e guarda o JSON.
+    // Uma transação só (container pequeno); message thread.
+    bool reaplicarQuestionarioDoContainer(const std::string& nestId, const matriz::ingest::SobreMaterial& antigo,
+                                          const matriz::ingest::SobreMaterial& novo, const std::string& json);
+    // Sem capa escolhida: usa um frame sorteado do meio do maior vídeo do container (YouTube Production). Fora da message thread.
+    // O vídeo passa a ser o item que representa o container; `gerarFrame` = também usa um frame dele como capa.
+    bool definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame = true);
+    // Agrupamento temático de importação (Lightroom, Bridge, sample pack...): um NEST sem origem. Fora da message thread,
+    // sem eventos (quem chama recarrega a tela). Itens que já estão num nest ficam de fora. Devolve o id ("" se nada a fazer).
+    std::string criarNestDeImportacao(const std::vector<std::string>& itemIds);
+    // Se o item é a capa de um container que tem imagem própria, o caminho dela (usado como miniatura no Intake).
+    std::optional<juce::String> capaImagemDoContainer(const std::string& itemId) const;
     // Tira os itens do container (continuam no Intake como itens comuns, sem aprovação). Um container que fica com
     // 1 membro (ou nenhum) é dissolvido.
     void removerDoContainer(const std::vector<std::string>& itemIds);
@@ -930,7 +988,8 @@ public:
     std::vector<std::string> membrosDoNest(const std::string& nestId) const;  // por data (o mais antigo primeiro)
     std::vector<std::string> ordenarPorDataDeCriacao(const std::vector<std::string>& itemIds) const;
     std::optional<NestInfo> nestDoItem(const std::string& itemId) const;
-    // EXPORT / ZIP / HTML / Print / Watermark: de cada nest sai só a capa. Tira dos ids os membros que não são capa.
+    // EXPORT / ZIP / HTML / Print / Watermark: de cada NEST comum sai só a capa (tira dos ids os membros que não são capa).
+    // De cada CONTAINER (nest com origem) saem TODOS os membros: se algum está nos ids, os demais entram.
     std::vector<std::string> semMembrosNaoCapaDeNest(const std::vector<std::string>& itemIds) const;
     // Todos os itens do catálogo (fora do INTAKE) sem os membros não-capa; nullopt = não há nests (usar "todos").
     std::optional<std::vector<std::string>> idsDoCatalogoSemNaoCapas() const;

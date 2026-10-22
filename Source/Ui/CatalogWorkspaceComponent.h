@@ -12,6 +12,7 @@
 
 #include "EventBus.h"
 #include "FloatingPreviewWindow.h"
+#include "OverlayComponent.h"
 #include "ViewModeIconButton.h"
 
 namespace matriz::ui {
@@ -48,6 +49,10 @@ public:
 
     std::function<void()> aoVoltar;
     std::function<void(std::string folderId)> aoAgruparEIrParaTree;
+    // Botão direito num PROJECT > Edit Project Info (quem tem o overlay da tela principal abre a ficha).
+    std::function<void(const std::string& nestId, const std::string& origem)> aoEditarProjeto;
+    // Overlay da tela principal (dialogo de tipo do Project Container). nullptr = ja ha um aberto.
+    std::function<PainelOverlay*()> obterOverlay;
     std::function<void(const std::string& itemId)> aoItemAlterado;
 
 private:
@@ -66,6 +71,8 @@ private:
         int sessao = 0;
         int outros = 0;  // OTHERS: o que nenhuma categoria reconhece (inclusive extensão desconhecida)
         int phoneDump = 0;
+        int aiGenerated = 0;
+        int projetos = 0;  // capas de containers PROJECT (DDP, vinil, fita, produção, YouTube)
         int revisao = 0;
         int vulneraveis = 0;
         int mergeConflitos = 0;
@@ -229,6 +236,7 @@ private:
     bool ocultarEditados_ = false;
     bool ocultarNaoSelecionados_ = false;
     bool mostrarApenasRecentes_ = false;
+    bool ocultarComGeo_ = false;
     bool mostrarApenasBounce_ = false;     // soma com os outros filtros (não zera nada)
     bool refreshBouncePendente_ = false;   // agrupa eventos de marcação B numa única refiltragem
     void atualizarBotaoBounce();           // rótulo/cor: OFF, ou ON com a contagem "(n)"
@@ -297,6 +305,7 @@ private:
     };
     EscutaEventos escutaEventos_{*this};
     void atualizarFiltrosDeData();
+    void atualizarListasDoContentEmMemoria();
     bool refreshDataPendente_ = false;
     bool contagensAguardandoSnapshot_ = false;
     bool filtrosAguardandoSnapshot_ = false;

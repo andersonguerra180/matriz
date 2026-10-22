@@ -1,5 +1,6 @@
 #include "ProjetoAberto.h"
 #include "FichasEmbutidas.h"
+#include "TiposContainer.h"
 #include "TraducaoContent.h"
 #include "../Diag/Watchdog.h"
 
@@ -354,7 +355,14 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "i.dc_subject, "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
-        "i.lista "
+        "i.lista, "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'etapa_producao'), "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'versao_escolhida'), "
+        "EXISTS(SELECT 1 FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'ai_generated' AND TRIM(COALESCE(c.valor, '')) != ''), "
+        "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = i.id AND ("
+        "g.latitude IS NOT NULL OR g.longitude IS NOT NULL OR "
+        "TRIM(COALESCE(g.formatted_address, '')) != '' OR TRIM(COALESCE(g.city, '')) != '' OR "
+        "TRIM(COALESCE(g.state_province, '')) != '' OR TRIM(COALESCE(g.country, '')) != '')) "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -403,6 +411,12 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             r.nestTotal = nit->second.total;
             r.nestCapa = (r.id == nit->second.capaId);
             r.nestOrigem = nit->second.origem;
+            if (!nit->second.capaImagem.empty())
+                r.nestCapaImagem = pastaProjeto.getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
+            r.nestIcone = nit->second.icone;
+            r.nestNome = nit->second.nome;
+            // A capa do container mostra o NOME DO CONTAINER (da ficha) ou, sem nome, o rótulo do tipo — nunca o nome de um arquivo.
+            if (r.nestCapa && !r.nestOrigem.empty()) r.titulo = !r.nestNome.empty() ? r.nestNome : i18n::t("intake.container_" + juce::String(r.nestOrigem)).toStdString();
         }
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -428,6 +442,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             std::string lst = stmt.columnText(30);
             if (!lst.empty()) r.lista = lst;
         }
+        if (!stmt.columnIsNull(31)) r.etapaProducao = stmt.columnText(31);
+        if (!stmt.columnIsNull(32)) r.versaoEscolhida = stmt.columnText(32) == "true";
+        r.aiGenerated = stmt.columnInt(33) != 0;
+        r.temGeolocalizacao = stmt.columnInt(34) != 0;
         if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
         else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
@@ -934,6 +952,17 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     if (!projeto_) return out;
     std::unique_ptr<matriz::vault::ResolvedorEmLote> resolvedor;  // só se algum item precisar checar disco
 
+    // O Intake pintava cada card disparando uma consulta separada no
+    // indice.sqlite. Carrega os caminhos uma vez no snapshot de background.
+    std::unordered_map<std::string, std::string> miniaturas;
+    try {
+        auto minStmt = leituraIndice().prepare(
+            "SELECT item_id, caminho_relativo FROM miniatura "
+            "WHERE tipo = 'miniatura' ORDER BY item_id, gerado_em DESC");
+        while (minStmt.step())
+            miniaturas.emplace(minStmt.columnText(0), minStmt.columnText(1));
+    } catch (...) {}
+
     // Mesma cópia sob lock de listarItens() -- este método também roda em
     // background (IntakeWorkspaceComponent) enquanto a message thread pode
     // escrever nesses sets/map ao mesmo tempo.
@@ -1024,6 +1053,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.masterArquivoId = masterArqId;
                 r.caminhoRelativoArquivo = camRel;
                 r.caminhoAbsolutoOrigem = camAbs;
+                if (auto mini = miniaturas.find(r.id); mini != miniaturas.end())
+                    r.miniaturaCaminhoRelativo = mini->second;
 
                 // Mesmo critério de listarItensDeProjeto: re-verifica só os do cache.
                 if (offlineCopia.count(r.id) > 0)
@@ -1078,6 +1109,11 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                     r.nestTotal = nit->second.total;
                     r.nestCapa = (r.id == nit->second.capaId);
                     r.nestOrigem = nit->second.origem;
+                    if (!nit->second.capaImagem.empty())
+                        r.nestCapaImagem = projeto_->pasta().getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
+                    r.nestIcone = nit->second.icone;
+                    r.nestNome = nit->second.nome;
+                    if (r.nestCapa && !r.nestOrigem.empty()) r.titulo = !r.nestNome.empty() ? r.nestNome : i18n::t("intake.container_" + juce::String(r.nestOrigem)).toStdString();
                 }
                 out.push_back(std::move(r));
             }
@@ -1269,6 +1305,17 @@ std::optional<std::string> ProjetoAberto::valorCampo(const std::string& itemId, 
     stmt.bind(4, matriz::db::Value::of(campoId));
     if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
     return std::nullopt;
+}
+
+void ProjetoAberto::definirCampoRaiz(const std::string& itemId, const std::string& campoId, const std::string& valor) {
+    if (somenteLeitura_ || !projeto_ || itemId.empty()) return;
+    projeto_->registro().run(
+        "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+        "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
+        "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
+        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId), matriz::db::Value::of(campoId),
+         matriz::db::Value::of(valor), matriz::db::Value::of(matriz::model::agoraIso8601())});
+    EventBus::obterInstancia().dispararItemAlterado(itemId, "campo");
 }
 
 std::vector<std::string> ProjetoAberto::papeisArquivoPresentes(const std::string& itemId) const {
@@ -4601,6 +4648,8 @@ namespace {
 struct EstadoNest {
     std::string id, projetoId, capa, criadoEm;
     std::vector<std::string> membros;
+    // Identidade de CONTAINER (nest.origem e colunas da ficha): sem isto o Undo de "Ungroup" devolvia um nest comum.
+    std::optional<std::string> origem, capaImagem, icone, questionario, nome, tipoContainer;
 };
 
 // Os nests a que os itens pertencem, com todos os membros — o retrato que o Undo restaura.
@@ -4618,12 +4667,15 @@ std::vector<EstadoNest> capturarNests(matriz::db::Database& db, const std::set<s
     for (const auto& nid : idsDeNest) {
         EstadoNest e;
         e.id = nid;
-        auto st = db.prepare("SELECT projeto_id, COALESCE(capa_item_id, ''), criado_em FROM nest WHERE id = ?");
+        auto st = db.prepare("SELECT projeto_id, COALESCE(capa_item_id, ''), criado_em, origem, capa_imagem, icone, questionario, nome, tipo_container "
+                             "FROM nest WHERE id = ?");
         st.bind(1, matriz::db::Value::of(nid));
         if (!st.step()) continue;
         e.projetoId = st.columnText(0);
         e.capa = st.columnText(1);
         e.criadoEm = st.columnText(2);
+        const auto opt = [&st](int c) { return st.columnIsNull(c) ? std::optional<std::string>() : std::optional<std::string>(st.columnText(c)); };
+        e.origem = opt(3); e.capaImagem = opt(4); e.icone = opt(5); e.questionario = opt(6); e.nome = opt(7); e.tipoContainer = opt(8);
         auto sm = db.prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
         sm.bind(1, matriz::db::Value::of(nid));
         while (sm.step()) e.membros.push_back(sm.columnText(0));
@@ -4639,9 +4691,12 @@ void removerNestsDosItens(matriz::db::Database& db, const std::set<std::string>&
 
 void restaurarNests(matriz::db::Database& db, const std::vector<EstadoNest>& estados) {
     for (const auto& e : estados) {
-        db.run("INSERT OR REPLACE INTO nest (id, projeto_id, capa_item_id, criado_em) VALUES (?, ?, ?, ?)",
+        const auto opt = [](const std::optional<std::string>& v) { return v ? matriz::db::Value::of(*v) : matriz::db::Value::null(); };
+        db.run("INSERT OR REPLACE INTO nest (id, projeto_id, capa_item_id, criado_em, origem, capa_imagem, icone, questionario, nome, tipo_container) "
+               "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                {matriz::db::Value::of(e.id), matriz::db::Value::of(e.projetoId),
-                e.capa.empty() ? matriz::db::Value::null() : matriz::db::Value::of(e.capa), matriz::db::Value::of(e.criadoEm)});
+                e.capa.empty() ? matriz::db::Value::null() : matriz::db::Value::of(e.capa), matriz::db::Value::of(e.criadoEm),
+                opt(e.origem), opt(e.capaImagem), opt(e.icone), opt(e.questionario), opt(e.nome), opt(e.tipoContainer)});
         for (const auto& m : e.membros)
             db.run("INSERT OR REPLACE INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
                    {matriz::db::Value::of(m), matriz::db::Value::of(e.id), matriz::db::Value::of(e.criadoEm)});
@@ -4658,13 +4713,17 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             "SELECT ni.item_id, ni.nest_id, "
             "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
             "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)), "
-            "n.origem "
+            "n.origem, n.capa_imagem, n.icone, n.nome, n.tipo_container "
             "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
-        std::map<std::string, std::string> origemDe;
+        std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe, nomeDe, tipoDe;
         while (st.step()) {
             membros[st.columnText(1)].push_back(st.columnText(0));
             capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
             if (!st.columnIsNull(3)) origemDe[st.columnText(1)] = st.columnText(3);
+            if (!st.columnIsNull(4)) capaImagemDe[st.columnText(1)] = st.columnText(4);
+            if (!st.columnIsNull(5)) iconeDe[st.columnText(1)] = st.columnText(5);
+            if (!st.columnIsNull(6)) nomeDe[st.columnText(1)] = st.columnText(6);
+            if (!st.columnIsNull(7)) tipoDe[st.columnText(1)] = st.columnText(7);
         }
         for (const auto& [nid, itens] : membros) {
             if (itens.size() < 2) continue;  // nest de um arquivo só não existe
@@ -4672,6 +4731,10 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             info.nestId = nid;
             info.capaId = capaDe[nid];
             if (auto oit = origemDe.find(nid); oit != origemDe.end()) info.origem = oit->second;
+            if (auto cit = capaImagemDe.find(nid); cit != capaImagemDe.end()) info.capaImagem = cit->second;
+            if (auto iit = iconeDe.find(nid); iit != iconeDe.end()) info.icone = iit->second;
+            if (auto nmit = nomeDe.find(nid); nmit != nomeDe.end()) info.nome = nmit->second;
+            if (auto tit = tipoDe.find(nid); tit != tipoDe.end()) info.tipo = tit->second;
             info.total = static_cast<int>(itens.size());
             for (const auto& id : itens) out[id] = info;
         }
@@ -4746,6 +4809,337 @@ std::string ProjetoAberto::criarContainerImportacao(const std::vector<std::strin
         throw;
     }
     return nestId;
+}
+
+std::string ProjetoAberto::criarContainerDeTipo(const std::vector<std::string>& itemIds, const std::string& tipo, const std::string& origem,
+                                                const std::string& nome) {
+    if (somenteLeitura_ || !projeto_ || itemIds.size() < 2 || tipo.empty() || origem.empty()) return {};
+    auto& db = projeto_->registro();
+    const auto jaEmNest = mapaDeNests(db);
+    for (const auto& id : itemIds) if (jaEmNest.count(id) != 0) return {};
+    const std::string capa = ordenarPorDataDeCriacao(itemIds).front();
+    const std::string nestId = matriz::model::novoUuid();
+    const std::string agora = matriz::model::agoraIso8601();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem, tipo_container, nome) VALUES (?, ?, ?, ?, ?, ?, ?)",
+               {matriz::db::Value::of(nestId), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(capa),
+                matriz::db::Value::of(agora), matriz::db::Value::of(origem), matriz::db::Value::of(tipo),
+                nome.empty() ? matriz::db::Value::null() : matriz::db::Value::of(nome)});
+        for (const auto& id : itemIds)
+            db.run("INSERT INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(id), matriz::db::Value::of(nestId), matriz::db::Value::of(agora)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return {};
+    }
+    return nestId;
+}
+
+bool ProjetoAberto::trocarTipoDoContainer(const std::string& nestId, const std::string& tipo, const std::string& origem) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || tipo.empty() || origem.empty()) return false;
+    auto& db = projeto_->registro();
+    const std::string json = questionarioDoContainer(nestId);
+    const std::string folhaAtual = json.empty() ? std::string() : juce::JSON::parse(juce::String::fromUTF8(json.c_str()))["folha"].toString().toStdString();
+    const bool temQuestionario = !folhaAtual.empty();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        db.run("UPDATE nest SET origem = ?, tipo_container = ?, icone = NULL WHERE id = ?",
+               {matriz::db::Value::of(origem), matriz::db::Value::of(tipo), matriz::db::Value::of(nestId)});
+        if (temQuestionario && folhaAtual != tipo)  // o questionario era de outro cartao: Edit Project Info nao se aplica mais
+            db.run("UPDATE nest SET questionario = NULL WHERE id = ?", {matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    return true;
+}
+
+int ProjetoAberto::aplicarContextoDeImportacao(const std::vector<std::string>& itemIds, const matriz::ingest::SobreMaterial& sobre,
+                                               const std::string& videoPrincipalId) {
+    if (somenteLeitura_ || !projeto_ || itemIds.empty()) return 0;
+    auto& db = projeto_->registro();
+    matriz::ingest::SobreMaterial base = sobre;
+    base.collectionType.clear();  // CONTENT segue a regra propria (so onde vazio)
+    matriz::ingest::SobreMaterial semVideo = base;
+    semVideo.camposDoVideo.clear();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    int tocados = 0;
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        {
+            matriz::ingest::AplicadorSobreMaterial comVideo(db, base);
+            matriz::ingest::AplicadorSobreMaterial sem(db, semVideo);
+            for (const auto& id : itemIds) {
+                if (id == videoPrincipalId) comVideo.aplicar(id); else sem.aplicar(id);
+                ++tocados;
+            }
+        }
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("aplicarContextoDeImportacao: " + juce::String(e.what()));
+        return 0;
+    }
+    escrita.unlock();
+    juce::MessageManager::callAsync([itemIds] { EventBus::obterInstancia().dispararItensAlterados(itemIds, "metadado"); });
+    return tocados;
+}
+
+int ProjetoAberto::definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor) {
+    if (somenteLeitura_ || !projeto_ || itemIds.empty() || valor.empty()) return 0;
+    auto& db = projeto_->registro();
+    const std::string agora = matriz::model::agoraIso8601();
+    std::vector<std::string> gravados;
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const auto& id : itemIds) {
+            auto st = db.prepare("SELECT COALESCE(TRIM(collection_type), ''), "
+                                 "COALESCE((SELECT TRIM(valor) FROM item_campo WHERE item_id = ?1 AND campo_id = 'collection_type' LIMIT 1), '') "
+                                 "FROM item WHERE id = ?1");
+            st.bind(1, matriz::db::Value::of(id));
+            if (!st.step() || !st.columnText(0).empty() || !st.columnText(1).empty()) continue;  // o que o usuario preencheu nunca e sobrescrito
+            db.run("UPDATE item SET collection_type = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                   {matriz::db::Value::of(valor), matriz::db::Value::of(agora), matriz::db::Value::of(id)});
+            db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'collection_type', ?, 'humano', ?) "
+                   "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
+                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id), matriz::db::Value::of(valor), matriz::db::Value::of(agora)});
+            gravados.push_back(id);
+        }
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("definirContentSeVazio: " + juce::String(e.what()));
+        return 0;
+    }
+    escrita.unlock();
+    if (!gravados.empty())
+        juce::MessageManager::callAsync([gravados] { EventBus::obterInstancia().dispararItensAlterados(gravados, "metadado"); });
+    return static_cast<int>(gravados.size());
+}
+
+bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce::File& imagem) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || !imagem.existsAsFile()) return false;
+    juce::Image img = juce::ImageFileFormat::loadFrom(imagem);
+    if (!img.isValid()) return false;
+    constexpr int kLado = 512;
+    if (img.getWidth() > kLado || img.getHeight() > kLado) {
+        const float escala = static_cast<float>(kLado) / static_cast<float>(juce::jmax(img.getWidth(), img.getHeight()));
+        img = img.rescaled(juce::jmax(1, juce::roundToInt(img.getWidth() * escala)), juce::jmax(1, juce::roundToInt(img.getHeight() * escala)),
+                           juce::Graphics::highResamplingQuality);
+    }
+    const juce::String relativo = ".miniaturas/capa_container_" + juce::String(nestId) + ".jpg";
+    const juce::File destino = projeto_->pasta().getChildFile(relativo);
+    destino.getParentDirectory().createDirectory();
+    destino.deleteFile();
+    {
+        juce::FileOutputStream saida(destino);
+        if (!saida.openedOk()) return false;
+        juce::JPEGImageFormat jpeg;
+        jpeg.setQuality(0.9f);
+        if (!jpeg.writeImageToStream(img, saida)) return false;
+    }
+    try {
+        projeto_->registro().run("UPDATE nest SET capa_imagem = ? WHERE id = ?",
+                                 {matriz::db::Value::of(relativo.toStdString()), matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    return true;
+}
+
+bool ProjetoAberto::definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || nomeDoRecurso.empty()) return false;
+    try {
+        projeto_->registro().run("UPDATE nest SET icone = ? WHERE id = ?", {matriz::db::Value::of(nomeDoRecurso), matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    return true;
+}
+
+std::string ProjetoAberto::questionarioDoContainer(const std::string& nestId) const {
+    if (!projeto_ || nestId.empty()) return {};
+    try {
+        auto st = leitura().prepare("SELECT questionario FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nestId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    } catch (...) {}
+    return {};
+}
+
+std::string ProjetoAberto::origemDoContainer(const std::string& nestId) const {
+    if (!projeto_ || nestId.empty()) return {};
+    try {
+        auto st = leitura().prepare("SELECT origem FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nestId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    } catch (...) {}
+    return {};
+}
+
+std::string ProjetoAberto::tipoDoContainer(const std::string& nestId) const {
+    if (!projeto_ || nestId.empty()) return {};
+    try {
+        auto st = leitura().prepare("SELECT tipo_container FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nestId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    } catch (...) {}
+    return {};
+}
+
+void ProjetoAberto::definirQuestionarioDoContainer(const std::string& nestId, const std::string& json) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || json.empty()) return;
+    try {
+        projeto_->registro().run("UPDATE nest SET questionario = ? WHERE id = ?", {matriz::db::Value::of(json), matriz::db::Value::of(nestId)});
+    } catch (...) {}
+}
+
+bool ProjetoAberto::reaplicarQuestionarioDoContainer(const std::string& nestId, const matriz::ingest::SobreMaterial& antigo,
+                                                      const matriz::ingest::SobreMaterial& novo, const std::string& json) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
+    if (!projeto_ || nestId.empty()) return false;
+    const auto membros = membrosDoNest(nestId);
+    if (membros.empty()) return false;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        {
+            matriz::ingest::AplicadorSobreMaterial tirar(db, antigo);
+            matriz::ingest::AplicadorSobreMaterial por(db, novo);
+            for (const auto& id : membros) { tirar.desfazer(id); por.aplicar(id); }
+        }
+        db.run("UPDATE nest SET questionario = ? WHERE id = ?", {matriz::db::Value::of(json), matriz::db::Value::of(nestId)});
+        // O nome vem do questionário: apagado lá, o container volta a mostrar o rótulo do tipo.
+        db.run("UPDATE nest SET nome = ? WHERE id = ?", {novo.nomeContainer.empty() ? matriz::db::Value::null() : matriz::db::Value::of(novo.nomeContainer), matriz::db::Value::of(nestId)});
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("reaplicarQuestionarioDoContainer: " + juce::String(e.what()));
+        return false;
+    }
+    writeLock.unlock();
+    EventBus::obterInstancia().dispararItensAlterados(membros, "metadado");
+    // Nome, capa e SUBJECT do container mudam em várias telas ao mesmo tempo: recarga ampla (Grid, METADATA, Folder Map, ficha).
+    EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+    return true;
+}
+
+bool ProjetoAberto::definirNomeDoContainer(const std::string& nestId, const std::string& nome) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || nome.empty()) return false;
+    try {
+        projeto_->registro().run("UPDATE nest SET nome = ? WHERE id = ?", {matriz::db::Value::of(nome), matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    return true;
+}
+
+bool ProjetoAberto::removerCapaDoContainer(const std::string& nestId) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
+    try {
+        projeto_->registro().run("UPDATE nest SET capa_imagem = NULL WHERE id = ?", {matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    projeto_->pasta().getChildFile(".miniaturas/capa_container_" + juce::String(nestId) + ".jpg").deleteFile();
+    definirRespostaDoQuestionario(nestId, "capa", {});
+    return true;
+}
+
+void ProjetoAberto::definirRespostaDoQuestionario(const std::string& nestId, const std::string& chave, const std::string& valor) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty()) return;
+    const auto atual = questionarioDoContainer(nestId);
+    if (atual.empty()) return;  // container sem questionário guardado: nada a manter coerente
+    auto v = juce::JSON::parse(juce::String::fromUTF8(atual.c_str()));
+    auto* raiz = v.getDynamicObject();
+    if (raiz == nullptr) return;
+    auto* respostas = raiz->getProperty("respostas").getDynamicObject();
+    if (respostas == nullptr) return;
+    if (valor.empty()) respostas->removeProperty(juce::Identifier(chave.c_str()));
+    else respostas->setProperty(juce::Identifier(chave.c_str()), juce::String::fromUTF8(valor.c_str()));
+    definirQuestionarioDoContainer(nestId, juce::JSON::toString(v, true).toStdString());
+}
+
+bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
+    juce::File video;
+    double duracao = 0.0;
+    juce::int64 maior = -1;
+    std::string itemDoVideo;
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT a.caminho_absoluto_origem, a.tamanho_bytes, a.caracteristicas_tecnicas_json, ni.item_id "
+            "FROM nest_item ni JOIN arquivo a ON a.item_id = ni.item_id AND a.eh_master = 1 WHERE ni.nest_id = ?");
+        stmt.bind(1, matriz::db::Value::of(nestId));
+        while (stmt.step()) {
+            if (stmt.columnIsNull(0)) continue;
+            const juce::File f(juce::String(stmt.columnText(0)));
+            if (matriz::ingest::categoriaPorExtensao(f) != matriz::ingest::CategoriaMidia::Video || !f.existsAsFile()) continue;
+            const juce::int64 tamanho = stmt.columnIsNull(1) ? 0 : static_cast<juce::int64>(stmt.columnInt(1));
+            if (tamanho <= maior) continue;
+            double d = 0.0;
+            if (!stmt.columnIsNull(2)) {
+                const auto json = juce::JSON::parse(juce::String(stmt.columnText(2)));
+                if (json.isObject() && json.hasProperty("duracaoSegundos")) d = static_cast<double>(json["duracaoSegundos"]);
+            }
+            if (d <= 0.0) continue;
+            maior = tamanho;
+            video = f;
+            duracao = d;
+            itemDoVideo = stmt.columnText(3);
+        }
+    } catch (...) { return false; }
+    if (!video.existsAsFile()) return false;
+    if (!gerarFrame) {  // a capa já foi escolhida: só o vídeo vira o item que representa o container
+        if (itemDoVideo.empty()) return false;
+        try { projeto_->registro().run("UPDATE nest SET capa_item_id = ? WHERE id = ?", {matriz::db::Value::of(itemDoVideo), matriz::db::Value::of(nestId)}); }
+        catch (...) { return false; }
+        return true;
+    }
+    try {
+        const juce::File tmp = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("matriz_capa_" + juce::String(nestId));
+        auto frames = matriz::ingest::gerarKeyframesVideo(video, duracao, 1, tmp, "capa", 640, false, 0.35, 0.65);
+        bool ok = false;
+        if (!frames.empty()) ok = definirCapaDoContainer(nestId, frames.front().arquivo);
+        tmp.deleteRecursively();
+        // O vídeo é quem representa o container no Intake (categoria, título e miniatura), não o primeiro arquivo por data.
+        if (ok && !itemDoVideo.empty())
+            projeto_->registro().run("UPDATE nest SET capa_item_id = ? WHERE id = ?", {matriz::db::Value::of(itemDoVideo), matriz::db::Value::of(nestId)});
+        return ok;
+    } catch (...) { return false; }
+}
+
+std::string ProjetoAberto::criarNestDeImportacao(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_ || !projeto_ || itemIds.size() < 2) return {};
+    auto& db = projeto_->registro();
+    std::set<std::string> jaEmNest;
+    for (const auto& [id, info] : mapaDeNests(db)) { juce::ignoreUnused(info); jaEmNest.insert(id); }
+    std::vector<std::string> livres;
+    for (const auto& id : itemIds) if (jaEmNest.count(id) == 0) livres.push_back(id);
+    if (livres.size() < 2) return {};
+    const std::string nestId = matriz::model::novoUuid();
+    const std::string agora = matriz::model::agoraIso8601();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem) VALUES (?, ?, ?, ?, NULL)",
+               {matriz::db::Value::of(nestId), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(livres.front()),
+                matriz::db::Value::of(agora)});
+        for (const auto& id : livres)
+            db.run("INSERT INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(id), matriz::db::Value::of(nestId), matriz::db::Value::of(agora)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    return nestId;
+}
+
+std::optional<juce::String> ProjetoAberto::capaImagemDoContainer(const std::string& itemId) const {
+    if (!projeto_) return std::nullopt;
+    try {
+        auto stmt = leitura().prepare("SELECT capa_imagem FROM nest WHERE capa_item_id = ? AND capa_imagem IS NOT NULL AND capa_imagem <> '' LIMIT 1");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (!stmt.step()) return std::nullopt;
+        const juce::File f = projeto_->pasta().getChildFile(juce::String(stmt.columnText(0)));
+        if (f.existsAsFile()) return f.getFullPathName();
+    } catch (...) {}
+    return std::nullopt;
 }
 
 void ProjetoAberto::removerDoContainer(const std::vector<std::string>& itemIds) {
@@ -5049,9 +5443,17 @@ std::vector<std::string> ProjetoAberto::semMembrosNaoCapaDeNest(const std::vecto
     if (nests.empty()) return itemIds;
     std::vector<std::string> out;
     out.reserve(itemIds.size());
+    std::set<std::string> ja(itemIds.begin(), itemIds.end());
+    std::set<std::string> containersAcrescentados;
     for (const auto& id : itemIds) {
         auto it = nests.find(id);
-        if (it == nests.end() || it->second.capaId == id) out.push_back(id);
+        const bool container = it != nests.end() && !it->second.origem.empty();
+        if (it == nests.end() || it->second.capaId == id || container) out.push_back(id);  // só NEST comum perde os não-capa
+        // CONTAINER (nest com origem): sai o conjunto inteiro, não só a capa. Os membros que faltam entram aqui.
+        if (container && containersAcrescentados.insert(it->second.nestId).second) {
+            for (const auto& m : membrosDoNest(it->second.nestId))
+                if (ja.insert(m).second) out.push_back(m);
+        }
     }
     return out;
 }
@@ -5065,7 +5467,7 @@ std::optional<std::vector<std::string>> ProjetoAberto::idsDoCatalogoSemNaoCapas(
     while (st.step()) {
         const std::string id = st.columnText(0);
         auto it = nests.find(id);
-        if (it == nests.end() || it->second.capaId == id) out.push_back(id);
+        if (it == nests.end() || it->second.capaId == id || !it->second.origem.empty()) out.push_back(id);  // container: todos os membros
     }
     return out;
 }
@@ -5839,6 +6241,23 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
             while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
         } catch (...) {}
 
+        // g) CONTAINER: nome do container e tipo (rotulo do tipo no idioma ativo): todos os arquivos dele casam.
+        try {
+            std::string idsDeTipo, origensDeTipo;
+            for (const auto& t : tiposDeContainer()) {
+                if (!rotuloDoTipoContainer(t).containsIgnoreCase(cleanToken)) continue;
+                idsDeTipo += (idsDeTipo.empty() ? "'" : ",'") + std::string(t.id) + "'";
+                if (t.temPlayer()) origensDeTipo += (origensDeTipo.empty() ? "'" : ",'") + std::string(t.origemPlayer) + "'";
+            }
+            std::string sql = "SELECT ni.item_id FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE COALESCE(n.origem, '') <> '' AND (n.nome LIKE ? ESCAPE '\\'";
+            if (!idsDeTipo.empty()) sql += " OR n.tipo_container IN (" + idsDeTipo + ")";
+            if (!origensDeTipo.empty()) sql += " OR (COALESCE(n.tipo_container, '') = '' AND n.origem IN (" + origensDeTipo + "))";
+            sql += ")";
+            auto stmt = leitura().prepare(sql);
+            stmt.bind(1, matriz::db::Value::of(cleanPattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
         // Intersect with overall result (AND logic across multiple words)
         if (primeiroToken) {
             out = std::move(matchesParaToken);
@@ -6383,12 +6802,28 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
 
     try {
         auto stmt = leitura().prepare(
-            "SELECT COALESCE(metadados_editados, 0) != 0 FROM item WHERE id = ?");
+            "SELECT COALESCE(metadados_editados, 0) != 0, content_type, collection_type, ano, "
+            "dc_subject, lista, source_media, "
+            "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = item.id AND ("
+            "g.latitude IS NOT NULL OR g.longitude IS NOT NULL OR "
+            "TRIM(COALESCE(g.formatted_address, '')) != '' OR TRIM(COALESCE(g.city, '')) != '' OR "
+            "TRIM(COALESCE(g.state_province, '')) != '' OR TRIM(COALESCE(g.country, '')) != '')) "
+            "FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(itemId));
-        if (stmt.step()) r.metadadosEditados = stmt.columnInt(0) != 0;
+        if (stmt.step()) {
+            r.metadadosEditados = stmt.columnInt(0) != 0;
+            if (!stmt.columnIsNull(1)) r.contentType = stmt.columnText(1);
+            if (!stmt.columnIsNull(2)) r.collectionType = stmt.columnText(2);
+            if (!stmt.columnIsNull(3)) r.ano = extrairAnoDeData(juce::String::fromUTF8(stmt.columnText(3).c_str()));
+            if (!stmt.columnIsNull(4)) r.subject = stmt.columnText(4);
+            if (!stmt.columnIsNull(5)) r.lista = stmt.columnText(5);
+            if (!stmt.columnIsNull(6)) r.sourceMedia = stmt.columnText(6);
+            r.temGeolocalizacao = stmt.columnInt(7) != 0;
+        }
     } catch (...) {}
 
     r.tags = lerTags(itemId);
+    r.aiGenerated = !lerMetadado(itemId, "ai_generated").value_or("").empty();
 
     // Sem isto marcadoRevisado vinha sempre false — e quem copiava o resumo
     // (MosaicoComponent::atualizarItemEmMemoria) apagava a borda do E.

@@ -13,11 +13,12 @@ namespace matriz::ui {
 
 // Janela flutuante de uma pasta do Folder Map (duplo clique no card da pasta, em Structure): grade de miniaturas com todos os
 // arquivos da pasta e das subpastas, coluna de filtros de navegação à esquerda e o botão direito padrão do app
-// (+ EXTRACT da pasta e MOVE TO FOLDER). Não apaga nada em disco: "extrair" tira o arquivo da pasta (vai para NO FOLDER).
+// (+ EXTRACT da pasta e MOVE TO FOLDER). Com `nestId` é a janela de um CONTAINER: só os arquivos dele (pastaId é ignorado). A ficha
+// da direita é SOMENTE LEITURA. Não apaga nada em disco: "extrair" tira o arquivo da pasta (vai para NO FOLDER).
 class JanelaPastaFlutuante : public juce::DocumentWindow {
 public:
     JanelaPastaFlutuante(ProjetoAberto& projeto, const std::string& pastaId, const juce::String& nomePasta,
-                         std::function<void()> aoFechar, std::function<void()> aoMudouDados);
+                         std::function<void()> aoFechar, std::function<void()> aoMudouDados, const std::string& nestId = {});
     ~JanelaPastaFlutuante() override;
 
     void closeButtonPressed() override;

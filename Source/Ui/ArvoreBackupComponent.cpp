@@ -1,4 +1,5 @@
 #include "ArvoreBackupComponent.h"
+#include "TiposContainer.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/FluxoLote.h"
 #include "../Ingest/LeituraTecnica.h"
@@ -14,6 +15,8 @@
 #include "PainelImportarWhatsapp.h"
 #include "ConversaWhatsappComponent.h"
 #include "Tablet.h"
+#include "ContainerVisual.h"
+#include "ImportarMenu.h"
 #include "LogosTipoArquivo.h"
 #include "TrashWindow.h"
 #include "../Celular/ExistentesProjeto.h"
@@ -497,6 +500,17 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnZoomFit_->onClick = [this] { enquadrarTudo(); };
     addAndMakeVisible(*btnZoomFit_);
 
+    chkContainersComoPastas_ = std::make_unique<juce::ToggleButton>(i18n::t("arvore_backup.containers_como_pastas"));
+    chkContainersComoPastas_->setToggleState(containersComoPastas_, juce::dontSendNotification);
+    chkContainersComoPastas_->setTooltip(i18n::t("arvore_backup.containers_como_pastas_dica"));
+    chkContainersComoPastas_->setColour(juce::ToggleButton::textColourId, tema().textoPrimario);
+    chkContainersComoPastas_->onClick = [this] {
+        containersComoPastas_ = chkContainersComoPastas_->getToggleState();
+        gravarLayoutSalvo();
+        recarregar();
+    };
+    addAndMakeVisible(*chkContainersComoPastas_);
+
     btnResetTamanhos_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_reset_tamanhos"));
     btnResetTamanhos_->setTooltip(i18n::t("arvore_backup.reset_tamanhos_dica"));
     btnResetTamanhos_->onClick = [this] { redefinirTamanhos(); };
@@ -743,6 +757,11 @@ void ArvoreBackupComponent::definirModoSobreposto(const std::string& mapaId, con
 }
 
 void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
+    if (e.tipoAlteracao == "recarregar_tudo") {  // ex.: Edit Project Info mudou nome/capa de um container
+        juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+        juce::MessageManager::callAsync([seguro] { if (seguro && seguro->isShowing()) seguro->recarregar(); });  // escondido: recarrega ao voltar à aba
+        return;
+    }
     if (e.tipoAlteracao != "titulo") return;
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
     std::string itemId = e.itemId;
@@ -1463,7 +1482,7 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             "SELECT i.id, i.titulo, i.tipo_midia, a.caminho_relativo, a.tamanho_bytes "
             "FROM item i "
             "LEFT JOIN arquivo a ON i.id = a.item_id AND a.id = (SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
-            "WHERE COALESCE(i.estado, '') != 'duplicata' "
+            "WHERE COALESCE(i.estado, '') != 'duplicata' AND COALESCE(i.em_quarentena, 0) = 0 "
             "ORDER BY i.criado_em"
         );
 
@@ -1480,17 +1499,47 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
         int looseY = looseStartY;
 
         const auto nests = ProjetoAberto::mapaDeNests(db);
-        while (!soltos.empty() && stmt.step()) {
-            if (soltos.count(stmt.columnText(0)) == 0) continue;
+        containersSemPosicao_.clear();
+        const bool original = mapaAtivoEhOriginal();
+        auto stmtPasta = db.prepare("SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ? LIMIT 1");
+        std::map<std::string, int> containersPorPasta;  // para empilhar os containers ao lado da pasta deles
+        const int largContainer = containersComoPastas_ ? 190 : 126, altContainer = containersComoPastas_ ? 64 : 138;
+        while (stmt.step()) {
+            const std::string idItem = stmt.columnText(0);
+            const bool solto = soltos.count(idItem) > 0;
             int nestTotal = 0;
-            if (auto nit = nests.find(stmt.columnText(0)); nit != nests.end()) {
-                if (nit->second.capaId != stmt.columnText(0)) continue;
+            const ProjetoAberto::NestInfo* infoContainer = nullptr;
+            if (auto nit = nests.find(idItem); nit != nests.end()) {
+                if (nit->second.capaId != idItem) continue;
                 nestTotal = nit->second.total;
+                if (!nit->second.origem.empty()) infoContainer = &nit->second;
+            }
+            // Todo CONTAINER aparece no mapa (solto ou ligado à pasta onde está); o resto só se estiver solto.
+            if (!solto && infoContainer == nullptr) continue;
+            std::string pastaPai;
+            if (infoContainer != nullptr && !solto && !original) {
+                stmtPasta.reset();
+                stmtPasta.bind(1, matriz::db::Value::of(idItem));
+                stmtPasta.bind(2, matriz::db::Value::of(mapaAtivoId_));
+                if (stmtPasta.step()) pastaPai = stmtPasta.columnText(0);
+                const bool pastaVisivel = std::any_of(nodes_.begin(), nodes_.end(), [&](const FolderNode& n) { return n.id == pastaPai; });
+                if (!pastaVisivel) continue;  // a pasta não está no mapa (ex.: _trash): o container também não
             }
             LooseFileNode lf;
             lf.nestTotal = nestTotal;
-            lf.id = stmt.columnText(0);
+            lf.pastaPaiId = pastaPai;
+            if (infoContainer != nullptr) {
+                lf.ehContainer = true;
+                lf.nestId = infoContainer->nestId;
+                lf.containerOrigem = infoContainer->origem;
+                lf.containerIcone = infoContainer->icone;
+                if (!infoContainer->capaImagem.empty())
+                    lf.containerCapa = projeto_.projeto().pasta().getChildFile(juce::String(infoContainer->capaImagem)).getFullPathName().toStdString();
+            }
+            lf.id = idItem;
             lf.titulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
+            if (infoContainer != nullptr)  // o container mostra o nome da ficha ou, sem nome, o rótulo do tipo — nunca o de um arquivo
+                lf.titulo = !infoContainer->nome.empty() ? juce::String::fromUTF8(infoContainer->nome.c_str()) : i18n::t("intake.container_" + juce::String(infoContainer->origem));
             lf.tipoMidia = stmt.columnText(2);
             lf.extensao = stmt.columnIsNull(3) ? juce::String() : juce::File(juce::String::fromUTF8(stmt.columnText(3).c_str())).getFileExtension().trimCharactersAtStart(".");
             lf.tamanhoBytes = stmt.columnIsNull(4) ? 0 : static_cast<juce::int64>(stmt.columnInt(4));
@@ -1498,9 +1547,9 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             try { lf.ehConversaWhatsapp = matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), lf.id); } catch (...) {}
             // Órfãos NÃO vão para o canvas por conta própria (milhares de arquivos soltos por erro de operador):
             // ficam guardados no card fixo _NO FOLDER. Só aparece solto o que o usuário posicionou de propósito
-            // (posição salva) ou uma conversa de WhatsApp.
-            if (layoutSalvo_.find(chaveLayout(lf.id)) == layoutSalvo_.end() && !lf.ehConversaWhatsapp) continue;
-            lf.bounds = juce::Rectangle<int>(looseX, looseY, 126, 138);
+            // (posição salva) ou uma conversa de WhatsApp. Container aprovado no Intake sempre aparece (como no Mini).
+            if (layoutSalvo_.find(chaveLayout(lf.id)) == layoutSalvo_.end() && !lf.ehConversaWhatsapp && !lf.ehContainer) continue;
+            lf.bounds = juce::Rectangle<int>(looseX, looseY, lf.ehContainer ? largContainer : 126, lf.ehContainer ? altContainer : 138);
             looseY += 148;
             if (looseY > looseStartY + 420) {
                 looseY = looseStartY;
@@ -1509,6 +1558,16 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             auto salvo = layoutSalvo_.find(chaveLayout(lf.id));
             if (salvo != layoutSalvo_.end()) {
                 lf.bounds.setPosition(salvo->second);
+            } else if (lf.ehContainer && !pastaPai.empty()) {
+                // Container numa pasta: nasce à direita dela, ligado por uma linha (a posição só é gravada se o usuário o mover).
+                for (const auto& n : nodes_) {
+                    if (n.id != pastaPai) continue;
+                    const int k = containersPorPasta[pastaPai]++;
+                    lf.bounds.setPosition(n.bounds.getRight() + 90, n.bounds.getY() + k * (altContainer + 14));
+                    break;
+                }
+            } else if (lf.ehContainer) {
+                containersSemPosicao_.insert(lf.id);  // posicionado por posicionarContainersNovos()
             } else if (lf.ehConversaWhatsapp) {
                 const auto canvasTopLeft = areaCanvas().getTopLeft();
                 auto posCanvas = screenToCanvas(canvasTopLeft + juce::Point<int>(36, 36));
@@ -1521,6 +1580,78 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
     } catch (const std::exception& e) {
         juce::Logger::writeToLog("recalcularNodes looseFiles erro: " + juce::String(e.what()));
     }
+    posicionarContainersNovos();
+}
+
+// Porta de ENTRADA do container (lado esquerdo): é a única; nada sai dele.
+juce::Point<float> ArvoreBackupComponent::portaEntradaDoContainer(const LooseFileNode& lf) const {
+    const auto b = lf.bounds.toFloat();
+    if (containersComoPastas_) return { b.getX(), b.getCentreY() };
+    return { b.getCentreX() - 48.0f + 4.0f, b.getY() + 2.0f + 48.0f };
+}
+
+// Container sob o ponto (canvas): dentro da caixa ou perto da porta de entrada.
+int ArvoreBackupComponent::containerSobre(juce::Point<float> canvas) const {
+    for (size_t i = 0; i < looseFiles_.size(); ++i) {
+        const auto& lf = looseFiles_[i];
+        if (!lf.ehContainer) continue;
+        if (lf.bounds.toFloat().contains(canvas) || portaEntradaDoContainer(lf).getDistanceSquaredFrom(canvas) <= 900.0f) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// Os containers ligados a uma pasta acompanham a pasta quando ela é arrastada.
+void ArvoreBackupComponent::moverContainersDaPasta(const std::string& pastaId, int dx, int dy) {
+    if (dx == 0 && dy == 0) return;
+    for (auto& lf : looseFiles_)
+        if (lf.ehContainer && lf.pastaPaiId == pastaId) lf.bounds.translate(dx, dy);
+}
+
+// D com containers selecionados: tira o container da pasta (volta para a raiz do mapa, solto).
+void ArvoreBackupComponent::desconectarContainersSelecionados() {
+    if (mapaAtivoEhOriginal()) return;
+    std::vector<std::string> ids;
+    for (const auto& lf : looseFiles_)
+        if (lf.selecionado && lf.ehContainer && !lf.pastaPaiId.empty()) ids.push_back(lf.id);
+    if (ids.empty()) return;
+    for (const auto& lf : looseFiles_)
+        if (std::find(ids.begin(), ids.end(), lf.id) != ids.end()) layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+    gravarLayoutSalvo();
+    projeto_.removerItensDoBackup(ids, mapaAtivoId_);  // um nest sai inteiro
+    recarregar();
+}
+
+// Containers sem posição salva (acabaram de ser aprovados no Intake) entram empilhados no canto superior esquerdo
+// da vista, no primeiro lugar livre. Espera o enquadramento inicial e o tamanho do canvas para não gravar posição de uma vista provisória.
+void ArvoreBackupComponent::posicionarContainersNovos() {
+    if (containersSemPosicao_.empty()) return;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;  // ainda sem tamanho: resized() tenta de novo
+    if (enquadrarPendente_ && !nodes_.empty()) return;              // tentarEnquadrar() chama de volta
+    bool mudou = false;
+    std::set<std::string> pendentes = containersSemPosicao_;
+    for (auto& lf : looseFiles_) {
+        if (pendentes.count(lf.id) == 0) continue;
+        // Abaixo do card _trash, que fica fixo no canto superior esquerdo da vista.
+        const auto trash = boundsPastaTrash();
+        const int yTela = std::max(canvas.getY() + 36, trash.isEmpty() ? 0 : trash.getBottom() + 14);
+        auto pos = screenToCanvas({canvas.getX() + 36, yTela}).toInt();
+        for (int tentativa = 0; tentativa < 400; ++tentativa) {
+            const juce::Rectangle<int> r(pos.x, pos.y, lf.bounds.getWidth(), lf.bounds.getHeight());
+            bool ocupado = false;
+            for (const auto& outro : looseFiles_)
+                if (&outro != &lf && !pendentes.count(outro.id) && r.intersects(outro.bounds)) { ocupado = true; break; }
+            if (!ocupado) for (const auto& n : nodes_) if (r.intersects(n.bounds)) { ocupado = true; break; }
+            if (!ocupado) break;
+            pos.y += 148;
+        }
+        lf.bounds.setPosition(pos);
+        layoutSalvo_[chaveLayout(lf.id)] = pos;
+        pendentes.erase(lf.id);
+        mudou = true;
+    }
+    containersSemPosicao_.clear();
+    if (mudou) { gravarLayoutSalvo(); repaint(); }
 }
 
 // Auto-arranjo completo dos nodes_ atuais: posições E tamanhos (por nível), respeitando o multiplicador
@@ -1603,8 +1734,8 @@ bool ArvoreBackupComponent::aplicarFocoPendente() {
 }
 
 void ArvoreBackupComponent::tentarEnquadrar() {
-    if (aplicarFocoPendente()) return;
-    if (!enquadrarPendente_ || nodes_.empty()) return;
+    if (aplicarFocoPendente()) { posicionarContainersNovos(); return; }
+    if (!enquadrarPendente_ || nodes_.empty()) { posicionarContainersNovos(); return; }
     const auto canvas = areaCanvas();
     if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;  // ainda sem tamanho: resized() tenta de novo
 
@@ -1618,6 +1749,7 @@ void ArvoreBackupComponent::tentarEnquadrar() {
     panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
                   static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
     enquadrarPendente_ = false;
+    posicionarContainersNovos();
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaBarraAbas() const {
@@ -2606,6 +2738,14 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         }
     }
 
+    // Containers ligados a uma pasta: a linha sai da porta de saída da pasta e entra pela porta de entrada do container.
+    for (const auto& lf : looseFiles_) {
+        if (!lf.ehContainer || lf.pastaPaiId.empty() || !outputPorts.count(lf.pastaPaiId)) continue;
+        const auto p1 = outputPorts[lf.pastaPaiId], p2 = portaEntradaDoContainer(lf);
+        if (!juce::Rectangle<float>(p1, p2).expanded(40.0f).intersects(visivel)) continue;
+        desenharLinhaConexaoN8n(g, p1, p2, true, false);
+    }
+
     // Live connection drag preview (socketDragPos_ is in canvas space)
     if (!socketDragParentId_.empty() && outputPorts.count(socketDragParentId_)) {
         desenharLinhaConexaoN8n(g, outputPorts[socketDragParentId_], socketDragPos_, true, true);
@@ -2720,6 +2860,66 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.drawRoundedRectangle(b.reduced(1.0f), 14.0f, 2.0f);
         }
         const float lw = 56.0f, lh = 70.0f;
+        if (lf.ehContainer && containersComoPastas_) {
+            // SHOW CONTAINERS AS FOLDERS: o container como uma pasta comum, mas só com porta de ENTRADA (à esquerda).
+            constexpr float kRaioNo = 8.0f;
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(b, kRaioNo);
+            g.setColour(lf.selecionado ? tk.acento : tk.borda);
+            g.drawRoundedRectangle(b.reduced(0.5f), kRaioNo, lf.selecionado ? 2.0f : 1.0f);
+            auto cab = b.withHeight(22.0f);
+            g.setColour(tk.painelAlt);
+            g.fillRoundedRectangle(cab, kRaioNo);
+            g.fillRect(cab.withTrimmedTop(14.0f));
+            g.setColour(tk.acento);
+            g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
+            g.drawText(i18n::t("intake.container_" + juce::String(lf.containerOrigem)).toUpperCase(), cab.reduced(10.0f, 0.0f), juce::Justification::centredLeft, true);
+            g.setColour(tk.textoPrimario);
+            g.setFont(fonteUi(12.0f, juce::Font::bold));
+            g.drawText(lf.titulo, b.withTrimmedTop(24.0f).withHeight(20.0f).reduced(10.0f, 0.0f), juce::Justification::centredLeft, true);
+            g.setColour(tk.textoSecundario);
+            g.setFont(fonteUi(10.0f));
+            g.drawText(juce::String(lf.nestTotal) + " " + i18n::t("arvore_backup.items"), b.withTrimmedTop(44.0f).reduced(10.0f, 0.0f), juce::Justification::centredLeft, true);
+            const auto entrada = portaEntradaDoContainer(lf);
+            g.setColour(tk.acento);
+            g.fillEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f);
+            g.setColour(tk.textoPrimario);
+            g.drawEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f, 1.2f);
+            continue;
+        }
+        if (lf.ehContainer) {
+            // Container: ícone/capa do tipo + contagem + porta de ENTRADA à esquerda. Sem porta de saída: nada conecta nele.
+            const juce::Rectangle<float> area(b.getCentreX() - 48.0f, b.getY() + 2.0f, 96.0f, 96.0f);
+            matriz::ui::desenharContainerGrafico(g, area, juce::String(lf.containerOrigem), juce::String::fromUTF8(lf.containerIcone.c_str()),
+                                                 juce::String::fromUTF8(lf.containerCapa.c_str()));
+            if (lf.nestTotal > 0) {
+                const juce::String n(lf.nestTotal);
+                const float w = std::max(22.0f, 10.0f + 7.0f * static_cast<float>(n.length()));
+                const juce::Rectangle<float> pilula(area.getRight() - w, area.getBottom() - 16.0f, w, 16.0f);
+                g.setColour(juce::Colours::black.withAlpha(0.72f));
+                g.fillRoundedRectangle(pilula, 8.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
+                g.drawText(n, pilula.toNearestInt(), juce::Justification::centred, false);
+            }
+            const auto entrada = portaEntradaDoContainer(lf);
+            g.setColour(tk.acento);
+            g.fillEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f);
+            g.setColour(tk.textoPrimario);
+            g.drawEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f, 1.2f);
+            if (matriz::ui::ehOrigemProject(juce::String(lf.containerOrigem))) {  // tag PROJECT no canto superior esquerdo
+                const juce::String rotulo = i18n::t("projeto.tag");
+                const juce::Rectangle<float> tag(b.getX() + 14.0f, b.getY() + 2.0f, 52.0f, 15.0f);
+                g.setColour(juce::Colour(0xffb8860b).withAlpha(0.95f));
+                g.fillRoundedRectangle(tag, 7.5f);
+                g.setColour(juce::Colours::white);
+                g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
+                g.drawText(rotulo, tag.toNearestInt(), juce::Justification::centred, false);
+            }
+            g.setFont(fonteUi(11.5f, juce::Font::bold));
+            g.drawFittedText(lf.titulo, b.withTrimmedTop(100.0f).reduced(4.0f, 0.0f).toNearestInt(), juce::Justification::centredTop, 2, 0.85f);
+            continue;
+        }
         if (lf.ehConversaWhatsapp) {
             const auto bolha = matriz::ui::logoConversaWhatsapp(256);
             if (bolha.isValid()) {
@@ -2876,6 +3076,8 @@ void ArvoreBackupComponent::resized() {
     }
     corpo.removeFromTop(2);
     zoomIndicadorBounds_ = corpo.removeFromTop(14);
+    corpo.removeFromTop(4);
+    if (chkContainersComoPastas_) chkContainersComoPastas_->setBounds(corpo.removeFromTop(22));
     coluna_.finalizarCard();
 
     // FOLDER SIZE — slider de tamanho (seleção ou todos) e RESET SIZES.
@@ -3244,6 +3446,10 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addItem(i18n::t("arvore_backup.abrir_em_aba"), [this, pId, nomeNo = hitNodeRef.nome] {
                     abrirAbaParaPasta(pId, nomeNo);
                 });
+                // O Folder Map sobreposto da pasta (antes aberto pelo duplo clique, que agora abre a grade).
+                menu.addItem(i18n::t("arvore_backup.abrir_como_foldermap"), [this, pId, nomeNo = hitNodeRef.nome] {
+                    abrirSobreposicao(pId, nomeNo);
+                });
             }
             menu.addSeparator();
 
@@ -3464,7 +3670,10 @@ void ArvoreBackupComponent::moverArrastoPara(juce::Point<int> mouseTela) {
         for (auto& [idx, posInicial] : arrastoGrupoPosicoesIniciais_) {
             if (idx < 0 || idx >= static_cast<int>(nodes_.size())) continue;
             juce::Point<float> novaPos = posInicial + delta;
+            const auto antes = nodes_[static_cast<size_t>(idx)].bounds.getPosition();
             nodes_[static_cast<size_t>(idx)].bounds.setPosition(static_cast<int>(novaPos.x), static_cast<int>(novaPos.y));
+            const auto depois = nodes_[static_cast<size_t>(idx)].bounds.getPosition();
+            moverContainersDaPasta(nodes_[static_cast<size_t>(idx)].id, depois.x - antes.x, depois.y - antes.y);
         }
         repaint(areaCanvas());
     }
@@ -3555,6 +3764,13 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
             if (!ehDescendente(socketDragParentId_, targetChildId)) {
                 conectarPastas(targetChildId, socketDragParentId_);
             }
+        } else if (const int c = containerSobre(canvasRelease); c >= 0 && !mapaAtivoEhOriginal()) {
+            // A saída de uma pasta solta num CONTAINER: ele (e os arquivos dele) passa a morar nessa pasta.
+            const auto pai = socketDragParentId_;
+            projeto_.adicionarItensAPasta({ looseFiles_[static_cast<size_t>(c)].id }, pai);
+            socketDragParentId_.clear();
+            recarregar();
+            return;
         }
 
         socketDragParentId_.clear();
@@ -3580,8 +3796,11 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
             }
             if (sobrepoe) {
                 for (auto& [idx, posInicial] : arrastoGrupoPosicoesIniciais_)
-                    if (idx >= 0 && idx < static_cast<int>(nodes_.size()))
+                    if (idx >= 0 && idx < static_cast<int>(nodes_.size())) {
+                        const auto atual = nodes_[static_cast<size_t>(idx)].bounds.getPosition();
                         nodes_[static_cast<size_t>(idx)].bounds.setPosition(static_cast<int>(posInicial.x), static_cast<int>(posInicial.y));
+                        moverContainersDaPasta(nodes_[static_cast<size_t>(idx)].id, static_cast<int>(posInicial.x) - atual.x, static_cast<int>(posInicial.y) - atual.y);
+                    }
                 nodeDragIndice_ = -1;
                 arrastoGrupoPosicoesIniciais_.clear();
                 repaint();
@@ -3599,6 +3818,14 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
             indices.push_back(idx);
         }
         persistirPosicoesEmLote(indices);
+        // Os containers ligados às pastas movidas foram junto: a posição nova deles também fica guardada.
+        bool gravou = false;
+        for (int idx : indices) {
+            if (idx < 0 || idx >= static_cast<int>(nodes_.size())) continue;
+            for (const auto& lf : looseFiles_)
+                if (lf.ehContainer && lf.pastaPaiId == nodes_[static_cast<size_t>(idx)].id) { layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition(); gravou = true; }
+        }
+        if (gravou) gravarLayoutSalvo();
     }
     nodeDragIndice_ = -1;
     arrastoGrupoPosicoesIniciais_.clear();
@@ -3621,6 +3848,8 @@ void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
             sequenciaPreview_.clear();
             if (lf.ehConversaWhatsapp) {
                 abrirConversaWhatsapp(lf.id);
+            } else if (lf.ehContainer) {
+                if (aoAbrirContainerJanela) aoAbrirContainerJanela(lf.nestId, lf.titulo);
             }
             return;
         }
@@ -3707,6 +3936,7 @@ bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
     if ((key.getKeyCode() == 'D' || c == 'd' || c == 'D') && semModificadores) {
         if (mapaAtivoEhOriginal()) return false;
         desconectarSelecionadas();
+        desconectarContainersSelecionados();
         return true;
     }
 
@@ -4620,9 +4850,13 @@ juce::File ArvoreBackupComponent::arquivoLayout() const {
 
 void ArvoreBackupComponent::carregarLayoutSalvo() {
     layoutSalvo_.clear();
+    containersComoPastas_ = false;
+    if (chkContainersComoPastas_) chkContainersComoPastas_->setToggleState(false, juce::dontSendNotification);
     const auto arq = arquivoLayout();
     if (!arq.existsAsFile()) return;
     const auto json = juce::JSON::parse(arq);
+    containersComoPastas_ = static_cast<bool>(json.getProperty("containersComoPastas", false));
+    if (chkContainersComoPastas_) chkContainersComoPastas_->setToggleState(containersComoPastas_, juce::dontSendNotification);
     if (auto* obj = json.getProperty("layouts", {}).getDynamicObject()) {
         for (const auto& prop : obj->getProperties()) {
             const auto* arr = prop.value.getArray();
@@ -4638,6 +4872,7 @@ void ArvoreBackupComponent::gravarLayoutSalvo() {
         layouts->setProperty(juce::Identifier(chave.c_str()), juce::Array<juce::var>{ ponto.x, ponto.y });
     juce::DynamicObject::Ptr raiz = new juce::DynamicObject();
     raiz->setProperty("layouts", juce::var(layouts.get()));
+    raiz->setProperty("containersComoPastas", containersComoPastas_);
     if (!arquivoLayout().replaceWithText(juce::JSON::toString(juce::var(raiz.get()), true)))
         juce::Logger::writeToLog("Folder Map: não foi possível gravar " + arquivoLayout().getFullPathName());
 }
@@ -4794,12 +5029,58 @@ void ArvoreBackupComponent::removerSoltosDoBackup(const std::vector<std::string>
     recarregar();
 }
 
+// Botão direito num container solto > Editar questionário inicial.
+void ArvoreBackupComponent::editarQuestionarioDoContainerSolto(const std::string& nestId, const std::string& origem) {
+    if (overlayAtual_ != nullptr || nestId.empty()) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    editarQuestionarioDoContainer(*overlayAtual_, projeto_, nestId, origem, [seguro](bool aplicou) {
+        juce::MessageManager::callAsync([seguro, aplicou] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (aplicou) seguro->recarregar();
+        });
+    });
+    resized();
+}
+
 void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
     const auto ids = idsSoltosSelecionados();
     if (ids.empty()) return;
     juce::PopupMenu menu;
     juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
     const bool unico = ids.size() == 1;
+    if (unico) {
+        for (const auto& lf : looseFiles_) {
+            if (lf.id != ids.front() || !lf.ehContainer) continue;
+            const std::string nestId = lf.nestId, origem = lf.containerOrigem;
+            if (matriz::ui::ehOrigemProject(juce::String(origem)))
+                menu.addItem(i18n::t("projeto.abrir"), true, false, [seguro, nestId, origem] { if (seguro && seguro->aoAbrirProject) seguro->aoAbrirProject(nestId, origem); });
+            if (matriz::ui::ehOrigemComFicha(juce::String(origem)))
+                menu.addItem(i18n::t("imp.editar_questionario"), true, false, [seguro, nestId, origem] { if (seguro) seguro->editarQuestionarioDoContainerSolto(nestId, origem); });
+            menu.addSeparator();
+            break;
+        }
+    }
+    {   // Disconnect from Parent (D): tambem para containers — tira da pasta e volta para a raiz do mapa, solto.
+        bool algumContainer = false, algumComPai = false;
+        for (const auto& lf : looseFiles_) {
+            if (!lf.ehContainer || std::find(ids.begin(), ids.end(), lf.id) == ids.end()) continue;
+            algumContainer = true;
+            if (!lf.pastaPaiId.empty()) algumComPai = true;
+        }
+        if (algumContainer) {
+            juce::PopupMenu::Item item(i18n::t("arvore_backup.desconectar_pai"));
+            item.itemID = -1;
+            item.isEnabled = algumComPai && !mapaAtivoEhOriginal();
+            item.shortcutKeyDescription = "D";
+            item.action = [seguro] { if (seguro) seguro->desconectarContainersSelecionados(); };
+            menu.addItem(std::move(item));
+            menu.addSeparator();
+        }
+    }
     menu.addItem(i18n::t("light.ui.mb.ctx.showAtSource"), unico, false, [seguro, ids] { if (seguro) seguro->mostrarNaOrigem(ids.front()); });
     juce::PopupMenu mover;
     adicionarSubmenuDePastas(mover, "", ids);
@@ -4818,6 +5099,28 @@ void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
             seguro->projeto_.desfazerNest(ids);
             seguro->recarregar();
         });
+    {   // Group as Project Container / Change Container Type / Ungroup Container
+        matriz::ui::HospedeOverlay hospede;
+        hospede.abrir = [seguro]() -> PainelOverlay* {
+            if (seguro == nullptr || seguro->overlayAtual_ != nullptr) return nullptr;
+            seguro->overlayAtual_ = std::make_unique<PainelOverlay>();
+            seguro->addAndMakeVisible(*seguro->overlayAtual_);
+            seguro->resized();
+            return seguro->overlayAtual_.get();
+        };
+        hospede.fechar = [seguro] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+        };
+        hospede.aoMudarDados = [seguro] { if (seguro != nullptr) seguro->recarregar(); };
+        juce::PopupMenu grupo;
+        matriz::ui::adicionarMenuProjectContainer(grupo, projeto_, ids, hospede);
+        if (grupo.getNumItems() > 0) {
+            menu.addSeparator();
+            for (juce::PopupMenu::MenuItemIterator it(grupo); it.next();) menu.addItem(it.getItem());
+        }
+    }
     menu.addSeparator();
     menu.addItem(i18n::t("arvore_backup.mover_para_trash"), !mapaAtivoEhOriginal(), false, [seguro, ids] {
         if (!seguro) return;

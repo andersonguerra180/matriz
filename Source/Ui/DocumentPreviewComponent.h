@@ -24,6 +24,9 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    // Self-test: origem do NSView do documento na janela (false = sem view nativa).
+    bool origemNativaParaTeste(double& x, double& y) const;
+
 private:
     void timerCallback() override;
     void atualizarBarraNavegacao();

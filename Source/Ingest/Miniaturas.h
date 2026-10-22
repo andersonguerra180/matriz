@@ -49,10 +49,12 @@ struct KeyframeGerado {
 // Quando `quantidade` == 1: por padrão o frame é sorteado entre 10%-90% da
 // duração (evita telas pretas de abertura); com `primeiroFrame` = true, o
 // frame extraído é sempre t=0 — usado pela miniatura principal (DUPLICATES
-// precisa de um resultado determinístico pra comparar visualmente).
+// precisa de um resultado determinístico pra comparar visualmente). `janelaInicio`/`janelaFim`
+// (frações da duração) limitam o sorteio do frame único (ex.: 0.35 a 0.65 = meio do vídeo).
 std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double duracaoSegundos, int quantidade,
                                                  const juce::File& dirDestino, const juce::String& prefixo,
-                                                 int larguraPx = 320, bool primeiroFrame = false);
+                                                 int larguraPx = 320, bool primeiroFrame = false,
+                                                 double janelaInicio = 0.1, double janelaFim = 0.9);
 
 struct FormaDeOnda {
     double duracaoSegundos = 0.0;

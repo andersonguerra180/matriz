@@ -19,6 +19,7 @@ inline Secao& secaoAtual() { static Secao s = Secao::Backup; return s; }
 
 struct Paleta {
     juce::Colour fundo, janela, poco, linha, grafite, tinta, mudo, vermelho, branco, campo;
+    juce::Colour janelaDestaque;  // card que precisa se destacar dos demais (ex.: GEO LOCATION nos questionários)
 };
 
 inline Paleta paleta() {
@@ -26,10 +27,10 @@ inline Paleta paleta() {
     if (tk.fundo.getBrightness() > 0.5f) {
         return { juce::Colour(0xffece7e0), juce::Colour(0xfff6f2eb), juce::Colour(0xffede8e0), juce::Colour(0xffd8d1c6),
                  juce::Colour(0xff4a4440), juce::Colour(0xff1b1917), juce::Colour(0xff6f6a62), juce::Colour(0xffb8221a),
-                 juce::Colours::white, juce::Colour(0xfffaf8f4) };
+                 juce::Colours::white, juce::Colour(0xfffaf8f4), juce::Colour(0xffeee7d8) };
     }
     return { tk.fundo, tk.cartao, tk.painelAlt, tk.linhaSuave, tk.acento, tk.textoPrimario, tk.textoSecundario, tk.perigo,
-             tk.textoSobreAcento, tk.campoFundo };
+             tk.textoSobreAcento, tk.campoFundo, tk.cartao.interpolatedWith(tk.acento, 0.12f) };
 }
 
 inline Secao resolver(Secao s) { return s == Secao::Auto ? secaoAtual() : s; }
@@ -83,8 +84,10 @@ inline Geometria geometria(juce::Rectangle<int> janela, bool comRodape) {
 
 // Pinta sombra, papel, cabeçalho (ícone da seção, trilha, título, contador, X, linha de progresso) e a faixa do rodapé.
 // `progresso` < 0 = sem linha de progresso; `contador` ex.: "01 / 05".
+// `etiqueta` (opcional): tag grande e colorida no cabeçalho, à esquerda do X — ex.: o tipo do PROJECT ("VINYL TRANSCRIPTION").
 inline void desenhar(juce::Graphics& g, const Geometria& geo, Secao secao, const juce::String& trilha, const juce::String& titulo,
-                     bool comRodape, float progresso = -1.0f, const juce::String& contador = {}, bool comFechar = true) {
+                     bool comRodape, float progresso = -1.0f, const juce::String& contador = {}, bool comFechar = true,
+                     const juce::String& etiqueta = {}) {
     const auto p = paleta();
     const auto janela = geo.janela.toFloat();
     // sombra suave (camadas, sem blur)
@@ -117,7 +120,20 @@ inline void desenhar(juce::Graphics& g, const Geometria& geo, Secao secao, const
                           : resolver(secao) == Secao::Ferramentas ? IconeUi::Ferramentas : IconeUi::Backup;
     desenharIcone(g, icone, azulejo.reduced(10.0f), corIcone(secao));
 
-    auto texto = cab.withTrimmedLeft(kMargemCorpo + 40 + 16).withTrimmedRight(kMargemCorpo + (comFechar ? 52 : 0) + (contador.isNotEmpty() ? 90 : 0));
+    int larguraEtiqueta = 0;
+    if (etiqueta.isNotEmpty()) {
+        const auto fonteEtiqueta = fonteUi(14.0f, juce::Font::bold).withExtraKerningFactor(0.12f);
+        larguraEtiqueta = juce::GlyphArrangement::getStringWidthInt(fonteEtiqueta, caixaAlta(etiqueta)) + 36;
+        const int xDireita = geo.botaoFechar.getX() - (contador.isNotEmpty() ? 110 : 16);
+        const juce::Rectangle<float> pilula(static_cast<float>(xDireita - larguraEtiqueta), static_cast<float>(cab.getCentreY() - 16), static_cast<float>(larguraEtiqueta), 32.0f);
+        g.setColour(juce::Colour(0xffb8860b));
+        g.fillRoundedRectangle(pilula, 16.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(fonteEtiqueta);
+        g.drawText(caixaAlta(etiqueta), pilula.toNearestInt(), juce::Justification::centred, false);
+        larguraEtiqueta += 16;
+    }
+    auto texto = cab.withTrimmedLeft(kMargemCorpo + 40 + 16).withTrimmedRight(kMargemCorpo + (comFechar ? 52 : 0) + (contador.isNotEmpty() ? 90 : 0) + larguraEtiqueta);
     g.setColour(p.mudo);
     g.setFont(fonteUi(tema().tamanhoFonteMicro, juce::Font::bold).withExtraKerningFactor(0.06f));
     const auto nome = nomeDaSecao(secao);
@@ -190,9 +206,11 @@ public:
         setSize(tamanhoComMargem(conteudo_->getWidth()), tamanhoComMargem(kAlturaCabecalho + conteudo_->getHeight()));
     }
     void definirTitulo(const juce::String& titulo) { titulo_ = titulo; repaint(); }
+    // Tag do tipo do PROJECT no cabeçalho ("" = sem tag).
+    void definirEtiqueta(const juce::String& etiqueta) { etiqueta_ = etiqueta; repaint(); }
 
     void paint(juce::Graphics& g) override {
-        desenhar(g, geometria(areaDoCartaoNativo(getLocalBounds()), false), secao_, trilha_, titulo_, false, -1.0f, {}, comFechar_);
+        desenhar(g, geometria(areaDoCartaoNativo(getLocalBounds()), false), secao_, trilha_, titulo_, false, -1.0f, {}, comFechar_, etiqueta_);
     }
     void paintOverChildren(juce::Graphics& g) override {
         // O conteúdo pinta fundo retangular: repinta os cantos fora do cartão arredondado com o fundo da janela
@@ -233,7 +251,7 @@ private:
     std::unique_ptr<juce::Component> dono_;
     juce::Component* conteudo_ = nullptr;
     Secao secao_;
-    juce::String trilha_, titulo_;
+    juce::String trilha_, titulo_, etiqueta_;
     bool comFechar_ = true;
     bool arrastando_ = false;
     juce::ComponentDragger dragger_;

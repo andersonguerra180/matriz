@@ -1,3 +1,4 @@
+#include "../Model/NomesCanonicos.h"
 #include "AutoCompleteTextEditor.h"
 
 #include "Tokens.h"
@@ -167,7 +168,7 @@ void AutoCompleteTextEditor::atualizarPopup() {
     juce::String filtro = getText().trim();
     std::vector<juce::String> filtrados;
     for (const auto& v : todos) {
-        if (filtro.isEmpty() || v.containsIgnoreCase(filtro)) filtrados.push_back(v);
+        if (filtro.isEmpty() || juce::String(matriz::model::nomes::chave(v.toStdString())).contains(juce::String(matriz::model::nomes::chave(filtro.toStdString())))) filtrados.push_back(v);
     }
     std::sort(filtrados.begin(), filtrados.end(),
               [](const juce::String& a, const juce::String& b) { return a.compareIgnoreCase(b) < 0; });

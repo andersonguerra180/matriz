@@ -1,5 +1,7 @@
 #include "MainComponent.h"
+#include "ImportarMenu.h"
 #include "JanelaPastaFlutuante.h"
+#include "ContainerVisual.h"
 #include "../Model/Inbox.h"
 #include "../Consolidacao/BridgeXmp.h"
 #include "MainEditPanel.h"
@@ -528,6 +530,22 @@ auto executarComPrazoOuSkip(Trabalho trabalho, int prazoSegundos,
                               " (slow or unresponsive storage)");
 }
 
+
+// Contexto da janela IMPORT aplicado item a item pelos jobs de ingestão do lote. O AplicadorSobreMaterial só é
+// construído quando o primeiro item chega (lê vocabulário e pessoas do registro); chamar sempre sob o lock de escrita.
+class AplicadorDoLote {
+public:
+    explicit AplicadorDoLote(std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) : sobre_(std::move(sobre)) {}
+    void aplicar(matriz::db::Database& registro, const std::string& itemId) {
+        std::call_once(montado_, [&] { aplicador_ = std::make_unique<matriz::ingest::AplicadorSobreMaterial>(registro, *sobre_); });
+        aplicador_->aplicar(itemId);
+    }
+private:
+    std::shared_ptr<const matriz::ingest::SobreMaterial> sobre_;
+    std::once_flag montado_;
+    std::unique_ptr<matriz::ingest::AplicadorSobreMaterial> aplicador_;
+};
+
 } // namespace
 
 MainComponent::MainComponent() {
@@ -935,6 +953,10 @@ void MainComponent::reconstruirLayoutProjeto() {
     mosaico_->aoMudarConteudoVisivel = [this] {
         atualizarPainelDeApoio();
         atualizarBarraMetricas();
+        if (verificarNomesAposPrimeiroSnapshot_ && mosaico_ && !mosaico_->snapshotPendente()) {
+            verificarNomesAposPrimeiroSnapshot_ = false;
+            verificarUnificacaoDeNomes();
+        }
     };
     mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> itemIds) { abrirMenuContextoItens(std::move(itemIds)); };
     mosaico_->aoRenomearItem = [this] {
@@ -1327,6 +1349,16 @@ void MainComponent::reconstruirLayoutProjeto() {
     repaint();
 }
 
+// Edit Project Info: a ficha do IMPORT reabre preenchida; ao salvar todas as telas se atualizam.
+void MainComponent::editarProjetoDoContainer(const std::string& nestId, const std::string& origem) {
+    if (!projetoAberto_) return;
+    editarQuestionarioDoContainer(overlay_, *projetoAberto_, nestId, origem, [this](bool aplicou) {
+        if (!aplicou) return;
+        ganchosDeAcao().aoMudarDados();  // grade, árvores, filtros, Folder Map, BACKUP e faixa de apoio
+        if (intakeWorkspace_) intakeWorkspace_->recarregar();
+    });
+}
+
 matriz::ui::acoes::Ganchos MainComponent::ganchosDeAcao() {
     matriz::ui::acoes::Ganchos ganchos;
     // Qualquer ação que mexe no banco pode mudar contagem, agrupamento,
@@ -1351,6 +1383,7 @@ matriz::ui::acoes::Ganchos MainComponent::ganchosDeAcao() {
     ganchos.itemEmMemoria = [this](const std::string& id) -> const ItemResumo* {
         return mosaico_ ? mosaico_->itemEmMemoria(id) : nullptr;
     };
+    ganchos.aoEditarQuestionario = [this](const std::string& nestId, const std::string& origem) { editarProjetoDoContainer(nestId, origem); };
     return ganchos;
 }
 
@@ -1358,7 +1391,7 @@ void MainComponent::abrirMenuContextoItens(std::vector<std::string> itemIds) {
     if (!projetoAberto_ || itemIds.empty()) return;
 
     auto ganchos = ganchosDeAcao();
-    auto menu = matriz::ui::acoes::construirMenu(*projetoAberto_, itemIds, ganchos.itemEmMemoria);
+    auto menu = matriz::ui::acoes::construirMenu(*projetoAberto_, itemIds, ganchos.itemEmMemoria, true);
     ProjetoAberto* projeto = projetoAberto_.get();
     menu.showMenuAsync(juce::PopupMenu::Options(), [projeto, itemIds, ganchos](int resultado) {
         matriz::ui::acoes::executar(resultado, *projeto, itemIds, ganchos);
@@ -1647,10 +1680,12 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     }
     addAndMakeVisible(*barraProgressoGlobal_);
 
+    const bool temItens = projetoAberto_ && projetoAberto_->contarItens() > 0;
+    verificarNomesAposPrimeiroSnapshot_ = !isCatalog && temItens;
     if (isCatalog) {
         mostrarCatalogHub();
     } else {
-        if (projetoAberto_ && projetoAberto_->contarItens() > 0) {
+        if (temItens) {
             mostrarGrid();
         } else {
             mostrarIntake();
@@ -1660,7 +1695,9 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     verificarVaultsConectados();
     verificarPresencaInicialAssets();
     verificarPapelMain();
-    verificarUnificacaoDeNomes();
+    // Projetos comuns fazem esta varredura quando o primeiro snapshot da
+    // grade termina; catálogo raiz não carrega essa grade aqui.
+    if (isCatalog) verificarUnificacaoDeNomes();
     if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
     startTimer(5000);
 }
@@ -1775,6 +1812,10 @@ void MainComponent::mostrarIntake() {
         intakeWorkspace_->aoIngerirArquivosDireto = [this](const juce::Array<juce::File>& arqs) {
             ingerirArquivos(arqs);
         };
+        intakeWorkspace_->aoIngerirComContexto = [this](const juce::Array<juce::File>& arqs,
+                                                          std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
+            ingerirArquivos(arqs, true, std::move(sobre));
+        };
         intakeWorkspace_->aoDefinirOrigemContainer = [this](const std::string& origem) { origemContainerProximoLote_ = origem; };
         intakeWorkspace_->aoIngerirDeGoogleDrive = [this](const juce::File& gdFolder) {
             // Open a FileChooser rooted at the Google Drive local folder
@@ -1822,6 +1863,9 @@ void MainComponent::mostrarCatalog() {
 
 void MainComponent::mostrarGrid() {
     if (!projetoAberto_) return;
+    // A consolidação pode atualizar estado/sincronização sem evento por
+    // item; mantém a releitura ao sair do Backup, inclusive pelo DONE.
+    const bool voltandoDoBackup = backupWorkspace_ && backupWorkspace_->isVisible();
     telaAtiva_ = TelaAtiva::Catalog;
 
     if (barraNavegacao_) {
@@ -1840,6 +1884,8 @@ void MainComponent::mostrarGrid() {
 
     if (!catalogWorkspace_) {
         catalogWorkspace_ = std::make_unique<CatalogWorkspaceComponent>(*projetoAberto_);
+        catalogWorkspace_->aoEditarProjeto = [this](const std::string& nestId, const std::string& origem) { editarProjetoDoContainer(nestId, origem); };
+        catalogWorkspace_->obterOverlay = [this]() -> PainelOverlay* { return overlay_.estaAberto() ? nullptr : &overlay_; };
         catalogWorkspace_->aoAgruparEIrParaTree = [this](std::string folderId) {
             mostrarTree();
             if (treeWorkspace_) {
@@ -1857,8 +1903,11 @@ void MainComponent::mostrarGrid() {
         };
         addAndMakeVisible(*catalogWorkspace_);
     } else {
+        // O mosaico acumula eventos enquanto escondido e os aplica em
+        // visibilityChanged(). Voltar à aba não é uma mudança no catálogo:
+        // reler tudo aqui descartava o benefício das atualizações por item.
         catalogWorkspace_->setVisible(true);
-        catalogWorkspace_->recarregar();
+        if (voltandoDoBackup) catalogWorkspace_->recarregar();
     }
 
     // Sem "Catalog ready" aqui: era falso (nada carregado ainda). O progresso real
@@ -1964,6 +2013,10 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
             };
             treeWorkspace_->aoAbrirPastaJanela = [this](const std::string& pastaId, const juce::String& nome) {
                 abrirJanelaDaPasta(pastaId, nome);
+            };
+            treeWorkspace_->aoAbrirProject = [this](const std::string& nestId, const std::string& origem) { abrirProjectDoContainer(nestId, origem); };
+            treeWorkspace_->aoAbrirContainerJanela = [this](const std::string& nestId, const juce::String& nome) {
+                abrirJanelaDoContainer(nestId, nome);
             };
             treeWorkspace_->aoPerguntarIngestEmProcessamento = [this] { return pendentes_->load() > 0 || escaneandoEmAndamento_.load(); };
             treeWorkspace_->aoIngerirArquivos = [this](const juce::Array<juce::File>& files, const std::string& /*pastaId*/) {
@@ -2744,8 +2797,8 @@ void MainComponent::mostrarDialogoRelinkInicial(const matriz::vault::AssetPresen
 
             safeThis->projetoAberto_->aplicarBatchRelinkEmMemoria(inMemRelocated);
 
-            if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
             if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
+            if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
 
             juce::String msg = "ASSET RELOCATION\n\nResolved: " + juce::String(res.resolvedCount) +
                                "\nNot Found: " + juce::String(res.notFoundCount) +
@@ -2813,8 +2866,8 @@ void MainComponent::abrirDialogoRelinkOffline(const std::string& itemId) {
             if (ok) {
                 safeThis->projetoAberto_->transferirMarcacoes(itemId, novoItemId);
                 safeThis->projetoAberto_->salvar();
-                if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
                 if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
+                if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
                 if (safeThis->fichaPanel_) safeThis->fichaPanel_->mostrarItem(novoItemId);
             }
         });
@@ -2890,8 +2943,8 @@ void MainComponent::aoConversaRecebida(const juce::File& arquivo, juce::int64 ta
                 if (seguro == nullptr || !seguro->projetoAberto_) return;
                 EventBus::obterInstancia().dispararItemAlterado("", "metadado");
                 if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
-                if (seguro->mosaico_) seguro->mosaico_->recarregar();
                 if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
+                if (seguro->mosaico_) seguro->mosaico_->recarregar();
             });
         });
     } else {
@@ -2899,7 +2952,8 @@ void MainComponent::aoConversaRecebida(const juce::File& arquivo, juce::int64 ta
     }
 }
 
-void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp) {
+void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp,
+                                    std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
     if (!projetoAberto_) return;
     if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: só leitura
 
@@ -2945,8 +2999,8 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
                     if (seguro == nullptr || !seguro->projetoAberto_) return;
                     EventBus::obterInstancia().dispararItemAlterado("", "metadado");
                     if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
-                    if (seguro->mosaico_) seguro->mosaico_->recarregar();
                     if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
+                    if (seguro->mosaico_) seguro->mosaico_->recarregar();
                 });
             });
 
@@ -2957,7 +3011,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
                 }
             }
             if (restantes.isEmpty()) return;
-            ingerirArquivos(restantes, false);  // sem redetectar: o que sobrou segue como arquivo comum
+            ingerirArquivos(restantes, false, sobre);  // sem redetectar: o que sobrou segue como arquivo comum
             return;
         }
     }
@@ -2976,9 +3030,9 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
         for (const auto& entrada : arquivosOuPastas)
             if (entrada.isDirectory()) pastasRaiz.push_back(entrada.getFullPathName().toStdString());
         projetoAberto_->registrarPastasIngeridas(pastasRaiz);
-        expandirArquivosAsync(arquivosOuPastas, [this](std::vector<juce::File> novosArquivos, int) {
+        expandirArquivosAsync(arquivosOuPastas, [this, sobre](std::vector<juce::File> novosArquivos, int) {
             if (novosArquivos.empty()) return;
-            resolverDuplicatasIntakeEEnfileirar(std::move(novosArquivos));
+            resolverDuplicatasIntakeEEnfileirar(std::move(novosArquivos), sobre);
         });
         return;
     }
@@ -2986,7 +3040,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     // Loose files only
     auto arquivos = expandirArquivos(arquivosOuPastas);
     if (arquivos.empty()) return;
-    resolverDuplicatasIntakeEEnfileirar(std::move(arquivos));
+    resolverDuplicatasIntakeEEnfileirar(std::move(arquivos), sobre);
 }
 
 void MainComponent::escanearInbox() {
@@ -3172,7 +3226,8 @@ juce::File criarInstanciaComSufixo(const juce::File& original) {
 
 } // namespace
 
-void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> arquivos) {
+void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> arquivos,
+                                                        std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
     if (!projetoAberto_ || arquivos.empty()) return;
 
     auto& registro = projetoAberto_->projeto().registro();
@@ -3207,7 +3262,7 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
     // dialog, bem depois desta função já ter retornado.
     juce::Component::SafePointer<MainComponent> safeThis(this);
     if (resolvendoDuplicatas_++ == 0) descartarLotesEmResolucao_ = false;
-    ingestPool_.addJob([safeThis, arquivos, existentes = std::move(existentes), pastaProjeto]() mutable {
+    ingestPool_.addJob([safeThis, arquivos, sobre, existentes = std::move(existentes), pastaProjeto]() mutable {
         matriz::diag::LogOperacao logOp("resolverDuplicatas:" + std::to_string(arquivos.size()) + " arquivos");
         // Índice por título+extensão+tamanho: troca o scan linear de
         // `existentes` por arquivo novo (O(n×m) no lote inteiro) por uma
@@ -3244,13 +3299,13 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
             }
         }
 
-        juce::MessageManager::callAsync([safeThis, arquivos, coincidencias, pastaProjeto]() mutable {
+        juce::MessageManager::callAsync([safeThis, arquivos, sobre, coincidencias, pastaProjeto]() mutable {
             if (!safeThis) return;
             --safeThis->resolvendoDuplicatas_;
             if (safeThis->descartarLotesEmResolucao_) return;  // cancelado antes de virar lote
 
             if (coincidencias.empty()) {
-                safeThis->processarLoteEmBackground(std::move(arquivos), "", "");
+                safeThis->processarLoteEmBackground(std::move(arquivos), "", "", nullptr, sobre);
                 return;
             }
 
@@ -3284,7 +3339,7 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
                 matriz::i18n::t("intake.duplicate_dialog_titulo"),
                 matriz::i18n::t("intake.duplicate_dialog_intro"),
                 entries, actionLabels,
-                [safeThis, arquivos, coincidencias, pastaProjeto](bool confirmado, std::vector<DuplicateResolutionDialog::Entry> resultado) mutable {
+                [safeThis, arquivos, sobre, coincidencias, pastaProjeto](bool confirmado, std::vector<DuplicateResolutionDialog::Entry> resultado) mutable {
                     if (!safeThis) return;
                     // O modal do scan de pasta já está em "INGESTING 0/N" esperando este lote: sem lote nenhum
                     // ele ficava em 0% para sempre. Só mexe nele se nenhum lote de fato está rodando nele.
@@ -3327,7 +3382,7 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
                         if (!pular[i]) arquivosFinais.push_back(arquivos[i]);
                     }
                     if (!arquivosFinais.empty()) {
-                        safeThis->processarLoteEmBackground(std::move(arquivosFinais), "", "");
+                        safeThis->processarLoteEmBackground(std::move(arquivosFinais), "", "", nullptr, sobre);
                     } else if (modalSemLote) {
                         safeThis->ingestModalDialog_->finishWithNotice(
                             matriz::i18n::t("intake.duplicate_nada_titulo"),
@@ -3404,8 +3459,10 @@ void MainComponent::ingerirPastaDoBridge() {
                                 });
                             };
                         }
-                        safeThis->origemContainerProximoLote_ = "bridge";  // Adobe Bridge = container no Intake
-                        safeThis->resolverDuplicatasIntakeEEnfileirar(std::move(*arquivos));
+                        // Adobe Bridge = NEST (agrupamento temático), não container.
+                        auto comoNest = std::make_shared<matriz::ingest::SobreMaterial>();
+                        comoNest->agruparComoNest = true;
+                        safeThis->resolverDuplicatasIntakeEEnfileirar(std::move(*arquivos), comoNest);
                     });
                 });
             });
@@ -3430,6 +3487,39 @@ void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::S
             if (seguro->filtros_) seguro->filtros_->recarregar();
             if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
         });
+}
+
+// Open Project: o player de CD no DDP; nos demais PROJECTS o preview do arquivo-capa, com a capa do projeto e a coluna dos arquivos.
+void MainComponent::abrirProjectDoContainer(const std::string& nestId, const std::string& origem) {
+    if (!projetoAberto_ || nestId.empty()) return;
+    if (matriz::ui::abrirContainerPorTipo(*projetoAberto_, nestId, origem)) return;  // DDP
+    const auto membros = projetoAberto_->membrosDoNest(nestId);
+    if (membros.empty()) return;
+    std::string capa = membros.front();
+    if (const auto info = projetoAberto_->nestDoItem(membros.front())) if (!info->capaId.empty()) capa = info->capaId;
+    abrirPreview(capa);
+}
+
+// Duplo clique num container no Folder Map: a janela de grade só com o conteúdo dele (filtros, thumbs/lista, metadados somente leitura).
+void MainComponent::abrirJanelaDoContainer(const std::string& nestId, const juce::String& nome) {
+    if (!projetoAberto_ || nestId.empty()) return;
+    janelaPasta_.reset();
+    juce::Component::SafePointer<MainComponent> seguro(this);
+    janelaPasta_ = std::make_unique<JanelaPastaFlutuante>(
+        *projetoAberto_, std::string(), nome,
+        [seguro] {
+            if (!seguro) return;
+            seguro->janelaPasta_.reset();
+            if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+        },
+        [seguro] {
+            if (!seguro) return;
+            if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+            if (seguro->mosaico_) seguro->mosaico_->recarregar();
+            if (seguro->filtros_) seguro->filtros_->recarregar();
+            if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
+        },
+        nestId);
 }
 
 void MainComponent::extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId) {
@@ -3559,7 +3649,7 @@ void MainComponent::importarCatalogoLightroom() {
                     try {
                         auto st = registro->prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 1 ORDER BY criado_em, id");
                         while (st.step()) if (antes.count(st.columnText(0)) == 0) novos.push_back(st.columnText(0));
-                        if (novos.size() >= 2) projLr->criarContainerImportacao(novos, "lightroom");
+                        if (novos.size() >= 2) projLr->criarNestDeImportacao(novos);  // Lightroom = NEST (tema em comum), não container
                     } catch (...) {}
                 }
                 juce::MessageManager::callAsync([safeThis, res]() mutable {
@@ -3975,8 +4065,14 @@ void MainComponent::expandirArquivosAsync(
 void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                                 const std::string& sourceMedia,
                                                 const std::string& collection,
-                                                std::function<void(const std::vector<std::string>&)> aoConcluir) {
+                                                std::function<void(const std::vector<std::string>&)> aoConcluir,
+                                                std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
     if (!projetoAberto_) return;
+
+    // Contexto da janela IMPORT: o aplicador é montado pelo primeiro job (na thread que ingere, sob o lock do
+    // registro) e reaproveitado pelos demais — vocabulário e lista de pessoas são lidos uma vez por lote.
+    std::shared_ptr<AplicadorDoLote> aplicadorLote;
+    if (sobre != nullptr && !sobre->vazio()) aplicadorLote = std::make_shared<AplicadorDoLote>(sobre);
 
     // Ponteiro, não referência: a referência local morreria ao sair desta
     // função, mas os jobs do ThreadPool rodam depois disso — precisam de
@@ -4135,24 +4231,65 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
             aoConcluir(doChamador);
         });
     }
-    if (!origemContainerProximoLote_.empty()) {
+    // A origem do container vem do contexto do card IMPORT (preferida: viaja com os arquivos) ou do aviso avulso
+    // origemContainerProximoLote_ (Drive, Bridge, galeria).
+    std::string origemDoLote;
+    if (sobre != nullptr && !sobre->containerOrigem.empty()) {
+        origemDoLote = sobre->containerOrigem;
+    } else if (!origemContainerProximoLote_.empty()) {
+        origemDoLote = std::move(origemContainerProximoLote_);
+        origemContainerProximoLote_.clear();
+    }
+    if (!origemDoLote.empty()) {
         // CONTAINER de importação: no fim do lote, os itens criados por esta chamada viram um nest com origem.
         const std::set<std::string> meus(itemIds.begin(), itemIds.end());
-        const std::string origem = std::move(origemContainerProximoLote_);
-        origemContainerProximoLote_.clear();
+        const std::string origem = origemDoLote;
+        const std::string capaDoContainer = sobre != nullptr ? sobre->capaContainer : std::string();
+        const bool capaFrameDoVideo = sobre != nullptr && sobre->capaFrameDoVideo;
+        const std::string iconeDoContainer = sobre != nullptr ? sobre->iconeContainer : std::string();
+        const std::string questionarioJson = sobre != nullptr ? questionarioParaJson(*sobre) : std::string();  // para editar depois
+        const std::string nomeDoContainer = sobre != nullptr ? sobre->nomeContainer : std::string();
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
-        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem](const std::vector<std::string>& processados) {
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer](const std::vector<std::string>& processados) {
             if (!seguroContainer || !seguroContainer->projetoAberto_) return;
             std::vector<std::string> doContainer;
             for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
             if (doContainer.size() < 2) return;
             ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
-            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem] {
-                try { proj->criarContainerImportacao(doContainer, origem); } catch (...) {}
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer] {
+                try {
+                    const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
+                    if (!nestId.empty() && !iconeDoContainer.empty()) proj->definirIconeDoContainer(nestId, iconeDoContainer);
+                    if (!nestId.empty() && !questionarioJson.empty()) proj->definirQuestionarioDoContainer(nestId, questionarioJson);
+                    if (!nestId.empty() && !nomeDoContainer.empty()) proj->definirNomeDoContainer(nestId, nomeDoContainer);
+                    if (!nestId.empty() && !capaDoContainer.empty()) proj->definirCapaDoContainer(nestId, juce::File(capaDoContainer));
+                    // YouTube Production: o vídeo representa o container (preview ao abrir) e, sem thumbnail, dá o frame da capa.
+                    if (!nestId.empty() && capaFrameDoVideo) proj->definirCapaDoContainerComFrameDeVideo(nestId, capaDoContainer.empty());
+                } catch (...) {}
                 juce::MessageManager::callAsync([seguroContainer, proj] {
                     if (!seguroContainer || seguroContainer->projetoAberto_.get() != proj) return;
                     if (seguroContainer->intakeWorkspace_) seguroContainer->intakeWorkspace_->recarregar();
+                });
+            });
+        });
+    }
+    if (sobre != nullptr && sobre->agruparComoNest) {
+        // NEST: arquivos que entram juntos com um tema em comum (sample pack, gravações de campo, documentos, Bridge).
+        const std::set<std::string> meus(itemIds.begin(), itemIds.end());
+        juce::Component::SafePointer<MainComponent> seguroNest(this);
+        const juce::ScopedLock sl(estadoLote->lock);
+        estadoLote->aoConcluir.push_back([seguroNest, meus](const std::vector<std::string>& processados) {
+            if (!seguroNest || !seguroNest->projetoAberto_) return;
+            std::vector<std::string> doNest;
+            for (const auto& id : processados) if (meus.count(id)) doNest.push_back(id);
+            if (doNest.size() < 2) return;
+            ProjetoAberto* proj = seguroNest->projetoAberto_.get();
+            seguroNest->poolVaults_.addJob([seguroNest, proj, doNest] {
+                try { proj->criarNestDeImportacao(doNest); } catch (...) {}
+                juce::MessageManager::callAsync([seguroNest, proj] {
+                    if (!seguroNest || seguroNest->projetoAberto_.get() != proj) return;
+                    if (seguroNest->intakeWorkspace_) seguroNest->intakeWorkspace_->recarregar();
                 });
             });
         });
@@ -4204,7 +4341,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         // rodava direto na thread de mensagens antes — era exatamente o
         // travamento reportado. Agora cada arquivo é um job no ThreadPool
         // (1 thread — sequencial, sem concorrência de escrita no registro).
-        ingestPool_.addJob([registro, indice, pastaProjeto, itemId, arquivo, estadoLote, safeThis,
+        ingestPool_.addJob([registro, indice, pastaProjeto, itemId, arquivo, estadoLote, safeThis, aplicadorLote,
                              contadorParaAtualizar, cancelamento, prefixo, escritaRegistro,
                              proximoNumeroAcervo,
                              pendentes = pendentes_, skipToken = skipTokenLote_,
@@ -4332,6 +4469,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                    matriz::db::Value::of(itemId)});
 
                     matriz::ingest::gravarCache(*registro, arquivoIdGravado, cache);
+                    if (aplicadorLote) aplicadorLote->aplicar(*registro, itemId);  // contexto da janela IMPORT
                     sucesso = true;
                 }
 

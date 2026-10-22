@@ -4,6 +4,7 @@
 #include "../Ingest/Miniaturas.h"
 #include "../Model/CaminhosBanco.h"
 #include "LogosTipoArquivo.h"
+#include "ContainerVisual.h"
 #include "../Whatsapp/WhatsappIngestao.h"
 
 #include "../Ficha/FichaI18n.h"
@@ -130,17 +131,34 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
         ++geracaoSnapshot_;
         snapshotPendente_ = false;
         const auto nests = ProjetoAberto::mapaDeNests(projeto_.projeto().registro());
+        const juce::File pastaDoProjeto = projeto_.projeto().pasta();
         auto aplicar = [&](std::vector<ItemResumo>& lista) {
             for (auto& item : lista) {
                 auto it = nests.find(item.id);
-                if (it == nests.end()) { item.nestId.clear(); item.nestCapaId.clear(); item.nestTotal = 0; item.nestCapa = false; continue; }
+                if (it == nests.end()) {
+                    item.nestId.clear(); item.nestCapaId.clear(); item.nestTotal = 0; item.nestCapa = false;
+                    item.nestOrigem.clear(); item.nestCapaImagem.clear(); item.nestIcone.clear();
+                    continue;
+                }
                 item.nestId = it->second.nestId;
                 item.nestCapaId = it->second.capaId;
                 item.nestTotal = it->second.total;
                 item.nestCapa = (item.id == it->second.capaId);
+                item.nestOrigem = it->second.origem;  // container (com origem) continua container; sem origem é NEST
+                item.nestCapaImagem = it->second.capaImagem.empty() ? std::string()
+                                      : pastaDoProjeto.getChildFile(juce::String(it->second.capaImagem)).getFullPathName().toStdString();
+                item.nestIcone = it->second.icone;
+                item.nestNome = it->second.nome;
+                if (item.nestCapa && !item.nestOrigem.empty()) {
+                    item.titulo = !item.nestNome.empty() ? item.nestNome : matriz::i18n::t("intake.container_" + juce::String(item.nestOrigem)).toStdString();
+                    item.nomeOriginalArquivo = item.titulo;
+                }
             }
         };
         aplicar(itensTodos_);
+        textosTodos_.clear();
+        textosTodos_.reserve(itensTodos_.size());
+        for (const auto& item : itensTodos_) textosTodos_.push_back(calcularTextos(item));
         aplicarFiltrosEOrdenacao();
         return;
     }
@@ -421,7 +439,7 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     if (it == nullptr) return;
 
     auto tit = projeto_.lerMetadado(itemId, "titulo");
-    if (tit.has_value()) {
+    if (tit.has_value() && !(it->nestCapa && !it->nestOrigem.empty())) {  // a capa do container mostra o nome do container
         it->titulo = *tit;
         if (!tit->empty()) it->nomeOriginalArquivo = *tit;
     }
@@ -435,6 +453,14 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     it->subject = subj.has_value() && !subj->empty() ? subj : std::nullopt;
     it->marcadoPublicacao = projeto_.itemMarcadoPublicacao(itemId);
     it->tags = projeto_.lerTags(itemId);
+    it->aiGenerated = !projeto_.lerMetadado(itemId, "ai_generated").value_or("").empty();
+    {
+        auto geo = projeto_.projeto().registro().prepare("SELECT 1 FROM asset_geolocation WHERE asset_id = ? AND latitude IS NOT NULL AND longitude IS NOT NULL");
+        geo.bind(1, matriz::db::Value::of(itemId));
+        it->temGeolocalizacao = geo.step();
+    }
+    it->etapaProducao = projeto_.valorCampo(itemId, "raiz", 0, "etapa_producao").value_or("");
+    it->versaoEscolhida = projeto_.valorCampo(itemId, "raiz", 0, "versao_escolhida").value_or("") == "true";
     it->metadadosEditados = true;
     // D3/item 7: marcado_revisado (atalho E) e watermark (W) não tinham
     // sync ao vivo entre a janela de Preview e a grade — H/K/P já eram
@@ -442,6 +468,17 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     // aoItemAlterado, mas E e W caíam só neste caminho genérico, que nunca
     // relia essas duas flags do banco.
     if (auto resumo = projeto_.obterItemResumo(itemId)) {
+        it->tipoMidia = resumo->tipoMidia;
+        it->contentType = resumo->contentType;
+        it->collectionType = resumo->collectionType;
+        it->ano = resumo->ano;
+        it->subject = resumo->subject;
+        it->lista = resumo->lista;
+        it->sourceMedia = resumo->sourceMedia;
+        it->tags = resumo->tags;
+        it->aiGenerated = resumo->aiGenerated;
+        it->temGeolocalizacao = resumo->temGeolocalizacao;
+        it->metadadosEditados = resumo->metadadosEditados;
         it->marcadoRevisado = resumo->marcadoRevisado;
         it->marcadoWatermark = resumo->marcadoWatermark;
         it->marcadoBounce = resumo->marcadoBounce;
@@ -2202,6 +2239,9 @@ void MosaicoComponent::mouseDoubleClick(const juce::MouseEvent& e) {
         }
     }
 
+    // Container com player próprio (DDP = player de CD): abre o player em vez do preview do 1º arquivo.
+    if (item.nestTotal > 1 && !item.nestOrigem.empty() && abrirContainerPorTipo(projeto_, item.nestId, item.nestOrigem)) return;
+
     if (aoAbrirPreview) aoAbrirPreview(item.id);
 }
 
@@ -2649,8 +2689,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     juce::String nome = tx.nome;
                     g.setColour(tk.textoPrimario);
                     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-                    if (item.nestTotal > 1) {  // NEST: o nome ganha o número de arquivos do grupo
-                        const juce::String tag = "  [NEST " + juce::String(item.nestTotal) + "]";
+                    if (item.nestTotal > 1) {  // NEST / container: o nome ganha o número de arquivos do grupo
+                        const juce::String tag = item.nestOrigem.empty()
+                                                     ? "  [NEST " + juce::String(item.nestTotal) + "]"
+                                                     : "  [" + i18n::t("intake.container_" + juce::String::fromUTF8(item.nestOrigem.c_str())).toUpperCase() + " " + juce::String(item.nestTotal) + "]";
                         nome += tag;
                     }
                     if (item.offline) {
@@ -2749,8 +2791,16 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
             int textAreaH = juce::jmin(40, bounds.getHeight() / 4 + 10);
             juce::Rectangle<int> areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
-            const juce::Image* img = miniaturaCache(item.id);
-            if (img) {
+            // CONTAINER (nest com origem: DDP, produção, vinil, fita, YouTube): ícone grande do tipo ou a capa, não o 1º arquivo.
+            const juce::String origemContainer = juce::String::fromUTF8(item.nestOrigem.c_str());
+            const bool containerGrafico = item.nestTotal > 1 && ehContainerGrafico(origemContainer);
+            const juce::Image* img = containerGrafico ? nullptr : miniaturaCache(item.id);
+            if (containerGrafico) {
+                g.setColour(tk.painelAlt);
+                g.fillRoundedRectangle(areaImagem.toFloat(), tk.raioPequeno);
+                desenharContainerGrafico(g, areaImagem.toFloat(), origemContainer, juce::String::fromUTF8(item.nestIcone.c_str()),
+                                         juce::String::fromUTF8(item.nestCapaImagem.c_str()));
+            } else if (img) {
                 g.saveState();
                 g.reduceClipRegion(areaImagem.reduced(1));
                 g.drawImage(*img, areaImagem.toFloat(), juce::RectanglePlacement::centred);
@@ -2776,7 +2826,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             // NEST: duas linhas "empilhadas" saindo do cartão (direita/baixo) e o selo com o número de arquivos.
-            if (item.nestTotal > 1) {
+            // (Container não: o ícone/capa dele já é o desenho de "vários arquivos juntos".)
+            if (item.nestTotal > 1 && !containerGrafico) {
                 g.setColour(tk.borda.withAlpha(0.9f));
                 for (int off : {3, 6}) {
                     g.drawLine((float) bounds.getRight() + off, (float) bounds.getY() + off + 2,
@@ -2801,9 +2852,18 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.fillRect(c.getX() + 2.0f, c.getBottom() - 3.5f, c.getWidth() - 4.0f, 2.5f);               // papel saindo (vazado)
             }
 
-            // Extension badge (top-left)
+            // Extension badge (top-left). Num container PROJECT a extensão não serve para nada: no lugar dela vai a tag PROJECT.
             const juce::String& ext = tx.extensao;
-            if (ext.isNotEmpty()) {
+            if (containerGrafico && ehOrigemProject(origemContainer)) {
+                const juce::String rotulo = i18n::t("projeto.tag");
+                const int badgeW = juce::jmax(52, static_cast<int>(rotulo.length()) * 7 + 12);
+                const juce::Rectangle<int> tag(areaImagem.getX() + 4, areaImagem.getY() + 4, badgeW, 16);
+                g.setColour(juce::Colour(0xffb8860b).withAlpha(0.95f));
+                g.fillRoundedRectangle(tag.toFloat(), 8.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText(rotulo, tag, juce::Justification::centred);
+            } else if (ext.isNotEmpty()) {
                 int badgeW = juce::jmax(28, static_cast<int>(ext.length()) * 7 + 10);
                 juce::Rectangle<int> badge(areaImagem.getX() + 4, areaImagem.getY() + 4, badgeW, 16);
                 // Cor por categoria (áudio/vídeo/foto/doc) com variação de tom por extensão (mp4/avi/mov...: mesma cor, tons próximos).
@@ -2816,6 +2876,30 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colours::white);
                 g.setFont(font9Bold);
                 g.drawText(ext, badge, juce::Justification::centred);
+            }
+
+            // Produção musical: selo da etapa (REC / MIX / MSTR / FINAL) sob o selo do tipo; a melhor versão (BEST TAKE) ganha
+            // borda azul e estrela. Vale também para vídeos de um container.
+            if (!item.etapaProducao.empty() && !modoQuarentena_) {
+                juce::Colour corEtapa = item.etapaProducao == "REC" ? juce::Colour(0xffe5484d) : item.etapaProducao == "MIX" ? juce::Colour(0xff3b82f6)
+                                        : item.etapaProducao == "MSTR" ? juce::Colour(0xff8b5cf6) : juce::Colour(0xff22a06b);
+                const juce::String rotuloEtapa = juce::String(item.etapaProducao);
+                const int w = juce::jmax(34, static_cast<int>(rotuloEtapa.length()) * 8 + 12);
+                juce::Rectangle<int> selo(areaImagem.getX() + 8, areaImagem.getY() + ((ext.isNotEmpty() || (containerGrafico && ehOrigemProject(origemContainer))) ? 30 : 8), w, 18);
+                g.setColour(corEtapa);
+                g.fillRoundedRectangle(selo.toFloat(), 9.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText(rotuloEtapa, selo, juce::Justification::centred);
+            }
+            if (item.versaoEscolhida && !modoQuarentena_) {
+                g.setColour(juce::Colour(0xff2f7df6));
+                g.drawRoundedRectangle(areaImagem.toFloat().reduced(1.5f), tk.raioPequeno, 3.5f);
+                const juce::Rectangle<float> estrela(static_cast<float>(areaImagem.getX() + 8), static_cast<float>(areaImagem.getBottom() - 30), 22.0f, 22.0f);
+                g.fillEllipse(estrela);
+                g.setColour(juce::Colours::white);
+                g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+                g.drawText(juce::String::fromUTF8("\xe2\x98\x85"), estrela.toNearestInt(), juce::Justification::centred);
             }
 
             // Duration badge (bottom-right of thumbnail, or bottom-left if in quarantine mode)
@@ -2833,7 +2917,17 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             // NEST: selo "N" vermelho no canto inferior direito — mesmo padrão dos selos H/K/P/W (16x16, raio 3, fonte 9 bold).
-            if (item.nestTotal > 1) {
+            if (item.nestTotal > 1 && containerGrafico) {
+                // Container: contagem de arquivos em pílula escura (mesmo desenho do INTAKE), sem o "N" de nest.
+                const juce::String n(item.nestTotal);
+                const int w = juce::jmax(22, juce::GlyphArrangement::getStringWidthInt(font9Bold, n) + 10);
+                juce::Rectangle<int> contagem(areaImagem.getRight() - 4 - w, areaImagem.getBottom() - 4 - 18, w, 18);
+                g.setColour(tk.acento);
+                g.fillRoundedRectangle(contagem.toFloat(), 9.0f);
+                g.setColour(tk.textoSobreAcento);
+                g.setFont(font9Bold);
+                g.drawText(n, contagem, juce::Justification::centred);
+            } else if (item.nestTotal > 1) {
                 juce::Rectangle<int> stampN(areaImagem.getRight() - 4 - 16, areaImagem.getBottom() - 4 - 16, 16, 16);
                 g.setColour(juce::Colour(0xffe11d48));
                 g.fillRoundedRectangle(stampN.toFloat(), 3.0f);
@@ -2844,6 +2938,15 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
             // Corner stamps H / K / P (top-right of areaImagem)
             int stampRight = (selecionado && !modoQuarentena_) ? (areaImagem.getRight() - 28) : (areaImagem.getRight() - 4);
+            if (item.aiGenerated) {
+                juce::Rectangle<int> stampAI(stampRight - 24, areaImagem.getY() + 4, 24, 16);
+                g.setColour(juce::Colour(0xcc9333ea));
+                g.fillRoundedRectangle(stampAI.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("AI", stampAI, juce::Justification::centred);
+                stampRight -= 27;
+            }
             if (item.marcadoPrint) {
                 juce::Rectangle<int> stampP(stampRight - 16, areaImagem.getY() + 4, 16, 16);
                 g.setColour(juce::Colour(0xffff6b00));

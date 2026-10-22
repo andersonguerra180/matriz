@@ -76,6 +76,14 @@ bool tokenIgual(const std::string& a, const std::string& b) {
     return diff == 0;
 }
 
+const std::string& tokenDaExecucao() {
+    // O painel pode ser fechado e reaberto enquanto a página continua no
+    // navegador do celular. Manter o token até o app encerrar evita que a
+    // página antiga passe a receber 403 quando a mesma porta for reutilizada.
+    static const std::string token = gerarToken();
+    return token;
+}
+
 } // namespace
 
 struct ServidorCelular::Impl {
@@ -152,6 +160,8 @@ void ServidorCelular::Impl::configurar() {
             res.set_header("Access-Control-Allow-Private-Network", "true");
             res.set_header("Cache-Control", "no-store");
             if (!ipPermitido(req.remote_addr)) {
+                juce::Logger::writeToLog("Phone Dump 403: endereço fora da rede local (" +
+                                         juce::String(req.remote_addr) + ")");
                 res.status = 403;
                 res.set_content("Forbidden", "text/plain");
                 return httplib::Server::HandlerResponse::Handled;
@@ -172,6 +182,7 @@ void ServidorCelular::Impl::configurar() {
                 if (tokenIgual(reqK, kFallback) || tokenIgual(reqK, kMini)) kOk = true;
             }
             if (!kOk) {
+                juce::Logger::writeToLog("WhatsApp 403: chave de pareamento inválida");
                 res.status = 403;
                 res.set_content("Forbidden", "text/plain");
                 return httplib::Server::HandlerResponse::Handled;
@@ -179,6 +190,8 @@ void ServidorCelular::Impl::configurar() {
             return httplib::Server::HandlerResponse::Unhandled;
         }
         if (!ipPermitido(req.remote_addr)) {
+            juce::Logger::writeToLog("Phone Dump 403: endereço fora da rede local (" +
+                                     juce::String(req.remote_addr) + ")");
             res.status = 403;
             res.set_content("Forbidden", "text/plain");
             return httplib::Server::HandlerResponse::Handled;
@@ -186,6 +199,7 @@ void ServidorCelular::Impl::configurar() {
         std::string t = req.get_param_value("t");
         if (t.empty()) t = req.get_header_value("X-Token");
         if (!tokenIgual(t, token)) {
+            juce::Logger::writeToLog("Phone Dump 403: token de uma execução anterior do app");
             res.status = 403;
             res.set_content("Forbidden", "text/plain");
             return httplib::Server::HandlerResponse::Handled;
@@ -428,7 +442,7 @@ bool ServidorCelular::iniciar(const OpcoesServidor& opcoes, juce::String& erro) 
     auto im = std::make_shared<Impl>();
     im->opcoes = opcoes;
     if (g_loopbackDeTeste.load()) im->opcoes.aceitarLoopback = true;
-    im->token = (opcoes.token.isNotEmpty() ? opcoes.token.toStdString() : gerarToken());
+    im->token = (opcoes.token.isNotEmpty() ? opcoes.token.toStdString() : tokenDaExecucao());
     im->chaveWa = opcoes.chaveWhatsapp.toStdString();
     im->raiz = opcoes.pastaRaizRecebidos != juce::File() ? opcoes.pastaRaizRecebidos : pastaRaizRecebidos();
     im->pastaSessao = im->raiz.getChildFile(opcoes.nomeSessao.isNotEmpty() ? opcoes.nomeSessao : nomePastaSessao(juce::Time::getCurrentTime()));

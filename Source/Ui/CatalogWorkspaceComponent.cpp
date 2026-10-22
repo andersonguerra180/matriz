@@ -1,4 +1,6 @@
 #include "CatalogWorkspaceComponent.h"
+#include "ContainerVisual.h"
+#include "TiposContainer.h"
 
 #include <algorithm>
 #include "AcoesItem.h"
@@ -351,7 +353,13 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         atualizarContagens();
     };
     fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
-        if (mosaico_) mosaico_->atualizarItemEmMemoria(itemId);
+        if (mosaico_) {
+            mosaico_->atualizarItemEmMemoria(itemId);
+            atualizarListasDoContentEmMemoria();
+            // O campo recém-gravado já está no snapshot em memória: refaz o
+            // funil agora, sem esperar a contagem assíncrona nem reler o catálogo.
+            aplicarFiltrosAdicionais();
+        }
         if (aoItemAlterado) aoItemAlterado(itemId);
     };
     // Item 3 (correção METADATA 2026-09-28): E ficava preso no campo de
@@ -708,6 +716,11 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
                 if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
                 atualizarRotuloSelecionados();
                 break;
+            case 7: // HIDE FILES WITH GEO LOCATION
+                ocultarComGeo_ = ligado;
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
             case 6: // SHOW BOUNCE LIST
                 mostrarApenasBounce_ = ligado;
                 atualizarBotaoBounce();
@@ -726,15 +739,16 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             {4, "SHOW RECENTLY INGESTED", mostrarApenasRecentes_},
             {5, "INCLUDE HIDDEN", incluirOcultosNaSelecao_},
             {6, "SHOW BOUNCE LIST", mostrarApenasBounce_},
+            {7, "HIDE FILES WITH GEO LOCATION", ocultarComGeo_},
         };
         juce::PopupMenu menu;
         for (const auto& o : opcoes) menu.addItem(o.id, o.rotulo, true, o.ligado);
         juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
-        const bool estados[7] = {false, ocultarEditados_, mostrarApenasRejeitados_, ocultarNaoSelecionados_,
-                                 mostrarApenasRecentes_, incluirOcultosNaSelecao_, mostrarApenasBounce_};
+        const bool estados[8] = {false, ocultarEditados_, mostrarApenasRejeitados_, ocultarNaoSelecionados_,
+                                 mostrarApenasRecentes_, incluirOcultosNaSelecao_, mostrarApenasBounce_, ocultarComGeo_};
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFiltroOpcoes_.get()),
                            [safeThis, aplicarOpcao, estados](int resultado) {
-                               if (safeThis == nullptr || resultado < 1 || resultado > 6) return;
+                               if (safeThis == nullptr || resultado < 1 || resultado > 7) return;
                                aplicarOpcao(resultado, !estados[resultado]);
                                safeThis->sincronizarFiltroOpcoesDropdown();
                            });
@@ -798,7 +812,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
 void CatalogWorkspaceComponent::sincronizarFiltroOpcoesDropdown() {
     if (!btnFiltroOpcoes_) return;
     const int ativos = (ocultarEditados_ ? 1 : 0) + (mostrarApenasRejeitados_ ? 1 : 0) + (ocultarNaoSelecionados_ ? 1 : 0)
-                     + (mostrarApenasRecentes_ ? 1 : 0) + (incluirOcultosNaSelecao_ ? 1 : 0) + (mostrarApenasBounce_ ? 1 : 0);
+                     + (mostrarApenasRecentes_ ? 1 : 0) + (incluirOcultosNaSelecao_ ? 1 : 0) + (mostrarApenasBounce_ ? 1 : 0) + (ocultarComGeo_ ? 1 : 0);
     juce::String texto = "FILTER OPTIONS";
     if (ativos > 0) texto += " (" + juce::String(ativos) + ")";
     texto += "  " + juce::String::fromUTF8("\xe2\x96\xbe");
@@ -930,6 +944,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         else if (cat.chave == "sessions")    cat.rotulo = matriz::i18n::t("catwork.sessions");
         else if (cat.chave == "others")      cat.rotulo = matriz::i18n::t("catwork.others");
         else if (cat.chave == "phone_dump")  cat.rotulo = "Phone Dump";
+        else if (cat.chave == "projects")    cat.rotulo = matriz::i18n::t("catwork.projects");
     }
     for (size_t i = 0; i < categorias_.size() && i < botoesCategorias_.size(); ++i) {
         juce::String texto = categorias_[i].rotulo;
@@ -987,6 +1002,8 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
     categorias_.push_back({matriz::i18n::t("catwork.others"), "others", 0});
     categorias_.push_back({"Phone Dump", "phone_dump", 0});
+    categorias_.push_back({"AI Generated", "ai_generated", 0});
+    categorias_.push_back({matriz::i18n::t("catwork.projects"), "projects", 0});
 
     // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
     // duplicatas (valor perdedor no histórico), pra revisão.
@@ -1238,6 +1255,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
     } catch (...) {}
 
+    // PROJECT: container nascido de um questionário (DDP, vinil, fita, produção, YouTube).
+    auto ehProjeto = [](const ItemResumo& it) { return ehOrigemProject(juce::String(it.nestOrigem)); };
+
     auto ehDump = [&](const ItemResumo& it) -> bool {
         juce::String src(it.sourceMedia);
         juce::String path(it.caminhoAbsolutoOrigem);
@@ -1260,8 +1280,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         return false;
     };
 
-    if (filtroHerdadoIds_) anyFilter = true;
+    if (filtroHerdadoIds_ || ocultarComGeo_) anyFilter = true;
     for (const auto& item : itens) {
+        if (ocultarComGeo_ && item.temGeolocalizacao) continue;
         if (filtroHerdadoIds_ && !filtroHerdadoIds_->count(item.id)) continue;
         if (libChave == "selected") {
             if (selectedIds.find(item.id) == selectedIds.end()) continue;
@@ -1285,11 +1306,15 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         if (tipoMidiaSelecionado_.has_value()) {
             anyFilter = true;
             bool match = false;
-            if (*tipoMidiaSelecionado_ == "phone_dump") {
+            if (*tipoMidiaSelecionado_ == "ai_generated") {
+                match = item.aiGenerated;
+            } else if (*tipoMidiaSelecionado_ == "phone_dump") {
                 match = ehDump(item);
+            } else if (*tipoMidiaSelecionado_ == "projects") {
+                match = ehProjeto(item);  // só os containers PROJECT (a capa de cada um)
             } else {
-                if (ehDump(item)) {
-                    match = false; // Dump items do not appear in other lists until extracted!
+                if (ehDump(item) || ehProjeto(item)) {
+                    match = false; // Dump e PROJECT só aparecem na categoria deles (e dentro do container)!
                 } else {
                     auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                     auto cat = matriz::ingest::categoriaPorExtensao(ext);
@@ -1358,7 +1383,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         mosaico_->definirFiltroItens(std::nullopt);
     }
 
-    mosaico_->recarregar();
+    // definirFiltroItens já refiltra/reordena o snapshot em memória. Uma
+    // recarga aqui relia todo o catálogo a cada filtro/edição e até ao
+    // reaplicar filtros que estavam aguardando o snapshot recém-entregue.
 }
 
 void CatalogWorkspaceComponent::construirFiltroCollection() {
@@ -1379,6 +1406,7 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
             } else {
                 collectionSelecionado_ = collectionDisponiveis_[static_cast<size_t>(sel - 1)].first;
             }
+            atualizarListasDoContentEmMemoria();
             aplicarFiltrosAdicionais();
             atualizarContagens();  // os outros grupos contam só o que passa por este filtro
         };
@@ -1406,6 +1434,41 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
         }
     }
     comboContentType_->setSelectedId(idSel, juce::dontSendNotification);
+}
+
+void CatalogWorkspaceComponent::atualizarListasDoContentEmMemoria() {
+    if (!mosaico_ || mosaico_->versaoSnapshot() == 0) return;
+
+    std::map<std::string, int> contagem;
+    std::map<std::string, std::string> grafia;
+    int semLista = 0;
+    for (const auto& item : mosaico_->todosItensEmMemoria()) {
+        if (collectionSelecionado_.has_value()) {
+            const bool temContent = item.collectionType.has_value() && !item.collectionType->empty();
+            const bool pertence = *collectionSelecionado_ == "Unknown"
+                ? !temContent
+                : (temContent && *item.collectionType == *collectionSelecionado_);
+            if (!pertence) continue;
+        }
+        if (!item.lista.has_value() || item.lista->empty()) {
+            ++semLista;
+            continue;
+        }
+        const auto chave = matriz::model::nomes::chave(*item.lista);
+        grafia.emplace(chave, *item.lista);
+        ++contagem[grafia[chave]];
+    }
+
+    listasDisponiveis_.clear();
+    for (const auto& par : contagem) listasDisponiveis_.push_back(par);
+    listasDisponiveis_.push_back({kSemLista, semLista});
+
+    if (listaSelecionada_.has_value()) {
+        const bool aindaExiste = std::any_of(listasDisponiveis_.begin(), listasDisponiveis_.end(),
+            [this](const auto& par) { return par.first == *listaSelecionada_; });
+        if (!aindaExiste) listaSelecionada_.reset();
+    }
+    construirFiltroLista();
 }
 
 void CatalogWorkspaceComponent::construirFiltroSubject() {
@@ -1552,11 +1615,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
         itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
     } catch (...) {}
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
+    const bool ocultarGeo = ocultarComGeo_;
+    poolContagens_.addJob([ocultarGeo, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
             auto itens = itensCopia.empty() ? proj->listarItens() : std::move(itensCopia);
+            if (ocultarGeo) itens.erase(std::remove_if(itens.begin(), itens.end(), [](const ItemResumo& item) { return item.temGeolocalizacao; }), itens.end());
             if (soRecentes) {
                 itens.erase(std::remove_if(itens.begin(), itens.end(),
                                            [&](const ItemResumo& r) { return !soRecentes->count(r.id); }),
@@ -1588,6 +1653,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             itens.erase(std::remove_if(itens.begin(), itens.end(),
                                        [](const ItemResumo& r) { return r.nestTotal > 1 && !r.nestCapa; }),
                         itens.end());
+
+            auto ehProjeto = [](const ItemResumo& it) { return ehOrigemProject(juce::String(it.nestOrigem)); };
 
             auto ehDump = [&](const ItemResumo& it) -> bool {
                 juce::String src(it.sourceMedia);
@@ -1626,6 +1693,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                 auto cat = matriz::ingest::categoriaPorExtensao(ext);
                 const bool isDump = ehDump(item);
+                const bool isProjeto = ehProjeto(item);
 
                 // Passa por cada filtro ativo? (sem filtro = passa)
                 const bool pAno = anosParaTipo.empty() ||
@@ -1634,9 +1702,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 bool pTipo = true;
                 if (filtroTipoMidiaAnos.has_value()) {
-                    if (*filtroTipoMidiaAnos == "phone_dump") {
+                    if (*filtroTipoMidiaAnos == "ai_generated") {
+                        pTipo = item.aiGenerated;
+                    } else if (*filtroTipoMidiaAnos == "phone_dump") {
                         pTipo = isDump;
-                    } else if (isDump) {
+                    } else if (*filtroTipoMidiaAnos == "projects") {
+                        pTipo = isProjeto;
+                    } else if (isDump || isProjeto) {
                         pTipo = false;
                     } else {
                         if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
@@ -1670,7 +1742,10 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 // MEDIA TYPE: ano + collection + subject + lista (não filtra por si mesmo).
                 if (pAno && pColl && pSubj && pLista) {
-                    if (isDump) {
+                    if (item.aiGenerated) ++res.aiGenerated;
+                    if (isProjeto) {
+                        ++res.projetos;
+                    } else if (isDump) {
                         ++res.phoneDump;
                     } else {
                         switch (cat) {
@@ -1823,6 +1898,8 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("sessions", res.sessao);
     definirContagem("others", res.outros);
     definirContagem("phone_dump", res.phoneDump);
+    definirContagem("ai_generated", res.aiGenerated);
+    definirContagem("projects", res.projetos);
 
     bool reconstruiuAnoOuCollection = false;
 
@@ -1936,6 +2013,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     collectionSelecionado_ = std::nullopt;
     subjectSelecionado_ = std::nullopt;
     listaSelecionada_ = std::nullopt;
+    atualizarListasDoContentEmMemoria();
 
     if (ocultarEditados_) {
         ocultarEditados_ = false;
@@ -1957,6 +2035,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     }
 
+    ocultarComGeo_ = false;
     mostrarApenasBounce_ = false;  // ALL ASSETS zera tudo, inclusive a Bounce List
     atualizarBotaoBounce();
     mostrarApenasRejeitados_ = false;
@@ -2263,7 +2342,10 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
         return (safeThis != nullptr && safeThis->mosaico_) ? safeThis->mosaico_->itemEmMemoria(id) : nullptr;
     };
 
-    auto menu = acoes::construirMenu(projeto_, itemIds, ganchos.itemEmMemoria);
+    ganchos.aoEditarQuestionario = [safeThis](const std::string& nestId, const std::string& origem) {
+        if (safeThis && safeThis->aoEditarProjeto) safeThis->aoEditarProjeto(nestId, origem);
+    };
+    auto menu = acoes::construirMenu(projeto_, itemIds, ganchos.itemEmMemoria, true);
 
     if (itemIds.size() > 1) {
         menu.addSeparator();
@@ -2277,6 +2359,12 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
     if (itemIds.size() > 1 || algumEmNest) menu.addSeparator();
     if (itemIds.size() > 1) menu.addItem(600, matriz::i18n::t("menu.nest"));
     if (algumEmNest) menu.addItem(601, matriz::i18n::t("menu.un_nest"));
+    if (obterOverlay) {  // Group as Project Container / Change Container Type / Ungroup Container
+        matriz::ui::HospedeOverlay hospede;
+        hospede.abrir = [safeThis]() -> PainelOverlay* { return (safeThis && safeThis->obterOverlay) ? safeThis->obterOverlay() : nullptr; };
+        hospede.aoMudarDados = [safeThis] { if (safeThis) safeThis->recarregar(); };
+        matriz::ui::adicionarMenuProjectContainer(menu, projeto_, itemIds, hospede);
+    }
 
     menu.addItem(1000, matriz::i18n::t("menu.mover_para_pasta") + "...");
 
@@ -2359,15 +2447,17 @@ void CatalogWorkspaceComponent::filtrarPorChave(const std::string& chave) {
     // apply them as embedded-collection filters directly.
     if (mosaico_) {
         auto ids = projeto_.itensDaColecaoEmbutida(chave);
+        // A coleção já é aplicada sobre o snapshot atual; recarregar aqui
+        // relia o índice inteiro a cada troca de coleção.
         mosaico_->definirFiltroItens(std::move(ids));
-        mosaico_->recarregar();
     }
 }
 
 void CatalogWorkspaceComponent::filtrarPorIds(std::set<std::string> ids) {
     if (mosaico_) {
+        // A seleção por IDs também é um filtro em memória; o snapshot só
+        // precisa ser recarregado quando o catálogo realmente muda.
         mosaico_->definirFiltroItens(std::move(ids));
-        mosaico_->recarregar();
     }
 }
 
@@ -2461,6 +2551,7 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
         else if (ch == "sessions")  cor = juce::Colour(0xff2b9348);
         else if (ch == "others")    cor = juce::Colour(0xff8a8f98);
         else if (ch == "phone_dump") cor = juce::Colour(0xff0284c7);
+        else if (ch == "projects")  cor = juce::Colour(0xffb8860b);
         else continue;
         auto btnBounds = botoesCategorias_[i]->getBounds();
         float cy = btnBounds.getCentreY() - 4.0f;

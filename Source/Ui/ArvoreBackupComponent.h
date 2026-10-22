@@ -86,6 +86,10 @@ public:
     // Duplo clique no card de uma pasta (mapa principal): quem hospeda abre a janela flutuante da pasta (miniaturas + filtros).
     // Sem este gancho, cai na sobreposição do Folder Map de antes.
     std::function<void(const std::string& pastaId, const juce::String& nomePasta)> aoAbrirPastaJanela;
+    // Duplo clique num CONTAINER: abre a grade só com o conteúdo dele (nestId, nome mostrado).
+    std::function<void(const std::string& nestId, const juce::String& nome)> aoAbrirContainerJanela;
+    // Botão direito num PROJECT > Open Project: a janela própria do projeto (player de CD no DDP; preview com a capa nos demais).
+    std::function<void(const std::string& nestId, const std::string& origem)> aoAbrirProject;
     void fecharSobreposicao();
     // Chamado na instância DENTRO da sobreposição, logo depois de construída.
     void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);
@@ -153,11 +157,26 @@ private:
         bool selecionado = false;
         bool ehConversaWhatsapp = false;
         int nestTotal = 0;  // >1: este arquivo solto é a capa de um NEST
+        // CONTAINER de importação (nest com origem): solto no canvas como container, só com porta de ENTRADA (esquerda).
+        bool ehContainer = false;
+        std::string nestId, containerOrigem, containerIcone, containerCapa;  // capa = caminho absoluto ("" = sem capa)
+        std::string pastaPaiId;  // pasta do mapa em que o container está ("" = solto na raiz): liga por uma linha, só na entrada
     };
 
     ProjetoAberto& projeto_;
     std::vector<FolderNode> nodes_;
     std::vector<LooseFileNode> looseFiles_;
+    // Containers recém-aprovados no Intake, ainda sem posição: vão para o canto superior esquerdo da vista DEPOIS do
+    // enquadramento inicial (que muda pan/zoom). Ver posicionarContainersNovos().
+    std::set<std::string> containersSemPosicao_;
+    // SHOW CONTAINERS AS FOLDERS: containers desenhados como pastas comuns (só com porta de entrada) em vez do ícone do tipo.
+    bool containersComoPastas_ = false;
+    std::unique_ptr<juce::ToggleButton> chkContainersComoPastas_;
+    juce::Point<float> portaEntradaDoContainer(const LooseFileNode& lf) const;
+    int containerSobre(juce::Point<float> canvas) const;
+    void moverContainersDaPasta(const std::string& pastaId, int dx, int dy);
+    void desconectarContainersSelecionados();
+    void posicionarContainersNovos();
     int nodeDragIndice_ = -1;
     int looseFileDragIndice_ = -1;
     int nodeHoverDrop_ = -1;
@@ -341,6 +360,7 @@ private:
     void selecionarIntervalo(int tipo, const std::string& deId, const std::string& ateId);
     std::vector<std::string> idsSoltosSelecionados() const;
     void mostrarMenuDeArquivosSoltos();
+    void editarQuestionarioDoContainerSolto(const std::string& nestId, const std::string& origem);
     void adicionarSubmenuDePastas(juce::PopupMenu& menu, const std::string& paiId, const std::vector<std::string>& ids);
     void moverSoltosParaPasta(const std::vector<std::string>& ids, const std::string& pastaId);
     void mostrarNaOrigem(const std::string& itemId);

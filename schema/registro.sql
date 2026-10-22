@@ -125,6 +125,10 @@ CREATE INDEX IF NOT EXISTS idx_item_projeto ON item(projeto_id);
 CREATE INDEX IF NOT EXISTS idx_item_tipo_midia ON item(tipo_midia);
 CREATE INDEX IF NOT EXISTS idx_item_estado ON item(estado);
 CREATE INDEX IF NOT EXISTS idx_item_quarentena_criado ON item(em_quarentena, criado_em);
+-- Snapshot principal da grade: entrega apenas itens visíveis já na ordem do
+-- código, sem materializar uma B-tree temporária em disco a cada abertura.
+CREATE INDEX IF NOT EXISTS idx_item_catalogo_codigo ON item(codigo_acervo)
+WHERE COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata';
 
 -- ---------------------------------------------------------------------------
 -- Tags — cada tag é armazenada separadamente para busca (§ metadata spec).

@@ -20,6 +20,8 @@ void docGoToFirstPage(DocHandle h);
 void docGoToLastPage(DocHandle h);
 int docGetCurrentPage(DocHandle h);
 int docGetTotalPages(DocHandle h);
+// Self-test: origem (x, y) do NSView do documento dentro da view pai. false = sem view / fora da macOS.
+bool docOrigemParaTeste(DocHandle h, double* x, double* y);
 
 #ifdef __cplusplus
 }

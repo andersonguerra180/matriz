@@ -41,11 +41,11 @@ juce::String rotuloEstado(const std::string& estado) { return matriz::i18n::t("m
 
 } // namespace
 
-FiltrosComponent::FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mosaico)
+FiltrosComponent::FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mosaico, bool primeiraCargaSincrona)
     : projeto_(projeto), mosaico_(mosaico) {
     // Primeira carga síncrona: o painel precisa nascer com conteúdo, e
     // neste ponto o projeto acabou de abrir (nada concorrendo pelo banco).
-    recarregarSincrono();
+    if (primeiraCargaSincrona) recarregarSincrono();
 }
 
 FiltrosComponent::~FiltrosComponent() {
@@ -87,6 +87,7 @@ void FiltrosComponent::recarregar() {
             if (geracao != self->geracaoConsulta_) return;  // consulta superada
             MATRIZ_TRACE("FiltrosComponent::aplicarConsulta");
             self->consultaPendente_ = false;
+            if (self->escopo_) restringirAoEscopo(d, self->mosaico_.todosItensEmMemoria(), *self->escopo_);
             self->dados_ = std::move(d);
             self->reconstruirLinhas();
             self->resized();
@@ -95,10 +96,24 @@ void FiltrosComponent::recarregar() {
     });
 }
 
+void FiltrosComponent::restringirAoEscopo(DadosDoBanco& d, const std::vector<ItemResumo>& itens, const std::set<std::string>& escopo) {
+    d.porTipoMidia.clear(); d.porEstado.clear(); d.porExtensao.clear(); d.porOrigem.clear(); d.porContentType.clear(); d.porCollectionType.clear();
+    for (const auto& it : itens) {
+        if (escopo.count(it.id) == 0) continue;
+        ++d.porTipoMidia[it.tipoMidia];
+        ++d.porEstado[it.estado];
+        if (!it.extensaoArquivo.empty()) ++d.porExtensao[it.extensaoArquivo];
+        ++d.porOrigem[it.origem.value_or(std::string())];
+        if (it.contentType && !it.contentType->empty()) ++d.porContentType[*it.contentType];
+        if (it.collectionType && !it.collectionType->empty()) ++d.porCollectionType[*it.collectionType];
+    }
+}
+
 void FiltrosComponent::recarregarSincrono() {
     ++geracaoConsulta_;  // invalida qualquer consulta em voo
     consultaPendente_ = false;
     dados_ = coletarDoBanco(projeto_);
+    if (escopo_) restringirAoEscopo(dados_, mosaico_.todosItensEmMemoria(), *escopo_);
     reconstruirLinhas();
     resized();
     repaint();

@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 #include "ProjetoAberto.h"
+#include "../Ingest/SobreMaterial.h"
 
 namespace matriz::ui {
 
@@ -74,6 +75,8 @@ public:
 
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void(const juce::Array<juce::File>&)> aoIngerirArquivosDireto;
+    // Importação escolhida na janela IMPORT: os arquivos entram com o contexto do card (CONTENT, source medium, tags).
+    std::function<void(const juce::Array<juce::File>&, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoIngerirComContexto;
     // Avisa de onde vem a PRÓXIMA ingestão (ex.: "gallery"): vira um container no Intake. Chamado antes de aoIngerirArquivosDireto.
     std::function<void(const std::string& origem)> aoDefinirOrigemContainer;
     // Called with the Google Drive root folder when the GD button is clicked
@@ -114,6 +117,7 @@ private:
         juce::int64 tamanhoBytes = 0;
         std::optional<double> duracaoSegundos;  // áudio/vídeo: vem junto com a lista (sem consulta ao pintar)
         juce::String caminhoOrigem;
+        juce::String caminhoMiniatura;
         juce::String categoria; // "Audio", "Video", "Image", "Document", "Project", "Other"
         juce::String collection; // assigned collection or ""
         juce::String sourceMedia; // assigned original source medium or ""
@@ -125,6 +129,8 @@ private:
         juce::String containerOrigem;
         int containerTotal = 0;
         std::string containerNestId;
+        juce::String containerCapaCaminho;  // imagem da capa do container (vinil, fita); vazio = sem capa própria
+        juce::String containerIcone;        // ícone escolhido na ficha (DAW da produção); vazio = ícone da origem
     };
     bool itemEhContainer(const ItemIntake& it) const { return it.containerNestId.size() > 0; }
     void abrirGridDoContainer(const std::string& itemId);
@@ -248,15 +254,23 @@ private:
     std::unique_ptr<juce::Label> lblContadorTotal_;
     std::unique_ptr<ViewModeIconButton> btnVisaoLista_;
     std::unique_ptr<ViewModeIconButton> btnVisaoIcones_;
-    std::unique_ptr<juce::TextButton> btnIngerir_;
-    std::unique_ptr<juce::Button> btnGoogleDrive_;
-    std::unique_ptr<juce::Button> btnLightroom_;
-    std::unique_ptr<juce::Button> btnBridge_;
-    std::unique_ptr<juce::Button> btnReceberCelular_;
+    // Único botão do card IMPORT (pasta com "+"): abre a janela de cards (ImportarMenu).
+    std::unique_ptr<juce::Button> btnIngerir_;
     std::unique_ptr<PainelOverlay> overlayAtual_;
     std::weak_ptr<PainelReceberCelular> painelCelularAtual_;
     std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
-    void abrirReceberDoCelular();
+    void abrirMenuImportar(std::vector<std::string> caminho = {});
+    void tratarEscolhaImportar(const std::string& id, const std::vector<std::string>& caminho);
+    void abrirSeletorDeImportacao(const std::string& id, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha = nullptr);
+    void abrirFichaDeImportacao(const std::string& id, const std::vector<std::string>& caminho);
+    // YouTube Production: um vídeo por vez (dados + pasta de produção), com a pergunta "cadastrar outro?" no fim.
+    void abrirFluxoYoutube(const std::vector<std::string>& caminho);
+    void editarQuestionarioDoContainerDoItem(const std::string& nestId, const std::string& origem);
+    void escolherArquivosYoutube(std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha, const juce::String& aviso);
+    void perguntarOutroYoutube(const juce::String& nomeDoVideo);
+    void importarYoutubePendentes();
+    std::vector<std::pair<juce::Array<juce::File>, std::shared_ptr<const matriz::ingest::SobreMaterial>>> youtubePendentes_;
+    void abrirReceberDoCelular(std::function<void()> aoVoltar = nullptr);
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;
     bool hasParentCatalog_ = false;

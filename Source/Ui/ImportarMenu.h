@@ -1,0 +1,85 @@
+#pragma once
+
+#include <JuceHeader.h>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "OverlayComponent.h"
+#include "../Ingest/SobreMaterial.h"
+
+// Janela IMPORT do Intake: cards quadrados de borda arredondada (mesmo desenho da escolha GALLERY/WHATSAPP),
+// com sub-janelas por categoria. Um clique em card com filhos abre o nível seguinte (botão VOLTAR); um clique
+// numa folha conclui com o id dela. Quem chama decide o que cada id faz (ver IntakeWorkspaceComponent).
+//
+// Ids das folhas (contrato com quem trata a escolha):
+//   files.*   pastas e unidades      drive / drive.<n>   Google Drive (n = conta)   phone   Phone Dump (Gallery/WhatsApp)
+//   photos.*  fotos / Lightroom / Bridge     videos.*   audio.{production,preservation,general}.*   documents.*
+//   other.web | other.multimedia.* | other.social.* | other.custom
+namespace matriz::ui {
+
+// `aoConcluir` roda UMA vez: id da folha escolhida e o caminho de grupos até ela (ex.: {"audio", "audio.preservation"}),
+// ou nullopt se o usuário cancelou. `caminhoInicial` abre a janela direto nesse grupo (usado pelo VOLTAR das fichas).
+void mostrarMenuImportar(PainelOverlay& overlay,
+                         std::function<void(std::optional<std::string>, std::vector<std::string>)> aoConcluir,
+                         std::vector<std::string> caminhoInicial = {});
+
+// Contexto que a escolha do card já implica (CONTENT, source medium, tags), aplicado a cada arquivo importado por ele.
+// Nulo = o card não implica nada (ex.: "Pasta do computador", "Outro").
+std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(const std::string& id);
+
+// Soma o contexto de uma ficha ao do card (a ficha vence em CONTENT e no mesmo campo; tags, pessoas e notas somam).
+std::shared_ptr<const matriz::ingest::SobreMaterial> mesclarContextosImportar(
+    std::shared_ptr<const matriz::ingest::SobreMaterial> base, std::shared_ptr<const matriz::ingest::SobreMaterial> extra);
+
+// Folhas que perguntam algo antes do seletor de arquivos (ficha de contexto). Hoje: vídeo (formato de origem).
+bool folhaImportarTemFicha(const std::string& id);
+
+// Mostra a ficha da folha. `aoConcluir(continuar, contexto)`: continuar=false = cancelou tudo; contexto nulo = o
+// usuário pulou ou não respondeu nada.
+// `aoVoltar` (opcional): quando existe a ficha ganha o botão VOLTAR, que chama este callback em vez de concluir.
+// `respostasIniciais` (opcional): respostas guardadas de um questionário anterior, que voltam preenchidas (editar o questionário).
+void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
+                          std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir,
+                          std::function<void()> aoVoltar = nullptr,
+                          const std::map<std::string, std::string>* respostasIniciais = nullptr);
+
+// Questionário inicial de um CONTAINER: o que cada resposta pôs nos arquivos, a gravação no container (JSON) e a edição depois.
+class ProjetoAberto;
+std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDeRespostasImportar(const std::string& folha,
+                                                                                const std::map<std::string, std::string>& respostas);
+std::string questionarioParaJson(const matriz::ingest::SobreMaterial& sobre);  // "" = sem questionário
+bool questionarioDeJson(const std::string& json, std::string& folha, std::map<std::string, std::string>& respostas);
+std::string folhaDaOrigemDoContainer(const std::string& origem);  // origem do container -> card do IMPORT ("" = não tem)
+// Botão direito > "Editar questionário inicial": reabre a ficha com as respostas guardadas e, ao continuar, troca as respostas
+// antigas pelas novas em todos os arquivos do container. `aoFechar(aplicou)` roda sempre ao terminar (aplicou = gravou mudanças).
+void editarQuestionarioDoContainer(PainelOverlay& overlay, ProjetoAberto& projeto, const std::string& nestId, const std::string& origem,
+                                   std::function<void(bool)> aoFechar);
+
+// YouTube Production: os arquivos de UM vídeo — o vídeo (obrigatório), a thumbnail e o roteiro (documento, PDF, texto...).
+struct ArquivosYoutube {
+    juce::File video, thumbnail, roteiro;
+};
+// `aviso` (opcional) troca a mensagem do topo (ex.: "escolha o vídeo"). `aoConcluir(botao, arquivos)`: 1 = continuar,
+// 3 = voltar, 0 = cancelar.
+void mostrarArquivosYoutube(PainelOverlay& overlay, const juce::String& aviso, std::function<void(int, ArquivosYoutube)> aoConcluir);
+
+// Depois de cadastrar um vídeo do YouTube Production: `aoEscolher(0)` cancela tudo, `(1)` segue com a importação,
+// `(2)` cadastra outro vídeo. Mostra no mesmo overlay.
+void mostrarPerguntaOutroYoutube(PainelOverlay& overlay, const juce::String& nomeDoVideo, int totalCadastrados,
+                                 std::function<void(int)> aoEscolher);
+
+// Ícone com fundo branco opaco (alguns de Assets/Icons) -> o branco ligado às bordas vira transparente. Devolve a mesma
+// imagem se ela já é transparente.
+juce::Image tirarFundoBrancoDasBordas(const juce::Image& original);
+
+// Para o self-test: mostra a lista de contas do Drive com contas de mentira (a máquina de teste pode não ter nenhuma).
+void mostrarListaDeContasParaTeste(PainelOverlay& overlay);
+
+// Para o self-test: todos os ids de folha (inclui as "em breve") na ordem da árvore.
+std::vector<std::string> idsDasFolhasDoMenuImportar();
+
+} // namespace matriz::ui

@@ -696,7 +696,9 @@ private:
             // Outer container box
             // Risco visível: par "parecido" (pHash) ganha borda e fundo âmbar; idêntico (SHA-256) borda verde.
             const bool ehPrevisto = grupo_.criterio == "PROBABLE" || grupo_.criterio == "SIMILAR";
-            const juce::Colour corAmbar(0xfff59e0b), corSeguro(0xff22c55e);
+            const juce::Colour corAmbar = grupo_.criterio == "PROBABLE" ? juce::Colour(0xffffa000) : juce::Colour(0xff32bced);
+            const juce::Colour corSeguro(0xff1ec45b);
+            const auto corCriterio = grupo_.criterio == "IDENTICAL" ? corSeguro : corAmbar;
             g.setColour(tk.painel);
             g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
             if (ehPrevisto) {
@@ -735,7 +737,7 @@ private:
                 // 3. Top Banner strip (Storage card style header)
                 g.saveState();
                 g.reduceClipRegion(cardRect.toNearestInt().withHeight(24));
-                g.setColour(isDup ? tk.alerta.withAlpha(0.18f) : tk.acento.withAlpha(0.18f));
+                g.setColour(corCriterio);
                 g.fillRoundedRectangle(static_cast<float>(x), static_cast<float>(y), static_cast<float>(subWidth), 24.0f, 6.0f);
                 g.fillRect(static_cast<float>(x), static_cast<float>(y) + 12.0f, static_cast<float>(subWidth), 12.0f);
                 g.restoreState();
@@ -745,15 +747,15 @@ private:
                 g.drawHorizontalLine(y + 24, static_cast<float>(x), static_cast<float>(x + subWidth));
 
                 // Badge / Header text
-                g.setColour(isDup ? tk.alerta : tk.acento);
+                g.setColour(juce::Colours::black);
                 g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-                juce::String headerTag = isDup ? matriz::i18n::t("duplicatas.possible_duplicate") : matriz::i18n::t("duplicatas.existing_original");
+                juce::String headerTag = "#" + juce::String(m.ordemChegada) + "/" + juce::String(m.totalRelacionados);
                 if (!m.collectionNome.empty()) {
                     headerTag << " \u00B7 " << juce::String(m.collectionNome).toUpperCase();
                 }
                 if (grupo_.criterio == "IDENTICAL") headerTag << " \u00B7 IDENTICAL";
                 else if (grupo_.criterio == "PROBABLE") headerTag << " \u00B7 PROBABLE \u00B7 REVIEW";
-                else if (grupo_.criterio == "SIMILAR") headerTag << " \u00B7 SIMILAR SHOT \u00B7 REVIEW";
+                else headerTag << " \u00B7 POSSIBLE \u00B7 REVIEW";
                 // Versão de resolução menor (ex.: foto recuperada de HD com problema): marca qual lado tem menos qualidade.
                 int larguraSelo = 0;
                 if (m.largura > 0 && m.altura > 0 && other.largura > 0 && other.altura > 0) {
@@ -1548,6 +1550,7 @@ void DuplicatesWorkspaceComponent::run() {
 
     // 1. Get all candidate items for duplicate detection
     struct ItemInfo {
+        std::string criadoEm;
         std::string itemId;
         std::string codigoAcervo;
         std::string titulo;
@@ -1574,7 +1577,7 @@ void DuplicatesWorkspaceComponent::run() {
         try {
             auto stmt = database.prepare(
                 "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes, a.caminho_absoluto_origem, i.ano, "
-                "       a.id, a.checksum_sha256 "
+                "       a.id, a.checksum_sha256, i.criado_em "
                 "FROM item i "
                 "JOIN arquivo a ON a.item_id = i.id "
                 "WHERE a.eh_master = 1 "
@@ -1599,6 +1602,7 @@ void DuplicatesWorkspaceComponent::run() {
                 info.ano = juce::String(stmt.columnText(7)).trim().getIntValue();
                 info.arquivoId = stmt.columnText(8);
                 info.sha256 = stmt.columnText(9);
+                info.criadoEm = stmt.columnText(10);
 
                 std::string absOrig = stmt.columnText(6);
                 if (!absOrig.empty()) {
@@ -1972,6 +1976,7 @@ void DuplicatesWorkspaceComponent::run() {
         auto gruposParaPar = [&](const ItemInfo& a, const ItemInfo& b) {
             DuplicateGroup group;
             auto preencher = [](DuplicateMatch& m, const ItemInfo& it) {
+                m.criadoEm = it.criadoEm;
                 m.itemId = it.itemId; m.codigoAcervo = it.codigoAcervo; m.titulo = it.titulo; m.ext = it.ext;
                 m.duracao = it.duracao; m.largura = it.largura; m.altura = it.altura; m.lufs = it.lufs;
                 m.tamanhoBytes = it.tamanhoBytes; m.orientation = it.orientation; m.colorSpace = it.colorSpace;
@@ -2321,6 +2326,49 @@ void DuplicatesWorkspaceComponent::run() {
         }
     }
 
+    // Numeração consistente em todos os pares do mesmo conjunto relacionado.
+    // Não cria pares transitivos: apenas identifica os arquivos já encontrados.
+    std::map<std::string, std::string> datas;
+    for (const auto& item : items) datas[item.collectionCaminho + "\n" + item.itemId] = item.criadoEm;
+    for (auto& grupo : gruposDetectados_) for (auto* m : {&grupo.original, &grupo.duplicata}) {
+        const auto data = datas.find(m->collectionCaminho + "\n" + m->itemId);
+        if (data != datas.end()) m->criadoEm = data->second;
+        else if (m->collectionCaminho.empty()) {
+            auto st = db.prepare("SELECT criado_em FROM item WHERE id = ?");
+            st.bind(1, matriz::db::Value::of(m->itemId));
+            if (st.step()) m->criadoEm = st.columnText(0);
+        }
+    }
+    std::map<std::string, std::string> raiz;
+    auto chaveMembro = [](const DuplicateMatch& m) { return m.collectionCaminho + "\n" + m.itemId; };
+    auto achar = [&](std::string id) {
+        while (raiz.at(id) != id) id = raiz.at(id);
+        return id;
+    };
+    std::map<std::string, DuplicateMatch*> membros;
+    for (auto& grupo : gruposDetectados_) {
+        for (auto* m : {&grupo.original, &grupo.duplicata}) {
+            const auto id = chaveMembro(*m);
+            raiz.emplace(id, id);
+            membros.emplace(id, m);
+        }
+        raiz[achar(chaveMembro(grupo.duplicata))] = achar(chaveMembro(grupo.original));
+    }
+    std::map<std::string, std::vector<std::string>> conjuntos;
+    for (const auto& [id, m] : membros) conjuntos[achar(id)].push_back(id);
+    std::map<std::string, std::pair<int, int>> numeracao;
+    for (auto& [raizId, ids] : conjuntos) {
+        std::sort(ids.begin(), ids.end(), [&](const auto& a, const auto& b) {
+            if (membros[a]->criadoEm != membros[b]->criadoEm) return membros[a]->criadoEm < membros[b]->criadoEm;
+            return a < b;
+        });
+        for (size_t i = 0; i < ids.size(); ++i) numeracao[ids[i]] = {static_cast<int>(i + 1), static_cast<int>(ids.size())};
+    }
+    for (auto& grupo : gruposDetectados_) for (auto* m : {&grupo.original, &grupo.duplicata}) {
+        const auto n = numeracao.at(chaveMembro(*m));
+        m->ordemChegada = n.first;
+        m->totalRelacionados = n.second;
+    }
     progressoScan_ = 1.0;
 }
 

@@ -4,6 +4,107 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Alt-codex — estado atual, 2026-10-22
+
+- Branch atual: `alt-codex`. Arquivos não rastreados preexistentes em
+  `Assets/`, `Reference/`, `cofre/` e listas locais continuam preservados e
+  não entram nos commits.
+- Build Debug atual concluída com sucesso em
+  `build/matriz_artefacts/Debug/BKR Matriz.app`. Último commit funcional:
+  `a65d289`. As correções desta rodada foram compiladas, mas as suítes amplas
+  de self-test e ASan/TSan não foram executadas.
+- METADATA: filtros atualizam os campos do snapshot e refiltram em memória
+  (`a42919f`); presets tiveram UTF-8/layout/salvamento em lote corrigidos
+  (`32f101a`); LIST agora depende de CONTENT (`8afe12f`); HIDE FILES WITH GEO
+  LOCATION considera qualquer campo preenchido da ficha GEO (`240767b`);
+  coordenadas embutidas travam toda a ficha GEO até OVERRIDE explícito
+  (`cf2c49c`).
+- Intake — consultas por cartão: removidas duas varreduras sem uso de
+  `itensSemPasta()` ao filtrar/contar (`28cfc6b`). Os caminhos de miniatura
+  agora são carregados uma vez no snapshot, sem consulta SQLite por cartão
+  (`9c2409c`).
+- Intake — acervo real diagnosticado em
+  `/Volumes/BUNKER 4TB/BACKUP FINAL/Fotos/Project`: 497 itens em quarentena,
+  todos com original acessível, mas zero linhas correspondentes em
+  `indice.sqlite/miniatura`. Para itens sem índice, somente os originais dos
+  cartões visíveis são carregados no pool e mantidos no cache da grade
+  (`6be4ca3`). Esta recuperação vale para qualquer acervo; se o original
+  estiver realmente offline, permanece o placeholder.
+- Clique numa foto do Intake bloqueava a message thread por cerca de 30 s:
+  `FichaPanelComponent::construirMetadadosUnificados()` abria o original do
+  Google Drive via Exiv2/decoder quando largura e altura estavam ausentes.
+  A ficha agora usa apenas a análise técnica já gravada e nunca força o
+  download do original na message thread (`7d75527`).
+- Phone Dump/QR: fechar e reabrir o painel reutilizava a porta 8765 com um
+  token novo; a página ainda aberta no celular recebia 403 e mandava escanear
+  novamente. O token automático agora dura por toda a execução do app
+  (`a65d289`). Fechar/reabrir somente o painel mantém a página válida; reiniciar
+  o app gera outro token e exige novo QR. Rejeições registram no log se foram
+  causadas por token antigo ou endereço fora da rede local, sem registrar o
+  token. Uploads com 403 continuam sem gravar arquivo.
+- Diagnóstico do Mac em 2026-10-22: sem pressão de memória, sem limitação
+  térmica e SMART verificado. O pico de lentidão coincidiu com fila extrema de
+  I/O/SQLite (load average de 15 min acima de 80). SSD interno tinha somente
+  11 GB livres; BUNKER estava 94% ocupado. Não é uma mudança de código.
+- Pendências observadas: abertura desse projeto gastou cerca de 91 s em
+  `schemas_e_migracoes`; uma operação de remoção em massa executou muitos
+  `DELETE FROM item WHERE id = ?` síncronos e bloqueou a interface por cerca
+  de 52 s. Investigar em commits separados. O fallback de miniaturas guarda a
+  imagem em memória; ele não cria retroativamente linhas em `indice.sqlite`.
+- O plano original ainda tem itens de duplicatas, design das tags, selo/filtro
+  AI, cover/preview de container, Batch Merge Conflicts e uso de imagens do
+  catálogo como capa a revisar/terminar. Não considerar o plano inteiro
+  encerrado apenas pelos fixes acima.
+
+## Alt-codex — desempenho, 2026-10-21
+
+- Branch `alt-codex`, criada de `feat/import-menu` em `5a3d9b1`. Os arquivos
+  não rastreados preexistentes (Assets, Reference, cofre etc.) foram preservados.
+- Primeiro defeito: `CatalogWorkspaceComponent::aplicarFiltrosAdicionais()`
+  chamava `MosaicoComponent::recarregar()` depois de `definirFiltroItens()`,
+  embora este já filtre/ordene o snapshot em memória. Cada mudança de filtro
+  relia o catálogo inteiro; reaplicar filtros aguardando snapshot também
+  provocava outra carga. Removida somente essa recarga final. As cargas
+  explícitas de ingest/refresh e a espera por itens recentes ausentes continuam.
+- Teste SUBJECT verifica resultado e versão do snapshot (não deve mudar).
+  Na comparação com o código anterior, resultado correto nas duas versões;
+  somente o anterior falha na nova checagem de ausência de reload.
+- O teste da corrida Recently Ingested agora promove C via `confirmarLoteGrid`
+  sem o callback da UI: antes a própria preparação podia carregar C antes
+  do toggle, tornando a precondição dependente da velocidade do snapshot.
+- Build Debug `build/` concluída. Logs desta rodada em `/private/tmp/alt-codex-*`.
+  Rodada final: SUBJECT sem reload, recentes/persistência/corrida, contagens
+  da pasta e GEO com 1.200 itens passaram. Interrompida após 372 OK na seção
+  de navegação/estresse de 18 mil itens; seis FAIL adicionais em pHash,
+  VALIDATE ALL PROBABLE e opções do dropdown EXPORT, ainda sem baseline
+  completo para atribuir causa. A suíte completa NÃO está verde.
+  A contagem de imagens fora da pasta falhou nas primeiras rodadas
+  e também no código anterior (`3/0`), mas passou na final (`0/0`): timing
+  do teste de contagens assíncronas a investigar. Houve espera por jobs de
+  volumes na primeira rodada, interrompida somente no processo do self-test.
+- Amostra do app aberto (`alt-codex-running-app.sample.txt`) encontrou uma
+  thread de snapshot em `listarItensDeProjeto`/SQLite. Amostragem escassa;
+  não permite quantificar ganho nem concluir sobre todos os gargalos.
+- Segundo defeito (em validação): `MainComponent::mostrarGrid()` relia todo
+  o catálogo ao retornar à aba existente. O mosaico já acumula eventos
+  escondido e os aplica ao reaparecer. Retirada a recarga de navegação;
+  PRESERVADA ao voltar do Backup (consolidação pode mudar estados sem eventos).
+  Teste cobre edição com a aba escondida e retorno sem nova versão de snapshot.
+  As duas checagens passaram, assim como SUBJECT e Recentes/corrida, na build
+  Debug final (`alt-codex-tab-verified-lote.log`), mas houve SIGSEGV no fechamento
+  do fixture seguinte (pasta enviada ao grid). Segundo fix AINDA SEM COMMIT:
+  não considerar pronto antes de investigar. Fixture é headless (sem peer):
+  atualização de componente escondido coberta, adiamento nativo de eventos
+  ainda requer uso real. Em andamento: build ASan (`alt-codex-asan-build.log`)
+  e debugger (`alt-codex-lldb-segv.log`). Debuggers anteriores pararam em
+  jassert de foco e não capturaram o SIGSEGV. Nenhum processo do usuário foi
+  fechado; somente processos de self-test/debugger desta tarefa.
+- Próximos pontos da auditoria: recarga incondicional ao terminar geração de
+  miniaturas e tratamento de snapshot vazio como se ainda não tivesse
+  carregado. Ainda NÃO alterados.
+- Demais pedidos do plano (containers, duplicatas, AI, presets, acentos,
+  batch merge, 360 Photo, smartphone e geo) continuam pendentes.
+
 ## Lista de 11 itens (2026-10-08, branch `rebuild-main`)
 
 Feitos (um commit cada, build Debug `build/` compilando; NÃO testados no app ainda, nem ASan/TSan):

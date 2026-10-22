@@ -120,7 +120,9 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
     std::cout << "\n-- Collection package, phase 1: case-insensitive tags/people/subjects --\n";
 
     checar(nomes::chave("  SHOW ") == "show", "the key ignores case and spaces at the ends");
-    checar(nomes::chave("S\xc3\xa3o") != nomes::chave("Sao"), juce::String::fromUTF8("accents still count (\"S\xc3\xa3o\" != \"Sao\")"));
+    checar(nomes::chave(juce::String::fromUTF8("avó, você, ação").toStdString()) == "avo, voce, acao", "acute, circumflex and tilde share unaccented metadata keys");
+    checar(nomes::chave("Sa\xcc\x83o") == "sao", "decomposed tilde also matches");
+    checar(nomes::chave("S\xc3\xa3o") == nomes::chave("Sao"), juce::String::fromUTF8("accent variants share the same key (\"S\xc3\xa3o\" == \"Sao\")"));
     checar(nomes::chave("\xc3\x89POCA") == nomes::chave("\xc3\xa9poca"), "upper/lower case of accented letters is the same name");
     {
         std::map<std::string, std::string> vocab = {{"show", "Show"}, {"tour", "Tour"}};
@@ -1970,6 +1972,22 @@ int rodarLoteSelfTest() {
             checar(carregou, "Catalog grid loaded the " + juce::String(kItensPorLado) + " items");
             checar(pa->contarItens() == kItensPorLado && pa->contarItens() == static_cast<int>(pa->listarItens().size()),
                    "contarItens() (SQL COUNT, no disk access) matches listarItens()");
+            // Flags de AI/GPS precisam sobreviver à leitura do catálogo (zero é coordenada válida).
+            {
+                const auto alvo = mosaico->todosItensEmMemoria().back().id;
+                const auto campoId = matriz::model::novoUuid();
+                reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) VALUES (?, ?, 'raiz', 0, 'ai_generated', 'AI Generated / Gerado por IA', 'humano', ?)",
+                        {matriz::db::Value::of(campoId), matriz::db::Value::of(alvo), matriz::db::Value::of(matriz::model::agoraIso8601())});
+                matriz::analytics::AssetGeolocation geo;
+                geo.assetId = alvo; geo.latitude = 0.0; geo.longitude = 0.0;
+                matriz::analytics::AssetGeolocationRepository::salvar(reg, geo);
+                const auto itens = pa->listarItens();
+                const auto it = std::find_if(itens.begin(), itens.end(), [&](const auto& item) { return item.id == alvo; });
+                checar(it != itens.end() && it->aiGenerated, "AI flag survives a catalog snapshot");
+                checar(it != itens.end() && it->temGeolocalizacao, "GPS filter recognizes zero latitude/longitude");
+                reg.run("DELETE FROM item_campo WHERE id = ?", {matriz::db::Value::of(campoId)});
+                matriz::analytics::AssetGeolocationRepository::remover(reg, alvo);
+            }
             // GET EXIF grava a OTHER METADATA sem tocar nas notas do usuário;
             // rodar de novo substitui (não duplica).
             {
@@ -2490,6 +2508,28 @@ int rodarLoteSelfTest() {
         };
 
         auto* cw = abrirGrid();
+        // Deixa terminar o refresh inicial das miniaturas antes de medir
+        // a navegação, para não atribuir esse trabalho à troca de aba.
+        bombear(900);
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+        const auto versaoAntesDeVoltar = cw->mosaico_->versaoSnapshot();
+        cw->setVisible(false);
+        janela->projetoAberto()->salvarMetadado(antigos[0], "titulo", "Edited while metadata hidden");
+        bombear(100);  // o mosaico escondido acumula o evento
+        janela->mostrarGrid();
+        esperarAte([&] {
+            const auto& itens = cw->mosaico_->todosItensEmMemoria();
+            return std::any_of(itens.begin(), itens.end(), [&](const ItemResumo& item) {
+                return item.id == antigos[0] && item.titulo == "Edited while metadata hidden";
+            });
+        });
+        checar(cw->mosaico_->versaoSnapshot() == versaoAntesDeVoltar && !cw->mosaico_->snapshotPendente(),
+               "returning to METADATA applies hidden item updates without a full catalog reload");
+        checar(std::any_of(cw->mosaico_->todosItensEmMemoria().begin(), cw->mosaico_->todosItensEmMemoria().end(),
+                          [&](const ItemResumo& item) {
+                              return item.id == antigos[0] && item.titulo == "Edited while metadata hidden";
+                          }),
+               "an edit made while METADATA is hidden is visible when returning");
         // SUBJECT: opções vindas dos subjects existentes, filtro por um deles.
         esperarAte([&] { return !cw->subjectsDisponiveis_.empty(); }, 5000);
         int idTour = -1;
@@ -2501,10 +2541,13 @@ int rodarLoteSelfTest() {
                "SUBJECT dropdown lists each existing subject once, plus the fixed No Subject entry last (" +
                    juce::String((int) cw->subjectsDisponiveis_.size()) + ")");
         if (cw->comboSubject_ && idTour > 0) {
+            const auto versaoAntesDoFiltro = cw->mosaico_->versaoSnapshot();
             cw->comboSubject_->setSelectedId(idTour, juce::sendNotificationSync);
             esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
             bombear(200);
             checar(visiveis(cw) == 2, "SUBJECT \"Tour\" shows only the 2 items tagged with it (" + juce::String(visiveis(cw)) + ")");
+            checar(cw->mosaico_->versaoSnapshot() == versaoAntesDoFiltro,
+                   "changing SUBJECT filters the current snapshot without reloading the catalog");
             cw->limparTodosOsFiltros(true);
             cw->aplicarFiltrosAdicionais();
             esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
@@ -2572,7 +2615,12 @@ int rodarLoteSelfTest() {
 
         cw->btnMostrarRecentes_->onClick();  // desliga (estava mostrando B)
         esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
-        promover(loteC);  // drena os próprios eventos "quarentena" (no-op: C ainda não está em itensTodos_)
+        // Prepara a promoção sem o callback da UI que já solicita um snapshot.
+        // Assim C realmente ainda está fora da memória ao ligar o filtro,
+        // independentemente de quão rápido o snapshot da UI terminaria.
+        janela->projetoAberto()->confirmarLoteGrid(loteC);
+        // Não bombeia mensagens aqui: os eventos da promoção devem chegar
+        // DURANTE o snapshot disparado abaixo, nunca carregar C antes dele.
 
         // Chama atualizarItemEmMemoria() diretamente, na MESMA pilha, logo
         // após o recarregar() do toggle e antes de qualquer bombear — o
@@ -2981,6 +3029,207 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("folder drag block selftest: ") + e.what());
     }
     raizBloco.deleteRecursively();
+
+    // ------------------------- Folder Map: containers soltos (canto superior esquerdo, só entrada, arrastar para pasta)
+    std::cout << "\n-- Folder Map: loose containers --\n";
+    juce::File raizCont = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_folder_container_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizCont.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "FolderContainers";
+        params.prefixoNomenclatura = "FCT";
+        auto projeto = matriz::model::Project::criar(raizCont.getChildFile("MAIN"), params);
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string projId = pa.projeto().projetoId();
+        std::vector<std::string> vinil, fita;
+        for (int i = 0; i < 3; ++i) vinil.push_back(inserirItem(reg, projId, "FCV" + std::to_string(i), false));
+        for (int i = 0; i < 2; ++i) fita.push_back(inserirItem(reg, projId, "FCT" + std::to_string(i), false));
+        const std::string solto = inserirItem(reg, projId, "FCSOLTO", false);
+        const std::string nestVinil = pa.criarContainerImportacao(vinil, "vinyl");
+        const std::string nestFita = pa.criarContainerImportacao(fita, "tape");
+        checar(!nestVinil.empty() && !nestFita.empty(), "setup: two containers created");
+
+        const std::string mapaPadrao = pa.mapaAtivoPadrao();
+        const std::string pasta = pa.criarPastaAcervo("Destino", std::nullopt, mapaPadrao);
+        pa.atualizarPosicaoPastaAcervo(pasta, 900, 400);
+        pa.definirMapaAtivo(mapaPadrao);
+        ArvoreBackupComponent arvore(pa);
+        arvore.setSize(1400, 900);
+        arvore.recarregar();
+
+        int nConteiner = 0;
+        bool todosComTipo = true;
+        for (const auto& lf : arvore.looseFiles_) {
+            if (lf.ehContainer) ++nConteiner;
+            else if (lf.id == solto) todosComTipo = false;  // arquivo comum nao pode aparecer solto sozinho
+        }
+        checar(nConteiner == 2, "both containers appear loose on the canvas without any saved position (" + juce::String(nConteiner) + ")");
+        checar(todosComTipo, "an ordinary orphan file does NOT appear loose on the canvas (still goes to _NO FOLDER)");
+        checar(arvore.looseFiles_.size() >= 2 &&
+                   !arvore.looseFiles_[0].bounds.intersects(arvore.looseFiles_[1].bounds),
+               "stacked containers do not overlap");
+        const auto topoEsq = arvore.screenToCanvas(arvore.areaCanvas().getTopLeft() + juce::Point<int>(36, 36)).toInt();  // x da coluna
+        int proximos = 0;
+        for (const auto& lf : arvore.looseFiles_)
+            if (lf.ehContainer && lf.bounds.getX() == topoEsq.x) ++proximos;
+        checar(proximos == 2, "containers are placed in the top-left column of the canvas");
+        for (const auto& lf : arvore.looseFiles_)
+            if (lf.ehContainer) checar(arvore.layoutSalvo_.count(arvore.chaveLayout(lf.id)) == 1, "container position was persisted in the layout");
+
+        {
+            juce::File dir("./test-output");
+            dir.createDirectory();
+            juce::PNGImageFormat png;
+            juce::FileOutputStream out(dir.getChildFile("foldermap_containers.png"));
+            if (out.openedOk()) { out.setPosition(0); out.truncate(); png.writeImageToStream(arvore.createComponentSnapshot(arvore.getLocalBounds()), out); }
+        }
+
+        // Arrastar o container para dentro da pasta: todos os arquivos do container vao juntos.
+        int idxV = -1;
+        for (size_t i = 0; i < arvore.looseFiles_.size(); ++i)
+            if (arvore.looseFiles_[i].nestId == nestVinil) idxV = static_cast<int>(i);
+        int idxPasta = -1;
+        for (size_t i = 0; i < arvore.nodes_.size(); ++i) if (arvore.nodes_[i].id == pasta) idxPasta = static_cast<int>(i);
+        checar(idxV >= 0 && idxPasta >= 0, "setup: container and destination folder on the canvas");
+        if (idxV >= 0 && idxPasta >= 0) {
+            arvore.looseFileDragIndice_ = idxV;
+            const auto centro = arvore.nodes_[static_cast<size_t>(idxPasta)].bounds.getCentre().toFloat();
+            arvore.looseFiles_[static_cast<size_t>(idxV)].bounds.setCentre(centro.toInt());
+            arvore.concluirArrastoDeArquivoSolto(centro);
+            int dentro = 0;
+            for (const auto& id : vinil) {
+                auto stmt = reg.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?");
+                stmt.bind(1, matriz::db::Value::of(id));
+                stmt.bind(2, matriz::db::Value::of(pasta));
+                if (stmt.step() && stmt.columnInt(0) > 0) ++dentro;
+            }
+            checar(dentro == 3, "dropping the container on a folder moves ALL its files into that folder (" + juce::String(dentro) + "/3)");
+            arvore.recarregar();
+            const void* ligado = nullptr;
+            int idxLigado = -1;
+            for (size_t i = 0; i < arvore.looseFiles_.size(); ++i)
+                if (arvore.looseFiles_[i].nestId == nestVinil) idxLigado = static_cast<int>(i);
+            checar(idxLigado >= 0 && arvore.looseFiles_[static_cast<size_t>(idxLigado)].pastaPaiId == pasta,
+                   "the container stays on the canvas, now linked to the folder it was dropped on");
+            juce::ignoreUnused(ligado);
+            if (idxLigado >= 0) {
+                const auto& lf = arvore.looseFiles_[static_cast<size_t>(idxLigado)];
+                const auto entrada = arvore.portaEntradaDoContainer(lf);
+                checar(entrada.x <= lf.bounds.getCentreX() && std::abs(entrada.y - lf.bounds.getY()) < lf.bounds.getHeight(),
+                       "the container's only port is the input, on its left side");
+                // Ligado à pasta, ele nasce à direita dela e acompanha a pasta quando ela se move.
+                const auto& noPasta = arvore.nodes_[static_cast<size_t>(idxPasta)];
+                checar(lf.bounds.getX() >= noPasta.bounds.getRight(), "a linked container sits to the right of its folder");
+                const auto antes = lf.bounds.getPosition();
+                arvore.moverContainersDaPasta(pasta, 40, 25);
+                checar(arvore.looseFiles_[static_cast<size_t>(idxLigado)].bounds.getPosition() == antes + juce::Point<int>(40, 25),
+                       "a linked container follows its folder when the folder is dragged");
+            }
+
+            // SHOW CONTAINERS AS FOLDERS: o mesmo container vira uma caixa de pasta, ainda só com a porta de entrada.
+            arvore.chkContainersComoPastas_->setToggleState(true, juce::dontSendNotification);
+            arvore.containersComoPastas_ = true;
+            arvore.recarregar();
+            bool cabeComoPasta = false;
+            for (const auto& lf : arvore.looseFiles_)
+                if (lf.nestId == nestVinil) cabeComoPasta = lf.bounds.getWidth() == 190 && arvore.portaEntradaDoContainer(lf).x == static_cast<float>(lf.bounds.getX());
+            checar(cabeComoPasta, "with the toggle on, containers are drawn as folder boxes with the input on the left edge");
+            {
+                juce::File dir("./test-output");
+                dir.createDirectory();
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(dir.getChildFile("foldermap_containers_como_pastas.png"));
+                if (out.openedOk()) { out.setPosition(0); out.truncate(); png.writeImageToStream(arvore.createComponentSnapshot(arvore.getLocalBounds()), out); }
+            }
+            arvore.chkContainersComoPastas_->setToggleState(false, juce::dontSendNotification);
+            arvore.containersComoPastas_ = false;
+            arvore.recarregar();
+            {
+                juce::File dir("./test-output");
+                dir.createDirectory();
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(dir.getChildFile("foldermap_containers_ligados.png"));
+                if (out.openedOk()) { out.setPosition(0); out.truncate(); png.writeImageToStream(arvore.createComponentSnapshot(arvore.getLocalBounds()), out); }
+            }
+            // O mapa ORIGINAL (somente leitura) também mostra os containers, soltos.
+            arvore.mapaAtivoId_ = ProjetoAberto::kMapaOriginal;
+            arvore.recarregar();
+            int noOriginal = 0;
+            for (const auto& lf : arvore.looseFiles_) if (lf.ehContainer && lf.pastaPaiId.empty()) ++noOriginal;
+            checar(noOriginal == 2, "the read-only ORIGINAL map also shows both containers (" + juce::String(noOriginal) + ")");
+            arvore.mapaAtivoId_ = mapaPadrao;
+            arvore.recarregar();
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder map containers selftest: ") + e.what());
+    }
+    raizCont.deleteRecursively();
+
+    // ------------------------- CONTAINER no backup: do MAKE BACKUP em diante o container e uma subpasta da pasta onde esta
+    std::cout << "\n-- Backup: containers viram subpastas --\n";
+    juce::File raizBk = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                            .getChildFile("matriz_container_backup_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizBk.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "ContainerBackup";
+        params.prefixoNomenclatura = "CBK";
+        auto projeto = matriz::model::Project::criar(raizBk.getChildFile("MAIN"), params);
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string projId = pa.projeto().projetoId();
+        const auto itens = [&](const std::string& prefixo, int n) {
+            std::vector<std::string> v;
+            for (int i = 0; i < n; ++i) v.push_back(inserirItem(reg, projId, prefixo + std::to_string(i), false));
+            return v;
+        };
+        const auto vinilIds = itens("VIN", 2), ddpIds = itens("DDP", 2), fitaIds = itens("TAP", 2), comuns = itens("COM", 1), orfaos = itens("ORF", 1);
+        const auto nestVinil = pa.criarContainerImportacao(vinilIds, "vinyl");
+        const auto nestDdp = pa.criarContainerImportacao(ddpIds, "ddp");
+        const auto nestFita = pa.criarContainerImportacao(fitaIds, "tape");
+        pa.definirNomeDoContainer(nestVinil, "Discos");   // colide com a subpasta "Discos" da pasta Albuns
+        pa.definirNomeDoContainer(nestDdp, "Master: Final?");  // caracteres proibidos no nome da pasta
+        const std::string mapa = pa.mapaAtivoPadrao();
+        const std::string albuns = pa.criarPastaAcervo("Albuns", std::nullopt, mapa);
+        pa.criarPastaAcervo("Discos", albuns, mapa);
+        pa.adicionarItensAPasta(vinilIds, albuns);   // container dentro de uma pasta
+        pa.adicionarItensAPasta(comuns, albuns);     // arquivo comum na mesma pasta
+        // ddpIds e fitaIds ficam soltos no canvas (containers sem pasta); orfaos = arquivo comum sem pasta
+
+        const juce::File media = pa.projeto().pastaMedia();
+        const auto planejar = [&](bool paraExport, bool semPastaNaRaiz) {
+            return matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), media,
+                                                              {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                              matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                              false, false, paraExport, mapa, false, semPastaNaRaiz);
+        };
+        const auto caminhoDe = [](const matriz::consolidacao::PlanoConsolidacao& plano, const std::string& itemId) {
+            for (const auto& ip : plano.itens) if (ip.itemId == itemId) return ip.caminhoRelativoDestino.toStdString();
+            return std::string("<fora do plano>");
+        };
+        const auto plano = planejar(false, false);
+        checar(caminhoDe(plano, vinilIds[0]).rfind("Albuns/Discos (2)/", 0) == 0 && caminhoDe(plano, vinilIds[1]).rfind("Albuns/Discos (2)/", 0) == 0,
+               "container dropped in a folder -> <folder>/<container name>/, with ' (2)' when a sibling folder has that name (" + juce::String(caminhoDe(plano, vinilIds[0])) + ")");
+        checar(caminhoDe(plano, comuns[0]).rfind("Albuns/", 0) == 0 && caminhoDe(plano, comuns[0]).find("Discos") == std::string::npos,
+               "an ordinary file in the same folder stays directly in the folder (" + juce::String(caminhoDe(plano, comuns[0])) + ")");
+        checar(caminhoDe(plano, ddpIds[0]).rfind("Master- Final-/", 0) == 0,
+               "a loose container goes to the root of the backup as its own folder, name sanitized (" + juce::String(caminhoDe(plano, ddpIds[0])) + ")");
+        checar(caminhoDe(plano, fitaIds[0]).rfind("Tape transcription/", 0) == 0,
+               "a container without a name uses the type label, never a file name (" + juce::String(caminhoDe(plano, fitaIds[0])) + ")");
+        checar(caminhoDe(plano, orfaos[0]).rfind("_SEM_PASTA/", 0) == 0, "an ordinary orphan file still goes to _SEM_PASTA");
+        // EXPORT por mapa: container solto sai na raiz; arquivo comum sem pasta continua tratado como antes (excluido ou _NO FOLDER).
+        const auto exp = planejar(true, true);
+        checar(caminhoDe(exp, ddpIds[0]).rfind("Master- Final-/", 0) == 0 && caminhoDe(exp, orfaos[0]).rfind("_NO FOLDER/", 0) == 0,
+               "EXPORT follows the same rule and the _NO FOLDER rule is intact (" + juce::String(caminhoDe(exp, orfaos[0])) + ")");
+        const auto expSemRaiz = planejar(true, false);
+        checar(caminhoDe(expSemRaiz, ddpIds[0]).rfind("Master- Final-/", 0) == 0 && expSemRaiz.semPastaExcluidos.count(orfaos[0]) == 1,
+               "a loose container is never counted as 'without folder' in an export by map");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("container backup selftest: ") + e.what());
+    }
+    raizBk.deleteRecursively();
 
     // ------------------------- Folder Map: atalhos C e D (item 9, 2026-09-29)
     std::cout << "\n-- Folder Map: C (Folder Color) / D (Disconnect) shortcuts --\n";

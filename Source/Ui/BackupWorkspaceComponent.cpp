@@ -1862,16 +1862,16 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         // Audio
         "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
         "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-        "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master",
+        "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Raw Audio",
         // Video
         "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
         "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
-        "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of",
+        "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial",
         // Image
         "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-        "Graphics", "Logo", "3D", "YouTube Thumbnail",
+        "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "360 Photo", "Technical Photography",
         // Docs
-        "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
+        "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Personal Document", "Manual", "Report", "Reference", "Technical Documentation",
         "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
         "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"
     };

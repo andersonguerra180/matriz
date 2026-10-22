@@ -128,6 +128,33 @@ PreviewComponent::PreviewComponent(ProjetoAberto& projeto) : projeto_(projeto) {
     btnProximo_->onClick = [this] { if (aoNavegar) aoNavegar(1); };
     addAndMakeVisible(*btnProximo_);
 
+    tglVersao_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x98\x85 ") + matriz::i18n::t("light.ui.imp.stage.chosen"));
+    tglVersao_->setClickingTogglesState(true);
+    tglVersao_->setTooltip(matriz::i18n::t("light.ui.imp.stage.chosenTip"));
+    tglVersao_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    tglVersao_->setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff2f7df6));
+    tglVersao_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    tglVersao_->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    tglVersao_->onClick = [this] {
+        if (itemId_.empty()) return;
+        projeto_.definirCampoRaiz(itemId_, "versao_escolhida", tglVersao_->getToggleState() ? "true" : "false");
+    };
+    addChildComponent(*tglVersao_);
+
+    for (const char* codigo : { "REC", "MIX", "MSTR" }) {
+        auto b = std::make_unique<juce::TextButton>(codigo);
+        b->onClick = [this, c = std::string(codigo)] {
+            if (itemId_.empty()) return;
+            // Clicar na etapa que já está marcada a desmarca.
+            const auto atual = projeto_.valorCampo(itemId_, "raiz", 0, "etapa_producao").value_or("");
+            projeto_.definirCampoRaiz(itemId_, "etapa_producao", atual == c ? std::string() : c);
+            atualizarToggleVersao();
+            resized();
+        };
+        addChildComponent(*b);
+        btnsEtapa_.push_back(std::move(b));
+    }
+
     cabecalhoTitulo_ = std::make_unique<juce::Label>();
     cabecalhoTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     cabecalhoTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
@@ -159,6 +186,34 @@ PreviewComponent::PreviewComponent(ProjetoAberto& projeto) : projeto_(projeto) {
 
 PreviewComponent::~PreviewComponent() { stopTimer(); }
 
+// Etapa de produção (REC / MIX / MSTR) e BEST TAKE. As etapas aparecem para arquivos de um container de music production
+// (ou que já têm etapa); BEST TAKE vale para mix/master de música e para os vídeos dos containers de vídeo.
+void PreviewComponent::atualizarToggleVersao() {
+    if (!tglVersao_) return;
+    const auto etapa = projeto_.valorCampo(itemId_, "raiz", 0, "etapa_producao").value_or("");
+    std::string origem;
+    if (const auto nest = projeto_.nestDoItem(itemId_)) origem = nest->origem;
+    const bool deProducao = origem == "production";
+    bool ehVideo = false;
+    if (!origem.empty()) {
+        std::string tit, tipo, cod;
+        projeto_.obterItemInfo(itemId_, tit, tipo, cod);
+        ehVideo = tipo == "digital_video" || tipo == "video";
+    }
+    const bool mostraEtapas = deProducao || !etapa.empty();
+    const bool mostraTake = etapa == "MIX" || etapa == "MSTR" || ehVideo;
+    const juce::Colour coresEtapa[] = { juce::Colour(0xffe5484d), juce::Colour(0xff3b82f6), juce::Colour(0xff8b5cf6) };
+    const char* codigosEtapa[] = { "REC", "MIX", "MSTR" };
+    for (size_t i = 0; i < btnsEtapa_.size(); ++i) {
+        btnsEtapa_[i]->setVisible(mostraEtapas);
+        const bool ativo = etapa == codigosEtapa[i];
+        btnsEtapa_[i]->setColour(juce::TextButton::buttonColourId, ativo ? coresEtapa[i] : tema().painelAlt);
+        btnsEtapa_[i]->setColour(juce::TextButton::textColourOffId, ativo ? juce::Colours::white : tema().textoPrimario);
+    }
+    tglVersao_->setVisible(mostraTake);
+    if (mostraTake) tglVersao_->setToggleState(projeto_.valorCampo(itemId_, "raiz", 0, "versao_escolhida").value_or("") == "true", juce::dontSendNotification);
+}
+
 void PreviewComponent::mostrarItem(const std::string& itemId) {
     timeline_.reset();
     videoPlayer_.reset();
@@ -166,6 +221,7 @@ void PreviewComponent::mostrarItem(const std::string& itemId) {
 
     itemId_ = itemId;
     construirParaItem();
+    atualizarToggleVersao();
     resized();
     repaint();
 }
@@ -539,6 +595,17 @@ void PreviewComponent::resized() {
             btnProximo_->setBounds(topo.removeFromLeft(38).reduced(0, 2));
             topo.removeFromLeft(10);
         }
+    }
+    if (tglVersao_ && tglVersao_->isVisible()) {
+        tglVersao_->setBounds(topo.removeFromRight(170).reduced(0, 2));
+        topo.removeFromRight(8);
+    }
+    if (!btnsEtapa_.empty() && btnsEtapa_[0]->isVisible()) {
+        for (auto it = btnsEtapa_.rbegin(); it != btnsEtapa_.rend(); ++it) {
+            (*it)->setBounds(topo.removeFromRight(54).reduced(0, 2));
+            topo.removeFromRight(4);
+        }
+        topo.removeFromRight(4);
     }
     cabecalhoTitulo_->setBounds(topo);
 

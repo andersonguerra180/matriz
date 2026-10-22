@@ -1,4 +1,5 @@
 #include "FichaPanelComponent.h"
+#include "GeoAcoes.h"
 
 #include "AutoCompleteTextEditor.h"
 #include "GeoFavoritosGerenciar.h"
@@ -330,7 +331,9 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"MIDI", "MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo do Artista")},
         {"Artist Backup", "Backup do Artista"},
-        {"Demo Tape", "Fita Demo"},
+        {"Demo", "Demo"},
+        {"Demo Tape", "Demo"},  // valor antigo: lido como Demo
+        {"Raw Audio", juce::String::fromUTF8("Áudio Bruto")},
         {"Live Concert", "Concerto ao Vivo"},
         {"VS", "VS"},
         {"Impulse Response", "Resposta ao Impulso (IR)"},
@@ -352,6 +355,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"YouTube Video", juce::String::fromUTF8("Vídeo do YouTube")},
         {"360 Video", juce::String::fromUTF8("Vídeo 360°")},
         {"Making Of", juce::String::fromUTF8("Making Of")},
+        {"Tutorial", "Tutorial"},
         // Image
         {"Photo", "Foto"},
         {"Artwork", juce::String::fromUTF8("Arte / Ilustração")},
@@ -363,6 +367,10 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
         {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
+        {"Exhibition", juce::String::fromUTF8("Exposição")},
+        {"Raw Photos", "Fotos RAW"},
+        {"360 Photo", "Foto 360"},
+        {"Technical Photography", juce::String::fromUTF8("Fotografia Técnica")},
         // Item "CONTENT — imagens também podem ser documentos": uma imagem
         // (JPG/PNG/TIFF/etc.) pode ser um documento digitalizado — isso é
         // classificação semântica de CONTENT, não altera o tipo técnico
@@ -377,6 +385,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Text", "Texto"},
         {"Journal", juce::String::fromUTF8("Diário")},
         {"Contract", "Contrato"},
+        {"Personal Document", "Documento Pessoal"},
         {"Manual", "Manual"},
         {"Report", juce::String::fromUTF8("Relatório")},
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
@@ -402,6 +411,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
 inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
     if (val.isEmpty()) return {};
     if (!paraPt && val.equalsIgnoreCase("Spreadsheet")) return "Sheet";  // nome antigo
+    if (!paraPt && val.equalsIgnoreCase("Demo Tape")) return "Demo";  // nome antigo
     for (const auto& par : mapaTraducoesContent()) {
         if (paraPt) {
             if (val.equalsIgnoreCase(par.first)) return par.second;
@@ -417,16 +427,16 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     if (cat == MediaCategory::Audio) {
         keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
                 "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-                "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master"};
+                "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Raw Audio"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                 "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
-                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of"};
+                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Document"};
+                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "360 Photo", "Technical Photography", "Document"};
     } else if (cat == MediaCategory::Docs) {
-        keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference",
+        keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Personal Document", "Manual", "Report", "Reference",
                 "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
                 "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"};
     } else {
@@ -867,78 +877,36 @@ public:
             // curta na hora que aparece). Substituiu o antigo agrupamento
             // com ORIGINAL SOURCE MEDIUM (colOsm), que deixava PATH grudado
             // em DEVICE do outro lado e um vão vazio embaixo de AI GENERATED.
-            int colContentGroup = 0;
             auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1, LinhaUnificada*& notasFora) {
                 LinhaUnificada* cuPeople = nullptr;
                 LinhaUnificada* cuTags = nullptr;
 
-                for (auto& cu : camposUnificados_) {
-                    if (!cu || cu->bloco != bloco) continue;
+                std::vector<LinhaUnificada*> ordenados;
+                for (auto& campo : camposUnificados_) if (campo && campo->bloco == bloco) ordenados.push_back(campo.get());
+                if (bloco == BlocoFicha::UserAsset) {
+                    auto prioridade = [](const LinhaUnificada* campo) {
+                        const auto& id = campo->campoId;
+                        if (id == "subject" || id == "event_date") return 0;
+                        if (id == "lista" || id == "creator") return 1;
+                        if (id == "collection" || id == "source_media") return 2;
+                        if (id == "filename") return 4;
+                        if (id == "path") return 5;
+                        if (id == "ai_generated") return 6;
+                        return 3;
+                    };
+                    std::stable_sort(ordenados.begin(), ordenados.end(), [&](auto* a, auto* b) { return prioridade(a) < prioridade(b); });
+                }
+                for (auto* cu : ordenados) {
 
                     if (bloco == BlocoFicha::UserAsset) {
-                        if (cu->ehNotes)  { notasFora = cu.get(); continue; }
-                        if (cu->ehPeople) { cuPeople = cu.get(); continue; }
-                        if (cu->ehTags)   { cuTags = cu.get();   continue; }
-                        // item: SUBJECT sempre à esquerda, CREATOR sempre à
-                        // direita, os dois sempre na mesma linha — o
-                        // empacotamento "coluna mais curta primeiro" abaixo
-                        // não garante isso sozinho. SUBJECT é pulado aqui
-                        // (tratado junto quando o loop chega no CREATOR,
-                        // que já vem logo depois dele na ordem de inserção).
-                        // LIST e CONTENT também são tratados aqui: sempre na
-                        // coluna esquerda, nesta ordem, logo abaixo de SUBJECT.
-                        if (cu->campoId == "subject" || cu->campoId == "lista" || cu->campoId == "collection") {
-                            bool temCreator = false;
-                            for (auto& outro : camposUnificados_)
-                                if (outro && outro->bloco == bloco && outro->campoId == "creator") { temCreator = true; break; }
-                            if (temCreator) continue;
-                        }
-                        if (cu->campoId == "creator") {
-                            LinhaUnificada* cuSubject = nullptr;
-                            for (auto& outro : camposUnificados_) {
-                                if (outro && outro->bloco == bloco && outro->campoId == "subject") {
-                                    cuSubject = outro.get();
-                                    break;
-                                }
-                            }
-                            int yLinha = std::max(y0, y1);
-                            y0 = yLinha;
-                            y1 = yLinha;
-                            int rotuloW = colW - 85;
-                            int alturaLinha = 18 + tk.espacoPequeno;
-                            if (cuSubject) {
-                                cuSubject->rotulo->setBounds(x0, yLinha, rotuloW, 16);
-                                cuSubject->badge->setBounds(x0 + colW - 80, yLinha, 80, 16);
-                                cuSubject->editor->setBounds(x0, yLinha + 18, colW, 24);
-                            }
-                            cu->rotulo->setBounds(x1, yLinha, rotuloW, 16);
-                            cu->badge->setBounds(x1 + colW - 80, yLinha, 80, 16);
-                            cu->editor->setBounds(x1, yLinha + 18, colW, 24);
-                            y0 += alturaLinha + 24;
-                            y1 += alturaLinha + 24;
-                            // LIST e CONTENT: coluna esquerda, em sequência.
-                            for (const char* id : {"lista", "collection"}) {
-                                for (auto& outro : camposUnificados_) {
-                                    if (!outro || outro->bloco != bloco || outro->campoId != id) continue;
-                                    outro->rotulo->setBounds(x0, y0, rotuloW, 16);
-                                    outro->badge->setBounds(x0 + colW - 80, y0, 80, 16);
-                                    outro->editor->setBounds(x0, y0 + 18, colW, 24);
-                                    y0 += alturaLinha + 24;
-                                    break;
-                                }
-                            }
-                            colContentGroup = 0;  // PATH/AI GENERATED seguem o CONTENT (esquerda)
-                            continue;
-                        }
+                        if (cu->ehNotes)  { notasFora = cu; continue; }
+                        if (cu->ehPeople) { cuPeople = cu; continue; }
+                        if (cu->ehTags)   { cuTags = cu;   continue; }
                     }
 
                     bool useCol1 = (y1 < y0);
-                    if (bloco == BlocoFicha::UserAsset && (cu->campoId == "path" || cu->campoId == "ai_generated")) {
-                        useCol1 = (colContentGroup == 1);
-                    }
-                    if (bloco == BlocoFicha::UserAsset && cu->campoId == "collection") {
-                        colContentGroup = useCol1 ? 1 : 0;
-                    }
+                    if (bloco == BlocoFicha::UserAsset)
+                        useCol1 = cu->campoId == "event_date" || cu->campoId == "creator" || cu->campoId == "source_media";
 
                     int currX = useCol1 ? x1 : x0;
                     int& currY = useCol1 ? y1 : y0;
@@ -1074,6 +1042,10 @@ public:
                 if (geolocalizacao_.statusBadge) {
                     rightX -= 145;
                     geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 145, 20);
+                    if (geolocalizacao_.overrideGeo) {
+                        geolocalizacao_.statusBadge->setVisible(false);
+                        geolocalizacao_.overrideGeo->setBounds(rightX, y + padCardY, 145, 20);
+                    }
                     rightX -= 8;
                 }
                 int tituloX = x + padCardX;
@@ -1088,36 +1060,45 @@ public:
                 y += padCardY + 24;
 
                 if (!colapsadoGeoLocation_) {
-                    int y0 = y;
-                    int y1 = y;
-                    auto layoutGeoField = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
-                        if (lbl && ed) {
-                            bool useCol1 = (y1 < y0);
-                            int currX = useCol1 ? x1 : x0;
-                            int& currY = useCol1 ? y1 : y0;
+                    // Coordenadas na largura toda, GET/OPEN logo abaixo delas
+                    // (as duas metades casam com a linha de favoritos) e o
+                    // resto em grade 2x2 (Address|City, State|Country).
+                    if (geolocalizacao_.labelCoords && geolocalizacao_.editorCoords) {
+                        geolocalizacao_.labelCoords->setBounds(x + padCardX, y, innerW, 16);
+                        y += 18;
+                        geolocalizacao_.editorCoords->setBounds(x + padCardX, y, innerW, 24);
+                        y += 24 + tk.espacoPequeno;
+                    }
+                    const int halfW = (innerW - tk.espacoPequeno) / 2;
+                    if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, y, halfW, 22);
+                    if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + halfW + tk.espacoPequeno, y, halfW, 22);
+                    y += 22 + tk.espacoMedio;
 
-                            lbl->setBounds(currX, currY, colW, 16);
-                            currY += 18;
-                            ed->setBounds(currX, currY, colW, 24);
-                            currY += 24 + tk.espacoPequeno;
+                    auto layoutGeoPar = [&](std::unique_ptr<juce::Label>& lblA, std::unique_ptr<juce::TextEditor>& edA,
+                                            std::unique_ptr<juce::Label>& lblB, std::unique_ptr<juce::TextEditor>& edB) {
+                        if (lblA && edA) {
+                            lblA->setBounds(x0, y, colW, 16);
+                            edA->setBounds(x0, y + 18, colW, 24);
                         }
+                        if (lblB && edB) {
+                            lblB->setBounds(x1, y, colW, 16);
+                            edB->setBounds(x1, y + 18, colW, 24);
+                        }
+                        y += 18 + 24 + tk.espacoPequeno;
                     };
-                    layoutGeoField(geolocalizacao_.labelCoords, geolocalizacao_.editorCoords);
-                    layoutGeoField(geolocalizacao_.labelAddress, geolocalizacao_.editorAddress);
-                    layoutGeoField(geolocalizacao_.labelCity, geolocalizacao_.editorCity);
-                    layoutGeoField(geolocalizacao_.labelState, geolocalizacao_.editorState);
-                    layoutGeoField(geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
+                    layoutGeoPar(geolocalizacao_.labelAddress, geolocalizacao_.editorAddress,
+                                 geolocalizacao_.labelCity, geolocalizacao_.editorCity);
+                    layoutGeoPar(geolocalizacao_.labelState, geolocalizacao_.editorState,
+                                 geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
 
-                    // Favorite buttons row (side by side below all fields)
-                    int favY = std::max(y0, y1) + tk.espacoPequeno;
-                    int halfW = (innerW - tk.espacoPequeno) / 2;
+                    // Favorites row
                     if (geolocalizacao_.btnSalvarFavorito)
-                        geolocalizacao_.btnSalvarFavorito->setBounds(x + padCardX, favY, halfW, 22);
+                        geolocalizacao_.btnSalvarFavorito->setBounds(x + padCardX, y, halfW, 22);
                     if (geolocalizacao_.btnCarregarFavorito)
-                        geolocalizacao_.btnCarregarFavorito->setBounds(x + padCardX + halfW + tk.espacoPequeno, favY, halfW, 22);
-                    y0 = y1 = favY + 22 + tk.espacoPequeno;
+                        geolocalizacao_.btnCarregarFavorito->setBounds(x + padCardX + halfW + tk.espacoPequeno, y, halfW, 22);
+                    y += 22 + tk.espacoPequeno;
 
-                    int cardCBottom = std::max(y0, y1) + padCardY;
+                    int cardCBottom = y + padCardY;
                     quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
                     y = cardCBottom + tk.espacoMedio;
                 } else {
@@ -1278,6 +1259,10 @@ public:
             if (geolocalizacao_.statusBadge) {
                 rightX -= 135;
                 geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 135, 20);
+                    if (geolocalizacao_.overrideGeo) {
+                        geolocalizacao_.statusBadge->setVisible(false);
+                        geolocalizacao_.overrideGeo->setBounds(rightX, y + padCardY, 135, 20);
+                    }
                 rightX -= 8;
             }
             geolocalizacao_.titulo->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
@@ -1289,6 +1274,14 @@ public:
                     y += 18;
                     geolocalizacao_.editorCoords->setBounds(x + padCardX, y, innerW, 24);
                     y += 24 + tk.espacoPequeno;
+                }
+
+                // GET / OPEN row
+                {
+                    const int meia = (innerW - tk.espacoPequeno) / 2;
+                    if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setBounds(x + padCardX, y, meia, 22);
+                    if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, y, meia, 22);
+                    y += 22 + tk.espacoMedio;
                 }
 
                 if (geolocalizacao_.labelAddress && geolocalizacao_.editorAddress) {
@@ -1316,7 +1309,7 @@ public:
                     geolocalizacao_.labelCountry->setBounds(x + padCardX, y, innerW, 16);
                     y += 18;
                     geolocalizacao_.editorCountry->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoMedio;
+                    y += 24 + tk.espacoPequeno;
                 }
 
                 // Favorite buttons row
@@ -1701,6 +1694,8 @@ public:
             if (geolocalizacao_.editorCountry) geolocalizacao_.editorCountry->setVisible(vis);
             if (geolocalizacao_.btnSalvarFavorito) geolocalizacao_.btnSalvarFavorito->setVisible(vis);
             if (geolocalizacao_.btnCarregarFavorito) geolocalizacao_.btnCarregarFavorito->setVisible(vis);
+            if (geolocalizacao_.btnGet) geolocalizacao_.btnGet->setVisible(vis);
+            if (geolocalizacao_.btnOpen) geolocalizacao_.btnOpen->setVisible(vis);
             if (aoRelayoutNecessario) aoRelayoutNecessario();
             repaint();
         };
@@ -1806,10 +1801,60 @@ public:
                 });
         };
         addAndMakeVisible(*geolocalizacao_.btnCarregarFavorito);
+
+        // GET (local atual) e OPEN (Google Maps): em todas as fichas de GEO LOCATION.
+        geolocalizacao_.btnGet = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.get"));
+        geolocalizacao_.btnGet->setTooltip(isPt ? "Preencher com o local atual (aproximado, pelo IP)" : "Fill in with the current location (approximate, by IP)");
+        geolocalizacao_.btnGet->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        geolocalizacao_.btnGet->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        geolocalizacao_.btnGet->onClick = [this, commitGeo] {
+            juce::Component::SafePointer<juce::Component> seguro(this);
+            matriz::ui::geoacoes::obterLocalAtual([this, seguro, commitGeo](matriz::ui::geoacoes::Local l) {
+                if (seguro == nullptr) return;
+                if (geolocalizacao_.editorCoords && l.coords.isNotEmpty()) geolocalizacao_.editorCoords->setText(l.coords);
+                if (geolocalizacao_.editorCity && l.cidade.isNotEmpty()) geolocalizacao_.editorCity->setText(l.cidade);
+                if (geolocalizacao_.editorState && l.estado.isNotEmpty()) geolocalizacao_.editorState->setText(l.estado);
+                if (geolocalizacao_.editorCountry && l.pais.isNotEmpty()) geolocalizacao_.editorCountry->setText(l.pais);
+                if (l.coords.isNotEmpty() || l.cidade.isNotEmpty()) commitGeo();
+            });
+        };
+        addAndMakeVisible(*geolocalizacao_.btnGet);
+
+        geolocalizacao_.btnOpen = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.open"));
+        geolocalizacao_.btnOpen->setTooltip(matriz::i18n::t("imp.ficha.geo.open.dica"));
+        geolocalizacao_.btnOpen->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        geolocalizacao_.btnOpen->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        geolocalizacao_.btnOpen->onClick = [this] {
+            const auto txt = [](const std::unique_ptr<juce::TextEditor>& e) { return e ? e->getText() : juce::String(); };
+            matriz::ui::geoacoes::abrirNoGoogleMaps({ txt(geolocalizacao_.editorCoords), txt(geolocalizacao_.editorAddress), txt(geolocalizacao_.editorCity),
+                                                      txt(geolocalizacao_.editorState), txt(geolocalizacao_.editorCountry) });
+        };
+        addAndMakeVisible(*geolocalizacao_.btnOpen);
+        // Só o GPS que veio incorporado no arquivo é imutável por padrão.
+        // Dados manuais continuam editáveis; o EXIF exige uma decisão
+        // explícita no OVERRIDE antes de qualquer campo poder ser alterado.
+        geolocalizacao_.protegida = geoOpt &&
+                                    geoOpt->source == matriz::analytics::GeoSource::EmbeddedMetadata &&
+                                    geoOpt->hasValidCoordinates();
+        if (geolocalizacao_.protegida) {
+            geolocalizacao_.overrideGeo = std::make_unique<juce::ToggleButton>("OVERRIDE");
+            auto atualizarTrava = [this] {
+                const bool livre = geolocalizacao_.overrideGeo->getToggleState();
+                for (auto* editor : {geolocalizacao_.editorCoords.get(), geolocalizacao_.editorAddress.get(),
+                                    geolocalizacao_.editorCity.get(), geolocalizacao_.editorState.get(), geolocalizacao_.editorCountry.get()})
+                    if (editor) editor->setEnabled(livre);
+                geolocalizacao_.btnCarregarFavorito->setEnabled(livre);
+                geolocalizacao_.btnGet->setEnabled(livre);
+            };
+            geolocalizacao_.overrideGeo->onClick = atualizarTrava;
+            addAndMakeVisible(*geolocalizacao_.overrideGeo);
+            atualizarTrava();
+        }
     }
 
 
     void salvarGeolocalizacao(const std::string& itemId) {
+        if (geolocalizacao_.protegida && (!geolocalizacao_.overrideGeo || !geolocalizacao_.overrideGeo->getToggleState())) return;
         if (!geolocalizacao_.editorCoords) return;
         matriz::analytics::AssetGeolocation geo;
         geo.assetId = itemId;
@@ -2061,40 +2106,10 @@ private:
             alturaVal = static_cast<int>(dados["alturaPx"]);
         }
 
-        if ((larguraVal <= 0 || alturaVal <= 0) && arquivo) {
-            juce::File f(arquivo->caminhoAbsoluto);
-            if (f.existsAsFile()) {
-                try {
-                    auto image = Exiv2::ImageFactory::open(f.getFullPathName().toStdString());
-                    image->readMetadata();
-                    larguraVal = image->pixelWidth();
-                    alturaVal = image->pixelHeight();
-                } catch (...) {
-                    auto img = juce::ImageFileFormat::loadFrom(f);
-                    if (img.isValid()) {
-                        larguraVal = img.getWidth();
-                        alturaVal = img.getHeight();
-                    }
-                }
-
-                // Decodificar imagem/Exiv2 na thread de UI trava a navegação
-                // (trocar de foto vira um spinner) — cacheia o resultado no
-                // JSON do arquivo pra nunca mais precisar reabrir o arquivo
-                // só pra ler largura/altura.
-                if (larguraVal > 0 && alturaVal > 0) {
-                    juce::var dadosCache = dados.isObject() ? dados : juce::var(new juce::DynamicObject());
-                    dadosCache.getDynamicObject()->setProperty("larguraPx", larguraVal);
-                    dadosCache.getDynamicObject()->setProperty("alturaPx", alturaVal);
-                    std::string novoJson = juce::JSON::toString(dadosCache, true).toStdString();
-                    try {
-                        projeto_.projeto().registro().run(
-                            "UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE id = ?",
-                            {matriz::db::Value::of(novoJson), matriz::db::Value::of(arquivo->id)});
-                        dados = dadosCache;
-                    } catch (...) {}
-                }
-            }
-        }
+        // A ficha roda na message thread. Abrir o original aqui para obter
+        // dimensões ausentes bloqueava a navegação por dezenas de segundos
+        // quando o arquivo estava em Google Drive/iCloud. Dimensões técnicas
+        // são preenchidas pela análise de ingest; a UI nunca força download.
 
         int exifOrient = 1;
         if (dados.isObject() && dados.hasProperty("bruto")) {
@@ -2959,7 +2974,6 @@ private:
 
         // Construct fields per category exactly as specified
         if (cat == MediaCategory::Audio) {
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -2983,13 +2997,13 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Audio, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Video) {
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -3012,13 +3026,13 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Video, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Image) {
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -3038,13 +3052,13 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Image, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else { // Docs
-            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
             // do EVENTO retratado pelo asset — único campo usado pra
             // indexação/busca temporal, ver item 9). Correção seguinte:
@@ -3062,6 +3076,7 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Docs, isPt),
                                 "collection_type");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
@@ -3619,6 +3634,8 @@ private:
     } preservation_;
 
     struct SecaoGeolocalizacao {
+        bool protegida = false;
+        std::unique_ptr<juce::ToggleButton> overrideGeo;
         std::unique_ptr<juce::Label>       titulo;
         std::unique_ptr<juce::Label>       statusBadge;
         std::unique_ptr<juce::Label>       labelCoords;
@@ -3633,6 +3650,8 @@ private:
         std::unique_ptr<juce::TextEditor>  editorCountry;
         std::unique_ptr<juce::TextButton>  btnSalvarFavorito;   // ★ Add to Favorites
         std::unique_ptr<juce::TextButton>  btnCarregarFavorito; // ▾ Load Favorite
+        std::unique_ptr<juce::TextButton>  btnGet;              // GET: local atual (pelo IP)
+        std::unique_ptr<juce::TextButton>  btnOpen;             // OPEN: abre no Google Maps
     } geolocalizacao_;
     juce::Image iconeGeo_;
     juce::Rectangle<int> iconeGeoBounds_;
@@ -3766,11 +3785,9 @@ public:
         bool algumNulo = false;
         projeto_.obterTiposMidiaDosItens(itemIds_, tiposPresentes, algumNulo);
 
-        if (tiposPresentes.empty() && algumNulo) {
-            construirSeletorTipoMidia();
-            relayoutEExibir();
-            return;
-        }
+        // Itens sem tipo (formato que o app não reconhece: .bin, .exe, .dat, .sys...) NÃO pedem mais uma categoria no chute:
+        // seguem como "Other", e o usuário preenche na entrada (questionário) ou na ficha de metadados.
+        juce::ignoreUnused(algumNulo);
 
         // Determine general category across items
         MediaCategory cat = MediaCategory::Mixed;
@@ -3984,6 +4001,8 @@ public:
                 if (geoLote_.badge) {
                     rightXg -= 145;
                     geoLote_.badge->setBounds(rightXg, y + padCardY, 145, 20);
+                geoLote_.badge->setVisible(false);
+                if (geoLote_.overrideGeo) geoLote_.overrideGeo->setBounds(rightXg, y + padCardY, 145, 20);
                     rightXg -= 8;
                 }
                 geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
@@ -4013,6 +4032,12 @@ public:
                     // Botões lado a lado, abaixo das duas colunas (mesmo
                     // arranjo do single-item — ver favY/halfW em ~944-950).
                     int favY = std::max(y0, y1) + tk.espacoPequeno;
+                    {
+                        const int meia = (innerW - tk.espacoPequeno) / 2;
+                        if (geoLote_.botaoGet) geoLote_.botaoGet->setBounds(x + padCardX, favY, meia, 22);
+                        if (geoLote_.botaoOpen) geoLote_.botaoOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, favY, meia, 22);
+                        favY += 22 + tk.espacoPequeno;
+                    }
                     int halfW = (innerW - tk.espacoPequeno) / 2;
                     if (geoLote_.botaoSalvarFavoritos)
                         geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, favY, halfW, 22);
@@ -4133,6 +4158,8 @@ public:
             if (geoLote_.badge) {
                 rightXg -= 135;
                 geoLote_.badge->setBounds(rightXg, y + padCardY, 135, 20);
+                geoLote_.badge->setVisible(false);
+                if (geoLote_.overrideGeo) geoLote_.overrideGeo->setBounds(rightXg, y + padCardY, 135, 20);
                 rightXg -= 8;
             }
             geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
@@ -4149,6 +4176,12 @@ public:
             layoutGeoSubfield1(geoLote_.labelState, geoLote_.editorState);
             layoutGeoSubfield1(geoLote_.labelCountry, geoLote_.editorCountry);
             if (geoLote_.botaoSalvarFavoritos || geoLote_.botaoFavoritos) {
+                {
+                    const int meia = (innerW - tk.espacoPequeno) / 2;
+                    if (geoLote_.botaoGet) geoLote_.botaoGet->setBounds(x + padCardX, y, meia, 22);
+                    if (geoLote_.botaoOpen) geoLote_.botaoOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, y, meia, 22);
+                    y += 22 + tk.espacoPequeno;
+                }
                 int halfW = (innerW - tk.espacoPequeno) / 2;
                 if (geoLote_.botaoSalvarFavoritos)
                     geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, y, halfW, 22);
@@ -4403,6 +4436,7 @@ private:
     };
 
     struct SecaoGeoLote {
+        std::unique_ptr<juce::ToggleButton> overrideGeo;
         std::unique_ptr<juce::Label> titulo;
         std::unique_ptr<juce::Label> badge;
         std::unique_ptr<juce::Label> labelCoords;
@@ -4417,6 +4451,8 @@ private:
         std::unique_ptr<juce::TextEditor> editorCountry;
         std::unique_ptr<juce::TextButton> botaoFavoritos;
         std::unique_ptr<juce::TextButton> botaoSalvarFavoritos;   // ★ Add to Favorites (Fase 2)
+        std::unique_ptr<juce::TextButton> botaoGet;               // GET: local atual (pelo IP)
+        std::unique_ptr<juce::TextButton> botaoOpen;              // OPEN: abre no Google Maps
         bool tocado = false;
         // Valor comum (ou vazio se os selecionados divergem) capturado ao
         // montar o card — item 2 (correção METADATA 2026-09-28): só um
@@ -4954,6 +4990,9 @@ private:
             geoLote_.badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             geoLote_.badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*geoLote_.badge);
+            geoLote_.overrideGeo = std::make_unique<juce::ToggleButton>("OVERRIDE");
+            geoLote_.overrideGeo->setTooltip("Allow overwriting existing GPS coordinates in this selection");
+            addAndMakeVisible(*geoLote_.overrideGeo);
 
             // Item 2 (correção METADATA 2026-09-28): mesmo padrão de "valor
             // comum" dos campos Dublin Core (addEditableTextLote) — um valor
@@ -5131,6 +5170,35 @@ private:
                     });
             };
             addAndMakeVisible(*geoLote_.botaoFavoritos);
+
+            geoLote_.botaoGet = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.get"));
+            geoLote_.botaoGet->setTooltip(isPt ? "Preencher com o local atual (aproximado, pelo IP) e aplicar a todos os selecionados"
+                                               : "Fill in with the current location (approximate, by IP) and apply to all selected");
+            geoLote_.botaoGet->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            geoLote_.botaoGet->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            geoLote_.botaoGet->onClick = [this] {
+                juce::Component::SafePointer<juce::Component> seguro(this);
+                matriz::ui::geoacoes::obterLocalAtual([this, seguro](matriz::ui::geoacoes::Local l) {
+                    if (seguro == nullptr) return;
+                    if (geoLote_.editorCoords && l.coords.isNotEmpty()) geoLote_.editorCoords->setText(l.coords);
+                    if (geoLote_.editorCity && l.cidade.isNotEmpty()) geoLote_.editorCity->setText(l.cidade);
+                    if (geoLote_.editorState && l.estado.isNotEmpty()) geoLote_.editorState->setText(l.estado);
+                    if (geoLote_.editorCountry && l.pais.isNotEmpty()) geoLote_.editorCountry->setText(l.pais);
+                    if (l.coords.isNotEmpty() || l.cidade.isNotEmpty()) aplicarGeoAgora();
+                });
+            };
+            addAndMakeVisible(*geoLote_.botaoGet);
+
+            geoLote_.botaoOpen = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.open"));
+            geoLote_.botaoOpen->setTooltip(matriz::i18n::t("imp.ficha.geo.open.dica"));
+            geoLote_.botaoOpen->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            geoLote_.botaoOpen->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            geoLote_.botaoOpen->onClick = [this] {
+                const auto txt = [](const std::unique_ptr<juce::TextEditor>& e) { return e ? e->getText() : juce::String(); };
+                matriz::ui::geoacoes::abrirNoGoogleMaps({ txt(geoLote_.editorCoords), txt(geoLote_.editorAddress), txt(geoLote_.editorCity),
+                                                          txt(geoLote_.editorState), txt(geoLote_.editorCountry) });
+            };
+            addAndMakeVisible(*geoLote_.botaoOpen);
         };
 
         auto addDublinCoreLote = [&addEditableTextLote, &addDropdownLote, isPt]() {
@@ -5557,6 +5625,14 @@ private:
                 auto existenteOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(dbGeoLote, id);
                 matriz::analytics::AssetGeolocation geo = existenteOpt.value_or(matriz::analytics::AssetGeolocation{});
                 geo.assetId = id;
+                if (geo.latitude && geo.longitude && (!geoLote_.overrideGeo || !geoLote_.overrideGeo->getToggleState())) {
+                    ++concluidos;
+                    if (ehLote) {
+                        ProgressoGlobal::obterInstancia().atualizarProgresso(
+                            kIdTarefa, concluidos, juce::String(concluidos) + " / " + juce::String((int) itemIds_.size()));
+                    }
+                    continue;
+                }
                 // Nunca reescreve por cima de uma fonte mais autoritativa
                 // (EXIF embutido, geocodificação) — só recalcula a fonte
                 // quando ela já era "do usuário" ou inexistente.
@@ -5740,6 +5816,7 @@ private:
 // ---------------------------------------------------------------------------
 
 FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(projeto) {
+    presets_.setButtonText(juce::String::fromUTF8("Presets \xe2\x96\xbe"));
     conteudo_ = std::make_unique<FichaConteudo>(projeto);
     viewport_ = std::make_unique<juce::Viewport>();
     viewport_->setViewedComponent(conteudo_.get(), false);
@@ -5799,6 +5876,7 @@ void FichaPanelComponent::setEditavel(bool editavel) {
 }
 
 void FichaPanelComponent::mostrarItem(const std::string& itemId) {
+    selecaoPreset_ = itemId.empty() ? std::vector<std::string>{} : std::vector<std::string>{itemId};
     // Trocar de item é o ponto de perda mais comum (Bug 1): sem isto, texto
     // digitado no card de lote (se estava em modo lote) é descartado quando
     // conteudoLote_ é escondido, e construirParaItem() só flusha o próprio
@@ -5819,6 +5897,7 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
     }
 
     salvarPendencias();
+    selecaoPreset_ = itemIds;
     itemIdAtual_.clear();
     modoLote_ = true;
     if (!conteudoLote_) {
@@ -5855,11 +5934,83 @@ void FichaPanelComponent::paint(juce::Graphics& g) {
 
 void FichaPanelComponent::resized() {
     auto area = getLocalBounds();
+    if (presets_.getParentComponent() == nullptr) {
+        addAndMakeVisible(presets_);
+        presets_.onClick = [this] { abrirPresets(); };
+    }
+    presets_.setEnabled(editavel_ && !selecaoPreset_.empty());
     viewport_->setBounds(area);
+    const auto& tk = matriz::ui::tema();
+    const int larguraPreset = 170;
+    presets_.setBounds(area.getRight() - larguraPreset - tk.espacoPainel,
+                       area.getY() + tk.espacoPainel, larguraPreset, 24);
+    presets_.toFront(false);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     int altura = viewport_->getHeight();
     if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura, altura);
     else conteudo_->relayout(largura, altura);
+}
+
+void FichaPanelComponent::abrirPresets() {
+    if (selecaoPreset_.empty() || projeto_.somenteLeitura()) return;
+    salvarPendencias();
+    const auto arquivo = projeto_.projeto().pasta().getChildFile("metadata-presets.json");
+    auto dados = juce::JSON::parse(arquivo.loadFileAsString());
+    if (!dados.isObject()) dados = juce::var(new juce::DynamicObject());
+    std::vector<juce::String> nomes;
+    juce::PopupMenu menu;
+    menu.addItem(1, "Save metadata as preset...", !selecaoPreset_.empty());
+    menu.addSeparator();
+    for (const auto& prop : dados.getDynamicObject()->getProperties()) {
+        nomes.push_back(prop.name.toString());
+        menu.addItem(static_cast<int>(nomes.size()) + 1, prop.name.toString());
+    }
+    juce::Component::SafePointer<FichaPanelComponent> seguro(this);
+    const auto ids = selecaoPreset_;
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&presets_), [seguro, arquivo, dados, nomes, ids](int opcao) mutable {
+        if (!seguro || opcao <= 0) return;
+        if (opcao == 1) {
+            auto* dialogo = new juce::AlertWindow("Metadata preset", "Preset name", juce::MessageBoxIconType::NoIcon);
+            dialogo->addTextEditor("nome", "");
+            dialogo->addButton("Save", 1);
+            dialogo->addButton("Cancel", 0);
+            juce::Component::SafePointer<juce::AlertWindow> dialogoSeguro(dialogo);
+            dialogo->enterModalState(true, juce::ModalCallbackFunction::create([seguro, dialogoSeguro, arquivo, dados, ids](int resultado) mutable {
+                if (!seguro || !dialogoSeguro || resultado != 1) return;
+                const auto nome = dialogoSeguro->getTextEditorContents("nome").trim();
+                if (nome.isEmpty()) return;
+                auto* valores = new juce::DynamicObject();
+                // Apenas campos editoriais reutilizáveis; identidade e GPS ficam fora do preset.
+                for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "content_type", "collection_type", "source_media", "ai_generated", "lista"}) {
+                    const auto valorComum = seguro->projeto_.lerMetadado(ids.front(), campo).value_or("");
+                    bool igualEmTodos = true;
+                    for (size_t i = 1; i < ids.size(); ++i) {
+                        if (seguro->projeto_.lerMetadado(ids[i], campo).value_or("") != valorComum) {
+                            igualEmTodos = false;
+                            break;
+                        }
+                    }
+                    if (igualEmTodos && !valorComum.empty())
+                        valores->setProperty(juce::Identifier(campo), juce::String::fromUTF8(valorComum.c_str()));
+                }
+                dados.getDynamicObject()->setProperty(juce::Identifier(nome), juce::var(valores));
+                if (!arquivo.replaceWithText(juce::JSON::toString(dados)))
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Metadata preset", "Could not save preset.");
+            }), true);
+            return;
+        }
+        const int indice = opcao - 2;
+        if (indice < 0 || indice >= static_cast<int>(nomes.size())) return;
+        auto preset = dados.getProperty(juce::Identifier(nomes[static_cast<size_t>(indice)]), {});
+        if (auto* objeto = preset.getDynamicObject()) {
+            std::vector<std::pair<std::string, std::string>> campos;
+            for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "content_type", "collection_type", "source_media", "ai_generated", "lista"})
+                if (objeto->hasProperty(juce::Identifier(campo))) campos.emplace_back(campo, objeto->getProperty(juce::Identifier(campo)).toString().toStdString());
+            seguro->projeto_.salvarMetadadoEmLote(ids, campos);
+            seguro->mostrarSelecao(ids);
+            if (seguro->aoMudar) seguro->aoMudar();
+        }
+    });
 }
 
 void FichaPanelComponent::lookAndFeelChanged() {
