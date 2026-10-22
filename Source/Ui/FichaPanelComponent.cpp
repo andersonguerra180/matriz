@@ -470,6 +470,16 @@ inline std::vector<std::string> opcoesContentPorCategoriaString(MediaCategory ca
 
 // Ícone de pasta (vetor, sem depender de emoji/fonte) ao lado do rótulo LIST: preenche o campo com o nome de uma
 // pasta do Folder Map. Filho do próprio rótulo, então some/aparece junto com a linha.
+// Campo de uma linha que só serve de gatilho (NOTES recolhido: "Add a note…"):
+// aparência de campo de texto, clique expande o box.
+class EntradaGatilho : public juce::Label {
+public:
+    std::function<void()> aoClicar;
+    void mouseUp(const juce::MouseEvent& e) override {
+        if (aoClicar && e.mouseWasClicked() && !e.mods.isPopupMenu()) aoClicar();
+    }
+};
+
 class BotaoPastaIcone : public juce::Button {
 public:
     BotaoPastaIcone() : juce::Button("pasta") { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
@@ -709,6 +719,11 @@ public:
         btnAjudaGeoLocation_.reset();
         btnCollapseGeoLocation_.reset();
         colapsadoGeoLocation_ = false;
+        notasEntrada_.reset();
+        notasMais_.reset();
+        notasExif_.reset();
+        acaoObterExifNotas_ = nullptr;
+        notasExpandidas_ = false;
         itemId_.clear();
         setSize(getWidth(), 0);
     }
@@ -903,6 +918,28 @@ public:
             return rightX;
         };
 
+        // NOTES: linha única "Add a note…" [+/–] [GET EXIF]; expandido, o box
+        // de notas (estica com extraNotas) vem logo abaixo. Devolve o y final.
+        auto layoutLinhaNotas = [&](int nx, int ny, int larguraNotas, LinhaUnificada* linhaNotas) {
+            const int larguraMais = kAlturaCampo;
+            const int larguraExif = 84;
+            const int gapNotas = tk.espacoPequeno;
+            const int larguraEntrada = std::max(40, larguraNotas - larguraMais - larguraExif - 2 * gapNotas);
+            if (notasEntrada_) notasEntrada_->setBounds(nx, ny, larguraEntrada, kAlturaCampo);
+            if (notasMais_) notasMais_->setBounds(nx + larguraEntrada + gapNotas, ny, larguraMais, kAlturaCampo);
+            if (notasExif_) notasExif_->setBounds(nx + larguraEntrada + larguraMais + 2 * gapNotas, ny, larguraExif, kAlturaCampo);
+            ny += kAlturaCampo;
+            if (notasExpandidas_) {
+                const int alturaNotas = kAlturaMinimaNotas + extraNotas;
+                ny += gapNotas;
+                linhaNotas->editor->setBounds(nx, ny, larguraNotas, alturaNotas);
+                ny += alturaNotas;
+            } else {
+                linhaNotas->editor->setBounds({});
+            }
+            return ny;
+        };
+
         if (ehDuasColunas) {
             int innerW = larguraUtil - 2 * padCardX;
             int gap = 16;
@@ -1023,9 +1060,8 @@ public:
                     notasFora->rotulo->setBounds(nx, yPosColunas, innerW - 85, 16);
                     notasFora->badge->setBounds(nx + innerW - 80, yPosColunas, 80, 16);
                     int ny = yPosColunas + 18;
-                    int alturaNotas = kAlturaMinimaNotas + extraNotas;
-                    notasFora->editor->setBounds(nx, ny, innerW, alturaNotas);
-                    cardBBottom = ny + alturaNotas + padCardY;
+                    ny = layoutLinhaNotas(nx, ny, innerW, notasFora);
+                    cardBBottom = ny + padCardY;
                 }
 
                 quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop, larguraUtil, cardBBottom - cardBTop);
@@ -1211,9 +1247,7 @@ public:
                         y += 24 + tk.espacoPequeno;
                     }
                 } else if (cu->ehNotes) {
-                    int alturaNotas1Col = kAlturaMinimaNotas + extraNotas;
-                    cu->editor->setBounds(x + padCardX, y, innerW, alturaNotas1Col);
-                    y += alturaNotas1Col + tk.espacoPequeno;
+                    y = layoutLinhaNotas(x + padCardX, y, innerW, cu.get()) + tk.espacoPequeno;
                 } else {
                     cu->editor->setBounds(x + padCardX, y, innerW, 24);
                     y += 24 + tk.espacoPequeno;
@@ -2052,6 +2086,33 @@ private:
     std::unique_ptr<juce::TextButton> btnCollapseGeoLocation_;
     bool colapsadoGeoLocation_ = false;
 
+    // NOTES recolhido: uma linha "Add a note…" + [+] (expande) + GET EXIF; expandido, o
+    // box de notas (NotesEstruturadasComponent) aparece abaixo e o botão vira [–].
+    std::unique_ptr<EntradaGatilho> notasEntrada_;
+    std::unique_ptr<juce::TextButton> notasMais_;
+    std::unique_ptr<juce::TextButton> notasExif_;
+    std::function<void()> acaoObterExifNotas_;
+    bool notasExpandidas_ = false;
+
+    void definirNotasExpandidas(bool expandir) {
+        notasExpandidas_ = expandir;
+        if (notasMais_) notasMais_->setButtonText(expandir ? juce::String::fromUTF8("\xe2\x80\x93") : juce::String("+"));
+        for (auto& cu : camposUnificados_)
+            if (cu && cu->ehNotes && cu->editor) cu->editor->setVisible(expandir && !colapsadoUserAsset_);
+        if (aoRelayoutNecessario) aoRelayoutNecessario();
+        repaint();
+    }
+
+    void atualizarTextoEntradaNotas(const std::string& texto) {
+        if (!notasEntrada_) return;
+        int preenchidas = 0;
+        for (const auto& sec : matriz::model::parseNotasEstruturadas(texto))
+            if (!juce::String(sec.conteudo).trim().isEmpty()) ++preenchidas;
+        notasEntrada_->setText(preenchidas > 0 ? matriz::i18n::t("ficha.notas_contagem").replace("{n}", juce::String(preenchidas))
+                                               : matriz::i18n::t("ficha.notas_adicionar"),
+                               juce::dontSendNotification);
+    }
+
     void construirMetadadosUnificados(const std::string& itemId, const std::string& tipoMidia) {
         const auto& tk = matriz::ui::tema();
         auto arquivo = projeto_.arquivoPrincipal(itemId);
@@ -2405,9 +2466,12 @@ private:
                     if (cu->campoId == "ai_generated") continue;  // checkbox do cabeçalho: sempre visível
                     if (cu->rotulo) cu->rotulo->setVisible(vis);
                     if (cu->badge) cu->badge->setVisible(vis);
-                    if (cu->editor) cu->editor->setVisible(vis);
+                    if (cu->editor) cu->editor->setVisible(cu->ehNotes ? (vis && notasExpandidas_) : vis);
                 }
             }
+            if (notasEntrada_) notasEntrada_->setVisible(vis);
+            if (notasMais_) notasMais_->setVisible(vis);
+            if (notasExif_) notasExif_->setVisible(vis);
             if (aoRelayoutNecessario) aoRelayoutNecessario();
             repaint();
         };
@@ -2822,6 +2886,7 @@ private:
                     try {
                         projeto_.salvarMetadado(itemId, "notas_livres", edPtr->getTexto());
                         linhaRaw->valorSeed = juce::String(edPtr->getTexto());
+                        atualizarTextoEntradaNotas(edPtr->getTexto());
                     } catch (const std::exception& e) {
                         juce::Logger::writeToLog("[ficha] FALHA ao salvar campo='notas_livres' item=" +
                                                   juce::String(itemId) + " em " +
@@ -2835,16 +2900,38 @@ private:
             ed->onCommit = linha->onCommit;
             {
                 juce::Component::SafePointer<NotesEstruturadasComponent> edSafe(ed.get());
-                ed->definirAoObterExif([this, itemId, edSafe] {
+                acaoObterExifNotas_ = [this, itemId, edSafe] {
                     // aoConcluir só roda com o projeto vivo (ver obterExif).
                     ProjetoAberto* proj = &projeto_;
                     acoes::obterExif(projeto_, {itemId}, [proj, itemId, edSafe](int) {
                         // Relê as notas gravadas, se o editor ainda existir.
                         if (edSafe) edSafe->setTexto(proj->lerMetadado(itemId, "notas_livres").value_or(""));
                     });
-                });
+                };
             }
-            addAndMakeVisible(*ed);
+
+            notasEntrada_ = std::make_unique<EntradaGatilho>();
+            notasEntrada_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            notasEntrada_->setColour(juce::Label::textColourId, juce::Colours::black.withAlpha(0.55f));
+            notasEntrada_->setColour(juce::Label::backgroundColourId, juce::Colours::white);
+            notasEntrada_->setColour(juce::Label::outlineColourId, tk.borda);
+            notasEntrada_->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            notasEntrada_->aoClicar = [this] { definirNotasExpandidas(!notasExpandidas_); };
+            addAndMakeVisible(*notasEntrada_);
+
+            notasMais_ = std::make_unique<juce::TextButton>("+");
+            notasMais_->setTooltip(isPt ? "Expandir / recolher as notas" : "Expand / collapse the notes");
+            notasMais_->onClick = [this] { definirNotasExpandidas(!notasExpandidas_); };
+            addAndMakeVisible(*notasMais_);
+
+            notasExif_ = std::make_unique<juce::TextButton>(matriz::i18n::t("notas.obter_exif"));
+            notasExif_->setTooltip(isPt ? "Traz o EXIF completo do arquivo pra OTHER METADATA"
+                                        : "Bring the file's full EXIF into OTHER METADATA");
+            notasExif_->onClick = [this] { if (acaoObterExifNotas_) acaoObterExifNotas_(); };
+            addAndMakeVisible(*notasExif_);
+
+            atualizarTextoEntradaNotas(valor.toStdString());
+            addChildComponent(*ed);  // começa recolhido (definirNotasExpandidas mostra)
             linha->editor = std::move(ed);
 
             camposUnificados_.push_back(std::move(linha));
