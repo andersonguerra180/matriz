@@ -4093,10 +4093,10 @@ public:
             else linhasUserAsset.push_back(linha);
         }
 
-        auto layoutLinhaEmColuna = [&tk, extraNotas](LinhaLote* linha, int currX, int& currY, int colW, int badgeW) {
-            int rotuloW = colW - badgeW - 5;
-            linha->rotulo->setBounds(currX, currY, rotuloW, 16);
-            linha->badge->setBounds(currX + colW - badgeW, currY, badgeW, 16);
+        // Campo = rótulo (sem selo no lote) + editor de 28 px, mesma cadência da ficha individual.
+        auto layoutLinhaEmColuna = [&tk](LinhaLote* linha, int currX, int& currY, int colW, int /*badgeW*/) {
+            linha->rotulo->setBounds(currX, currY, colW, 16);
+            linha->badge->setBounds({});
             currY += 18;
 
             if (linha->ehOriginalSourceMedium) {
@@ -4105,25 +4105,120 @@ public:
                     linha->editor->setBounds(currX, currY, colW, prefH);
                     currY += prefH + tk.espacoPequeno;
                 } else {
-                    linha->editor->setBounds(currX, currY, colW, 24);
-                    currY += 24 + tk.espacoPequeno;
+                    linha->editor->setBounds(currX, currY, colW, kAlturaCampo);
+                    currY += kAlturaCampo + tk.espacoPequeno;
                 }
-            } else if (linha->ehPeople) {
-                linha->editor->setBounds(currX, currY, colW, 26);
-                currY += 26 + tk.espacoPequeno;
             } else if (linha->ehTags) {
-                int chipH = 26;
+                int chipH = kAlturaCampo;
                 if (auto* chips = dynamic_cast<TagChipsEditor*>(linha->editor.get())) chipH = chips->getPreferredHeight();
                 linha->editor->setBounds(currX, currY, colW, chipH);
                 currY += chipH + tk.espacoPequeno;
-            } else if (linha->ehNotes) {
-                int alturaNotas = kAlturaMinimaNotas + extraNotas;
-                linha->editor->setBounds(currX, currY, colW, alturaNotas);
-                currY += alturaNotas + tk.espacoPequeno;
             } else {
-                linha->editor->setBounds(currX, currY, colW, 24);
-                currY += 24 + tk.espacoPequeno;
+                linha->editor->setBounds(currX, currY, colW, kAlturaCampo);
+                currY += kAlturaCampo + tk.espacoPequeno;
             }
+        };
+
+        // NOTES: linha única "Add a note…" [+/–] [GET EXIF]; expandido, o box de notas (estica com
+        // extraNotas) vem logo abaixo. Devolve o y final.
+        auto layoutLinhaNotasLote = [&tk, extraNotas, this](int nx, int ny, int larguraNotas, LinhaLote* linhaNotas) {
+            const int larguraMais = kAlturaCampo;
+            const int larguraExif = 84;
+            const int gapNotas = tk.espacoPequeno;
+            const int larguraEntrada = std::max(40, larguraNotas - larguraMais - larguraExif - 2 * gapNotas);
+            linhaNotas->rotulo->setBounds({});
+            linhaNotas->badge->setBounds({});
+            if (notasEntrada_) notasEntrada_->setBounds(nx, ny, larguraEntrada, kAlturaCampo);
+            if (notasMais_) notasMais_->setBounds(nx + larguraEntrada + gapNotas, ny, larguraMais, kAlturaCampo);
+            if (notasExif_) notasExif_->setBounds(nx + larguraEntrada + larguraMais + 2 * gapNotas, ny, larguraExif, kAlturaCampo);
+            ny += kAlturaCampo;
+            if (notasExpandidasLote_) {
+                const int alturaNotas = kAlturaMinimaNotas + extraNotas;
+                ny += gapNotas;
+                linhaNotas->editor->setBounds(nx, ny, larguraNotas, alturaNotas);
+                ny += alturaNotas;
+            } else {
+                linhaNotas->editor->setBounds({});
+            }
+            return ny;
+        };
+
+        // AI GENERATED: seletor compacto no cabeçalho do card, à esquerda de Presets (como na ficha individual).
+        auto posicionarAiGeradoLote = [&](int rightX, int yCabecalho) {
+            for (auto* linha : linhas_) {
+                if (!linha || linha->campoId != "ai_generated" || !linha->editor) continue;
+                const int larguraAi = 128;
+                rightX -= larguraAi;
+                linha->editor->setBounds(rightX, yCabecalho - 1, larguraAi, 22);
+                if (linha->rotulo) linha->rotulo->setBounds({});
+                if (linha->badge) linha->badge->setBounds({});
+                rightX -= 8;
+            }
+            return rightX;
+        };
+
+        // GEO LOCATION compacto (mesma grade da ficha individual): cabeçalho com OVERRIDE, ★ e Favorites;
+        // Coordinates + Get + Open na mesma linha; Address | City e State | Country. Devolve o y final.
+        auto layoutGeoCompactoLote = [&](int innerW, int x0, int x1, int colW, bool duasColunas) {
+            const int cardCTop = y;
+            int rightXg = x + padCardX + innerW;
+            if (geoLote_.botaoFavoritos) {
+                rightXg -= 104;
+                geoLote_.botaoFavoritos->setBounds(rightXg, y + padCardY - 1, 104, 22);
+                rightXg -= 4;
+            }
+            if (geoLote_.botaoSalvarFavoritos) {
+                rightXg -= 30;
+                geoLote_.botaoSalvarFavoritos->setButtonText(juce::String::fromUTF8("\xe2\x98\x85"));
+                geoLote_.botaoSalvarFavoritos->setBounds(rightXg, y + padCardY - 1, 30, 22);
+                rightXg -= 8;
+            }
+            if (geoLote_.badge) {
+                rightXg -= 116;
+                geoLote_.badge->setBounds(rightXg, y + padCardY, 116, 20);
+                geoLote_.badge->setVisible(false);
+                if (geoLote_.overrideGeo) geoLote_.overrideGeo->setBounds(rightXg, y + padCardY, 116, 20);
+                rightXg -= 8;
+            }
+            geoLote_.titulo->setBounds(x + padCardX, y + padCardY, std::max(20, rightXg - (x + padCardX)), 20);
+            y += padCardY + 24;
+
+            if (geoLote_.labelCoords && geoLote_.editorCoords) {
+                const int larguraGet = 64, larguraOpen = 64;
+                const int larguraCoords = innerW - larguraGet - larguraOpen - 2 * tk.espacoPequeno;
+                geoLote_.labelCoords->setBounds(x + padCardX, y, innerW, 16);
+                y += 18;
+                geoLote_.editorCoords->setBounds(x + padCardX, y, larguraCoords, kAlturaCampo);
+                if (geoLote_.botaoGet)
+                    geoLote_.botaoGet->setBounds(x + padCardX + larguraCoords + tk.espacoPequeno, y, larguraGet, kAlturaCampo);
+                if (geoLote_.botaoOpen)
+                    geoLote_.botaoOpen->setBounds(x + padCardX + larguraCoords + larguraGet + 2 * tk.espacoPequeno, y, larguraOpen, kAlturaCampo);
+                y += kAlturaCampo + tk.espacoPequeno;
+            }
+            auto celula = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed, int cx, int cw) {
+                if (!lbl || !ed) return;
+                lbl->setBounds(cx, y, cw, 16);
+                ed->setBounds(cx, y + 18, cw, kAlturaCampo);
+            };
+            auto par = [&](std::unique_ptr<juce::Label>& lblA, std::unique_ptr<juce::TextEditor>& edA,
+                           std::unique_ptr<juce::Label>& lblB, std::unique_ptr<juce::TextEditor>& edB) {
+                if (duasColunas) {
+                    celula(lblA, edA, x0, colW);
+                    celula(lblB, edB, x1, colW);
+                    y += 18 + kAlturaCampo + tk.espacoPequeno;
+                } else {
+                    celula(lblA, edA, x + padCardX, innerW);
+                    y += 18 + kAlturaCampo + tk.espacoPequeno;
+                    celula(lblB, edB, x + padCardX, innerW);
+                    y += 18 + kAlturaCampo + tk.espacoPequeno;
+                }
+            };
+            par(geoLote_.labelAddress, geoLote_.editorAddress, geoLote_.labelCity, geoLote_.editorCity);
+            par(geoLote_.labelState, geoLote_.editorState, geoLote_.labelCountry, geoLote_.editorCountry);
+
+            const int cardCBottom = y + padCardY;
+            quadroGeoLocationLote_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
+            y = cardCBottom + tk.espacoMedio;
         };
 
         if (ehDuasColunas) {
@@ -4134,7 +4229,8 @@ public:
             int x1 = x + padCardX + colW + gap;
 
             auto layoutHeaderCard = [&](std::unique_ptr<juce::Label>& header, std::unique_ptr<juce::TextButton>& btnAjuda,
-                                         std::unique_ptr<juce::TextButton>& btnCollapse, bool comPresets = false) {
+                                         std::unique_ptr<juce::TextButton>& btnCollapse, bool comPresets = false,
+                                         bool comResumoDc = false) {
                 int btnW = 20, btnH = 18;
                 int rightX = x + padCardX + innerW;
                 if (btnCollapse) {
@@ -4153,51 +4249,56 @@ public:
                     botaoPresets_->setVisible(true);
                     rightX -= 6;
                 }
+                if (comPresets) rightX = posicionarAiGeradoLote(rightX, y + padCardY);
+                if (comResumoDc && dcResumoLote_ && colapsadoDublinCoreLote_) {
+                    rightX -= 110;
+                    dcResumoLote_->setBounds(rightX, y + padCardY, 110, 20);
+                    rightX -= 4;
+                }
                 if (header) header->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
                 y += padCardY + 24;
             };
 
             // --- 1. ASSET & USER METADATA ---
+            // Mesma ordem da ficha individual (esquerda | direita): Subject | Event date, List | Creator,
+            // Content | Source medium (+Device), (ISRC) People; TAGS em linha própria; NOTES numa linha só.
             int cardBTop = y;
             layoutHeaderCard(secHeaderUserAssetLote_, btnAjudaUserAssetLote_, btnCollapseUserAssetLote_, true);
             if (!colapsadoUserAssetLote_) {
                 int y0 = y, y1 = y;
-                // Mesma regra do modo de item único: NOTES sai da disputa de
-                // coluna, vai por baixo das duas ocupando a largura inteira
-                // do card (item 1 da 3ª correção de UI); PEOPLE+TAGS seguem
-                // juntas, sempre na coluna direita.
                 LinhaLote* linhaNotes = nullptr;
-                LinhaLote* linhaPeople = nullptr;
                 LinhaLote* linhaTags = nullptr;
+                std::vector<LinhaLote*> ordenadas;
                 for (auto* linha : linhasUserAsset) {
                     if (!linha) continue;
-                    if (linha->ehNotes)  { linhaNotes = linha;  continue; }
-                    if (linha->ehPeople) { linhaPeople = linha; continue; }
-                    if (linha->ehTags)   { linhaTags = linha;   continue; }
-                    // Lados da ficha individual: EVENT DATE, CREATOR e ORIGINAL SOURCE MEDIUM à direita; SUBJECT, LIST,
-                    // CONTENT, ISRC e AI GENERATED à esquerda (PEOPLE/TAGS seguem à direita, abaixo).
-                    const bool useCol1 = linha->campoId == "year" || linha->campoId == "creator" || linha->campoId == "source_media";
-                    layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 80);
+                    if (linha->ehNotes) { linhaNotes = linha; continue; }
+                    if (linha->ehTags)  { linhaTags = linha;  continue; }
+                    if (linha->campoId == "ai_generated") continue;  // seletor do cabeçalho
+                    ordenadas.push_back(linha);
                 }
-
-                if (linhaPeople || linhaTags) {
-                    int px = x1;
-                    int& py = y1;
-                    if (linhaPeople) layoutLinhaEmColuna(linhaPeople, px, py, colW, 80);
-                    if (linhaTags) layoutLinhaEmColuna(linhaTags, px, py, colW, 80);
+                auto prioridade = [](const LinhaLote* linha) {
+                    const auto& id = linha->campoId;
+                    if (id == "subject" || id == "year") return 0;
+                    if (id == "lista" || id == "creator") return 1;
+                    if (id == "collection" || id == "source_media") return 2;
+                    return 3;
+                };
+                std::stable_sort(ordenadas.begin(), ordenadas.end(), [&](auto* a, auto* b) { return prioridade(a) < prioridade(b); });
+                for (auto* linha : ordenadas) {
+                    const bool useCol1 = linha->campoId == "year" || linha->campoId == "creator" || linha->campoId == "source_media";
+                    layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 0);
                 }
 
                 int yPosColunas = std::max(y0, y1);
+                if (linhaTags) {
+                    int ty = yPosColunas;
+                    layoutLinhaEmColuna(linhaTags, x + padCardX, ty, innerW, 0);
+                    yPosColunas = ty;
+                }
                 int cardBBottom = yPosColunas + padCardY;
-
                 if (linhaNotes) {
-                    int nx = x + padCardX;
-                    linhaNotes->rotulo->setBounds(nx, yPosColunas, innerW - 85, 16);
-                    linhaNotes->badge->setBounds(nx + innerW - 80, yPosColunas, 80, 16);
-                    int ny = yPosColunas + 18;
-                    int alturaNotas = kAlturaMinimaNotas + extraNotas;
-                    linhaNotes->editor->setBounds(nx, ny, innerW, alturaNotas);
-                    cardBBottom = ny + alturaNotas + padCardY;
+                    const int ny = layoutLinhaNotasLote(x + padCardX, yPosColunas, innerW, linhaNotes);
+                    cardBBottom = ny + padCardY;
                 }
 
                 quadroUserAssetLote_ = juce::Rectangle<int>(x, cardBTop, larguraUtil, cardBBottom - cardBTop);
@@ -4209,79 +4310,17 @@ public:
             }
 
             // --- 2. GEOLOCATION ---
-            if (geoLote_.titulo) {
-                int cardCTop = y;
-
-                // Cabeçalho do card em largura inteira (título à esquerda,
-                // badge encostado à direita), idêntico ao da ficha de item
-                // único. Antes o título entrava na disputa de colunas com os
-                // campos e empurrava todos eles uma coluna para o lado — era
-                // isso que deixava COORDS/CITY/COUNTRY à direita no lote e à
-                // esquerda na seleção única.
-                int rightXg = x + padCardX + innerW;
-                if (geoLote_.badge) {
-                    rightXg -= 145;
-                    geoLote_.badge->setBounds(rightXg, y + padCardY, 145, 20);
-                geoLote_.badge->setVisible(false);
-                if (geoLote_.overrideGeo) geoLote_.overrideGeo->setBounds(rightXg, y + padCardY, 145, 20);
-                    rightXg -= 8;
-                }
-                geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
-                                           std::max(20, rightXg - (x + padCardX)), 20);
-                y += padCardY + 24;
-
-                int y0 = y, y1 = y;
-
-                auto layoutGeoSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
-                    if (lbl && ed) {
-                        bool uc1 = (y1 < y0);
-                        int cx = uc1 ? x1 : x0;
-                        int& cy = uc1 ? y1 : y0;
-                        lbl->setBounds(cx, cy, colW, 16);
-                        cy += 18;
-                        ed->setBounds(cx, cy, colW, 24);
-                        cy += 24 + tk.espacoPequeno;
-                    }
-                };
-                layoutGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords);
-                layoutGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress);
-                layoutGeoSubfield(geoLote_.labelCity, geoLote_.editorCity);
-                layoutGeoSubfield(geoLote_.labelState, geoLote_.editorState);
-                layoutGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry);
-
-                if (geoLote_.botaoSalvarFavoritos || geoLote_.botaoFavoritos) {
-                    // Botões lado a lado, abaixo das duas colunas (mesmo
-                    // arranjo do single-item — ver favY/halfW em ~944-950).
-                    int favY = std::max(y0, y1) + tk.espacoPequeno;
-                    {
-                        const int meia = (innerW - tk.espacoPequeno) / 2;
-                        if (geoLote_.botaoGet) geoLote_.botaoGet->setBounds(x + padCardX, favY, meia, 22);
-                        if (geoLote_.botaoOpen) geoLote_.botaoOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, favY, meia, 22);
-                        favY += 22 + tk.espacoPequeno;
-                    }
-                    int halfW = (innerW - tk.espacoPequeno) / 2;
-                    if (geoLote_.botaoSalvarFavoritos)
-                        geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, favY, halfW, 22);
-                    if (geoLote_.botaoFavoritos)
-                        geoLote_.botaoFavoritos->setBounds(x + padCardX + halfW + tk.espacoPequeno, favY, halfW, 22);
-                    y0 = y1 = favY + 22 + tk.espacoPequeno;
-                }
-
-                int cardCBottom = std::max(y0, y1) + padCardY;
-                quadroGeoLocationLote_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
-                y = cardCBottom + tk.espacoMedio;
-            } else {
-                quadroGeoLocationLote_ = {};
-            }
+            if (geoLote_.titulo) layoutGeoCompactoLote(innerW, x0, x1, colW, true);
+            else quadroGeoLocationLote_ = {};
 
             // --- 3. DUBLIN CORE METADATA ---
             int cardATop = y;
-            layoutHeaderCard(secHeaderDublinCoreLote_, btnAjudaDublinCoreLote_, btnCollapseDublinCoreLote_);
+            layoutHeaderCard(secHeaderDublinCoreLote_, btnAjudaDublinCoreLote_, btnCollapseDublinCoreLote_, false, true);
             if (!colapsadoDublinCoreLote_) {
                 int y0 = y, y1 = y;
                 for (auto* linha : linhasDublinCore) {
                     bool useCol1 = (y1 < y0);
-                    layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 80);
+                    layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 0);
                 }
                 int cardABottom = std::max(y0, y1) + padCardY;
                 quadroDublinCoreLote_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
@@ -4308,7 +4347,8 @@ public:
         int innerW = larguraUtil - 2 * padCardX;
 
         auto layoutHeaderCard1Col = [&](std::unique_ptr<juce::Label>& header, std::unique_ptr<juce::TextButton>& btnAjuda,
-                                         std::unique_ptr<juce::TextButton>& btnCollapse, bool comPresets = false) {
+                                         std::unique_ptr<juce::TextButton>& btnCollapse, bool comPresets = false,
+                                         bool comResumoDc = false) {
             int btnW = 20, btnH = 18;
             int rightX = x + padCardX + innerW;
             if (btnCollapse) {
@@ -4327,41 +4367,25 @@ public:
                 botaoPresets_->setVisible(true);
                 rightX -= 6;
             }
+            if (comPresets) rightX = posicionarAiGeradoLote(rightX, y + padCardY);
+            if (comResumoDc && dcResumoLote_ && colapsadoDublinCoreLote_) {
+                rightX -= 110;
+                dcResumoLote_->setBounds(rightX, y + padCardY, 110, 20);
+                rightX -= 4;
+            }
             if (header) header->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
             y += padCardY + 24;
         };
 
-        auto layoutLinha1Col = [&tk, x, padCardX, innerW, extraNotas](LinhaLote* linha, int& y) {
-            int rotuloW = innerW - 100;
-            linha->rotulo->setBounds(x + padCardX, y, rotuloW, 16);
-            linha->badge->setBounds(x + padCardX + innerW - 95, y, 95, 16);
-            y += 18;
-
-            if (linha->ehOriginalSourceMedium) {
-                if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(linha->editor.get())) {
-                    int prefH = osm->getPreferredHeight();
-                    linha->editor->setBounds(x + padCardX, y, innerW, prefH);
-                    y += prefH + tk.espacoPequeno;
-                } else {
-                    linha->editor->setBounds(x + padCardX, y, innerW, 24);
-                    y += 24 + tk.espacoPequeno;
-                }
-            } else if (linha->ehPeople) {
-                linha->editor->setBounds(x + padCardX, y, innerW, 26);
-                y += 26 + tk.espacoPequeno;
-            } else if (linha->ehTags) {
-                int chipH = 26;
-                if (auto* chips = dynamic_cast<TagChipsEditor*>(linha->editor.get())) chipH = chips->getPreferredHeight();
-                linha->editor->setBounds(x + padCardX, y, innerW, chipH);
-                y += chipH + tk.espacoPequeno;
-            } else if (linha->ehNotes) {
-                int alturaNotas1Col = kAlturaMinimaNotas + extraNotas;
-                linha->editor->setBounds(x + padCardX, y, innerW, alturaNotas1Col);
-                y += alturaNotas1Col + tk.espacoPequeno;
-            } else {
-                linha->editor->setBounds(x + padCardX, y, innerW, 24);
-                y += 24 + tk.espacoPequeno;
+        auto layoutLinha1Col = [&](LinhaLote* linha, int& yy) {
+            if (linha->ehNotes) {
+                yy = layoutLinhaNotasLote(x + padCardX, yy, innerW, linha) + tk.espacoPequeno;
+                return;
             }
+            if (linha->campoId == "ai_generated") return;  // seletor do cabeçalho
+            int cy = yy;
+            layoutLinhaEmColuna(linha, x + padCardX, cy, innerW, 0);
+            yy = cy;
         };
 
         // --- 1. ASSET & USER METADATA ---
@@ -4379,54 +4403,12 @@ public:
         }
 
         // --- 2. GEOLOCATION ---
-        if (geoLote_.titulo) {
-            int cardCTop1 = y;
-            int rightXg = x + padCardX + innerW;
-            if (geoLote_.badge) {
-                rightXg -= 135;
-                geoLote_.badge->setBounds(rightXg, y + padCardY, 135, 20);
-                geoLote_.badge->setVisible(false);
-                if (geoLote_.overrideGeo) geoLote_.overrideGeo->setBounds(rightXg, y + padCardY, 135, 20);
-                rightXg -= 8;
-            }
-            geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
-                                       std::max(20, rightXg - (x + padCardX)), 20);
-            y += padCardY + 24;
-
-            auto layoutGeoSubfield1 = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
-                if (lbl) { lbl->setBounds(x + padCardX, y, innerW, 16); y += 18; }
-                if (ed) { ed->setBounds(x + padCardX, y, innerW, 24); y += 24 + tk.espacoPequeno; }
-            };
-            layoutGeoSubfield1(geoLote_.labelCoords, geoLote_.editorCoords);
-            layoutGeoSubfield1(geoLote_.labelAddress, geoLote_.editorAddress);
-            layoutGeoSubfield1(geoLote_.labelCity, geoLote_.editorCity);
-            layoutGeoSubfield1(geoLote_.labelState, geoLote_.editorState);
-            layoutGeoSubfield1(geoLote_.labelCountry, geoLote_.editorCountry);
-            if (geoLote_.botaoSalvarFavoritos || geoLote_.botaoFavoritos) {
-                {
-                    const int meia = (innerW - tk.espacoPequeno) / 2;
-                    if (geoLote_.botaoGet) geoLote_.botaoGet->setBounds(x + padCardX, y, meia, 22);
-                    if (geoLote_.botaoOpen) geoLote_.botaoOpen->setBounds(x + padCardX + meia + tk.espacoPequeno, y, meia, 22);
-                    y += 22 + tk.espacoPequeno;
-                }
-                int halfW = (innerW - tk.espacoPequeno) / 2;
-                if (geoLote_.botaoSalvarFavoritos)
-                    geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, y, halfW, 22);
-                if (geoLote_.botaoFavoritos)
-                    geoLote_.botaoFavoritos->setBounds(x + padCardX + halfW + tk.espacoPequeno, y, halfW, 22);
-                y += 22 + tk.espacoPequeno;
-            }
-
-            int cardCBottom1 = y + padCardY;
-            quadroGeoLocationLote_ = juce::Rectangle<int>(x, cardCTop1, larguraUtil, cardCBottom1 - cardCTop1);
-            y = cardCBottom1 + tk.espacoMedio;
-        } else {
-            quadroGeoLocationLote_ = {};
-        }
+        if (geoLote_.titulo) layoutGeoCompactoLote(innerW, x + padCardX, x + padCardX, innerW, false);
+        else quadroGeoLocationLote_ = {};
 
         // --- 3. DUBLIN CORE METADATA ---
         int cardATop1 = y;
-        layoutHeaderCard1Col(secHeaderDublinCoreLote_, btnAjudaDublinCoreLote_, btnCollapseDublinCoreLote_);
+        layoutHeaderCard1Col(secHeaderDublinCoreLote_, btnAjudaDublinCoreLote_, btnCollapseDublinCoreLote_, false, true);
         if (!colapsadoDublinCoreLote_) {
             for (auto* linha : linhasDublinCore) layoutLinha1Col(linha, y);
             int cardABottom1 = y + padCardY;
@@ -4721,7 +4703,11 @@ private:
         secHeaderDublinCoreLote_.reset();
         btnAjudaDublinCoreLote_.reset();
         btnCollapseDublinCoreLote_.reset();
-        colapsadoDublinCoreLote_ = true;
+        dcResumoLote_.reset();
+        notasEntrada_.reset();
+        notasMais_.reset();
+        notasExif_.reset();
+        notasExpandidasLote_ = false;
         secHeaderUserAssetLote_.reset();
         btnAjudaUserAssetLote_.reset();
         btnCollapseUserAssetLote_.reset();
@@ -4803,9 +4789,12 @@ private:
                 if (l && !ehCampoDublinCoreLote(*l)) {
                     if (l->rotulo) l->rotulo->setVisible(vis);
                     if (l->badge) l->badge->setVisible(vis);
-                    if (l->editor) l->editor->setVisible(vis);
+                    if (l->editor) l->editor->setVisible(l->ehNotes ? (vis && notasExpandidasLote_) : vis);
                 }
             }
+            if (notasEntrada_) notasEntrada_->setVisible(vis);
+            if (notasMais_) notasMais_->setVisible(vis);
+            if (notasExif_) notasExif_->setVisible(vis);
             if (aoRelayoutNecessario) aoRelayoutNecessario();
             repaint();
         };
@@ -4848,10 +4837,17 @@ private:
                     if (l->editor) l->editor->setVisible(vis);
                 }
             }
+            atualizarResumoDublinCoreLote();
             if (aoRelayoutNecessario) aoRelayoutNecessario();
             repaint();
         };
         addAndMakeVisible(*btnCollapseDublinCoreLote_);
+
+        dcResumoLote_ = std::make_unique<juce::Label>();
+        dcResumoLote_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        dcResumoLote_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        dcResumoLote_->setJustificationType(juce::Justification::centredRight);
+        addChildComponent(*dcResumoLote_);
 
         auto addEditableTextLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, bool ehNotes = false, bool comAutocomplete = false) {
             auto* linha = linhas_.add(new LinhaLote());
@@ -4866,7 +4862,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);  // lote sem selo [EDITABLE]
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -5000,7 +4996,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(loteIsPt ? "[PESSOAS / TAGS]" : "[PEOPLE / TAGS]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -5037,7 +5033,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[TAGS]", juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -5127,7 +5123,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(notesIsPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -5135,6 +5131,24 @@ private:
 
             auto notes = std::make_unique<NotesEstruturadasComponent>(notesIsPt);
             notes->setTexto("");
+            notasEntrada_ = std::make_unique<EntradaGatilho>();
+            notasEntrada_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            notasEntrada_->setColour(juce::Label::textColourId, juce::Colours::black.withAlpha(0.55f));
+            notasEntrada_->setColour(juce::Label::backgroundColourId, juce::Colours::white);
+            notasEntrada_->setColour(juce::Label::outlineColourId, tk.borda);
+            notasEntrada_->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            notasEntrada_->setText(matriz::i18n::t("ficha.notas_adicionar"), juce::dontSendNotification);
+            notasEntrada_->aoClicar = [this] { definirNotasExpandidasLote(!notasExpandidasLote_); };
+            addAndMakeVisible(*notasEntrada_);
+            notasMais_ = std::make_unique<juce::TextButton>("+");
+            notasMais_->setTooltip(notesIsPt ? "Expandir / recolher as notas" : "Expand / collapse the notes");
+            notasMais_->onClick = [this] { definirNotasExpandidasLote(!notasExpandidasLote_); };
+            addAndMakeVisible(*notasMais_);
+            notasExif_ = std::make_unique<juce::TextButton>(matriz::i18n::t("notas.obter_exif"));
+            notasExif_->setTooltip(notesIsPt ? "Traz o EXIF completo dos arquivos pra OTHER METADATA"
+                                             : "Bring the files' full EXIF into OTHER METADATA");
+            notasExif_->onClick = [this] { acoes::obterExif(projeto_, itemIds_); };
+            addAndMakeVisible(*notasExif_);
             auto ultimaComposicao = std::make_shared<std::vector<matriz::model::SecaoNota>>();
             notes->onCommit = [this, ultimaComposicao, raw = notes.get()] {
                 auto atual = matriz::model::parseNotasEstruturadas(raw->getTexto());
@@ -5171,7 +5185,7 @@ private:
                 if (aoAplicarEmLote) aoAplicarEmLote();
             };
             notes->definirAoObterExif([this] { acoes::obterExif(projeto_, itemIds_); });
-            addAndMakeVisible(*notes);
+            addChildComponent(*notes);  // começa recolhido (definirNotasExpandidasLote mostra)
             linha->editor = std::move(notes);
         };
 
@@ -5190,7 +5204,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? juce::String::fromUTF8("[SUBSTITUIÇÃO EM LOTE]") : juce::String("[BATCH OVERRIDE]"), juce::dontSendNotification);
+            linha->badge->setText(juce::String(), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -5218,7 +5232,7 @@ private:
             geoLote_.titulo = std::make_unique<juce::Label>();
             geoLote_.titulo->setText(isPt ? juce::String::fromUTF8("GEOLOCALIZAÇÃO") : juce::String("GEO LOCATION"), juce::dontSendNotification);
             // Mesma fonte do título do card na ficha de item único.
-            geoLote_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+            geoLote_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             geoLote_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*geoLote_.titulo);
 
@@ -5631,6 +5645,7 @@ private:
         resultado_->setColour(juce::Label::textColourId, tk.textoSecundario);
         resultado_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         addAndMakeVisible(*resultado_);
+        atualizarResumoDublinCoreLote();
     }
 
     juce::String lerValorLinha(const LinhaLote& linha) const {
@@ -5802,6 +5817,7 @@ private:
         if (comProgresso) ProgressoGlobal::obterInstancia().concluirTarefa(kIdTarefa, texto);
 
         if (sucessos > 0) piscarBordaSalvo(dynamic_cast<juce::TextEditor*>(linha->editor.get()));
+        atualizarResumoDublinCoreLote();
         if (aoAplicarEmLote) aoAplicarEmLote();
     }
 
@@ -6068,6 +6084,35 @@ private:
     juce::Rectangle<int> quadroDublinCoreLote_;
     juce::Rectangle<int> quadroUserAssetLote_;
     juce::Rectangle<int> quadroGeoLocationLote_;
+
+    // NOTES recolhido: uma linha "Add a note…" + [+] + GET EXIF (mesmo desenho da ficha individual).
+    std::unique_ptr<EntradaGatilho> notasEntrada_;
+    std::unique_ptr<juce::TextButton> notasMais_;
+    std::unique_ptr<juce::TextButton> notasExif_;
+    bool notasExpandidasLote_ = false;
+
+    void definirNotasExpandidasLote(bool expandir) {
+        notasExpandidasLote_ = expandir;
+        if (notasMais_) notasMais_->setButtonText(expandir ? juce::String::fromUTF8("\xe2\x80\x93") : juce::String("+"));
+        for (auto* l : linhas_)
+            if (l && l->ehNotes && l->editor) l->editor->setVisible(expandir && !colapsadoUserAssetLote_);
+        if (aoRelayoutNecessario) aoRelayoutNecessario();
+        repaint();
+    }
+
+    // "N filled" no cabeçalho do Dublin Core recolhido: campos com valor comum a todos os selecionados.
+    std::unique_ptr<juce::Label> dcResumoLote_;
+    void atualizarResumoDublinCoreLote() {
+        if (!dcResumoLote_) return;
+        int preenchidos = 0;
+        for (auto* l : linhas_) {
+            if (!l || !ehCampoDublinCoreLote(*l)) continue;
+            if (lerValorLinha(*l).trim().isNotEmpty()) ++preenchidos;
+        }
+        dcResumoLote_->setText(matriz::i18n::t("ficha.dc_preenchidos").replace("{n}", juce::String(preenchidos)),
+                               juce::dontSendNotification);
+        dcResumoLote_->setVisible(colapsadoDublinCoreLote_);
+    }
 
     static bool ehCampoDublinCoreLote(const LinhaLote& linha) {
         return linha.campoId.rfind("dc_", 0) == 0;
