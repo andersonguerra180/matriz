@@ -2016,7 +2016,12 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
             };
             treeWorkspace_->aoAbrirProject = [this](const std::string& nestId, const std::string& origem) { abrirProjectDoContainer(nestId, origem); };
             treeWorkspace_->aoAbrirContainerJanela = [this](const std::string& nestId, const juce::String& nome) {
-                abrirJanelaDoContainer(nestId, nome);
+                // Container: abre direto o preview do arquivo-capa (o mesmo do Open Project); a janela de
+                // grade só serve de reserva quando o container está vazio.
+                if (projetoAberto_ && !nestId.empty() && !projetoAberto_->membrosDoNest(nestId).empty())
+                    abrirProjectDoContainer(nestId, projetoAberto_->origemDoContainer(nestId));
+                else
+                    abrirJanelaDoContainer(nestId, nome);
             };
             treeWorkspace_->aoPerguntarIngestEmProcessamento = [this] { return pendentes_->load() > 0 || escaneandoEmAndamento_.load(); };
             treeWorkspace_->aoIngerirArquivos = [this](const juce::Array<juce::File>& files, const std::string& /*pastaId*/) {
