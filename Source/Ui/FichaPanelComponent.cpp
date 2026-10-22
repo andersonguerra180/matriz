@@ -659,6 +659,14 @@ public:
         repaint();
     }
 
+    // Presets mora no cabeçalho do card ASSET & USER METADATA (o botão pertence ao FichaPanelComponent;
+    // aqui só é reparentado e posicionado junto ao AI generated).
+    void definirBotaoPresets(juce::Component* botao) {
+        botaoPresets_ = botao;
+        if (botao != nullptr) addAndMakeVisible(*botao);
+    }
+    juce::Component::SafePointer<juce::Component> botaoPresets_;
+
     // Correção realtime (Bug 1): commita qualquer texto digitado e ainda não
     // salvo antes que os editores sejam destruídos — chamado no início de
     // limpar() (todo ponto que reconstrói a ficha passa por aqui: trocar de
@@ -853,6 +861,7 @@ public:
     }
 
     void relayoutInterno(int largura, int extraNotas) {
+        if (botaoPresets_ != nullptr) botaoPresets_->setVisible(false);  // reaparece quando o cabeçalho do card o posiciona
         if (itemId_.empty()) {
             quadroDublinCore_ = {};
             quadroUserAsset_ = {};
@@ -861,7 +870,7 @@ public:
             return;
         }
         const auto& tk = matriz::ui::tema();
-        int y = tk.espacoPainel;
+        int y = tk.espacoPequeno;  // cards logo abaixo da faixa de contagem
         int x = tk.espacoPainel;
         int larguraUtil = largura - 2 * tk.espacoPainel;
 
@@ -896,7 +905,7 @@ public:
 
         const int padCardX = 12;
         const int padCardY = 10;
-        bool ehDuasColunas = (larguraUtil >= 500);
+        bool ehDuasColunas = (larguraUtil >= 440);
 
         // Dados técnicos (somente leitura): grade de `colunas` colunas no topo
         // do card ASSET & USER METADATA, na ordem em que foram adicionados.
@@ -920,12 +929,19 @@ public:
             return yAtual;
         };
 
-        // AI generated: checkbox no cabeçalho do card ASSET & USER METADATA,
+        // Presets + AI generated no cabeçalho do card ASSET & USER METADATA,
         // à esquerda dos botões ? e ▼. Devolve o rightX livre para o título.
         auto posicionarAiGeradoNoCabecalho = [&](int rightX, int yCabecalho) {
+            if (botaoPresets_ != nullptr) {
+                const int larguraPresets = 84;
+                rightX -= larguraPresets;
+                botaoPresets_->setBounds(rightX, yCabecalho - 1, larguraPresets, 22);
+                botaoPresets_->setVisible(true);
+                rightX -= 6;
+            }
             for (auto& cu : camposUnificados_) {
                 if (!cu || cu->campoId != "ai_generated" || !cu->editor) continue;
-                const int larguraAi = 150;
+                const int larguraAi = 112;
                 rightX -= larguraAi;
                 cu->editor->setBounds(rightX, yCabecalho, larguraAi, 20);
                 if (cu->rotulo) cu->rotulo->setBounds({});
@@ -3999,8 +4015,9 @@ public:
     }
 
     void relayoutInterno(int largura, int extraNotas) {
+        if (botaoPresets_ != nullptr) botaoPresets_->setVisible(false);
         const auto& tk = matriz::ui::tema();
-        int y = tk.espacoPainel;
+        int y = tk.espacoPequeno;  // cards logo abaixo da faixa de contagem
         int x = tk.espacoPainel;
         int larguraUtil = largura - 2 * tk.espacoPainel;
 
@@ -4040,7 +4057,7 @@ public:
         // "dc_*" (Dublin Core) do restante (User Asset).
         const int padCardX = 12;
         const int padCardY = 10;
-        bool ehDuasColunas = (larguraUtil >= 500);
+        bool ehDuasColunas = (larguraUtil >= 440);
 
         std::vector<LinhaLote*> linhasDublinCore, linhasUserAsset;
         for (auto* linha : linhas_) {
@@ -4090,7 +4107,7 @@ public:
             int x1 = x + padCardX + colW + gap;
 
             auto layoutHeaderCard = [&](std::unique_ptr<juce::Label>& header, std::unique_ptr<juce::TextButton>& btnAjuda,
-                                         std::unique_ptr<juce::TextButton>& btnCollapse) {
+                                         std::unique_ptr<juce::TextButton>& btnCollapse, bool comPresets = false) {
                 int btnW = 20, btnH = 18;
                 int rightX = x + padCardX + innerW;
                 if (btnCollapse) {
@@ -4103,13 +4120,19 @@ public:
                     btnAjuda->setBounds(rightX, y + padCardY + 1, btnW, btnH);
                     rightX -= 8;
                 }
+                if (comPresets && botaoPresets_ != nullptr) {
+                    rightX -= 84;
+                    botaoPresets_->setBounds(rightX, y + padCardY - 1, 84, 22);
+                    botaoPresets_->setVisible(true);
+                    rightX -= 6;
+                }
                 if (header) header->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
                 y += padCardY + 24;
             };
 
             // --- 1. ASSET & USER METADATA ---
             int cardBTop = y;
-            layoutHeaderCard(secHeaderUserAssetLote_, btnAjudaUserAssetLote_, btnCollapseUserAssetLote_);
+            layoutHeaderCard(secHeaderUserAssetLote_, btnAjudaUserAssetLote_, btnCollapseUserAssetLote_, true);
             if (!colapsadoUserAssetLote_) {
                 int y0 = y, y1 = y;
                 // Mesma regra do modo de item único: NOTES sai da disputa de
@@ -4258,7 +4281,7 @@ public:
         int innerW = larguraUtil - 2 * padCardX;
 
         auto layoutHeaderCard1Col = [&](std::unique_ptr<juce::Label>& header, std::unique_ptr<juce::TextButton>& btnAjuda,
-                                         std::unique_ptr<juce::TextButton>& btnCollapse) {
+                                         std::unique_ptr<juce::TextButton>& btnCollapse, bool comPresets = false) {
             int btnW = 20, btnH = 18;
             int rightX = x + padCardX + innerW;
             if (btnCollapse) {
@@ -4270,6 +4293,12 @@ public:
                 rightX -= btnW;
                 btnAjuda->setBounds(rightX, y + padCardY + 1, btnW, btnH);
                 rightX -= 8;
+            }
+            if (comPresets && botaoPresets_ != nullptr) {
+                rightX -= 84;
+                botaoPresets_->setBounds(rightX, y + padCardY - 1, 84, 22);
+                botaoPresets_->setVisible(true);
+                rightX -= 6;
             }
             if (header) header->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
             y += padCardY + 24;
@@ -4310,7 +4339,7 @@ public:
 
         // --- 1. ASSET & USER METADATA ---
         int cardBTop1 = y;
-        layoutHeaderCard1Col(secHeaderUserAssetLote_, btnAjudaUserAssetLote_, btnCollapseUserAssetLote_);
+        layoutHeaderCard1Col(secHeaderUserAssetLote_, btnAjudaUserAssetLote_, btnCollapseUserAssetLote_, true);
         if (!colapsadoUserAssetLote_) {
             for (auto* linha : linhasUserAsset) layoutLinha1Col(linha, y);
             int cardBBottom1 = y + padCardY;
@@ -4433,6 +4462,14 @@ public:
         }
         std::function<void()> fim;
     };
+
+    // Presets mora no cabeçalho do card ASSET & USER METADATA (o botão pertence ao FichaPanelComponent;
+    // aqui só é reparentado e posicionado junto ao AI generated).
+    void definirBotaoPresets(juce::Component* botao) {
+        botaoPresets_ = botao;
+        if (botao != nullptr) addAndMakeVisible(*botao);
+    }
+    juce::Component::SafePointer<juce::Component> botaoPresets_;
 
     // Correção realtime (Bug 1), modo lote: mesmo papel do
     // FichaConteudo::comitarPendencias() — commita texto digitado e ainda
@@ -6016,6 +6053,7 @@ private:
 
 FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(projeto) {
     presets_.setButtonText(juce::String::fromUTF8("Presets \xe2\x96\xbe"));
+    presets_.onClick = [this] { abrirPresets(); };
     conteudo_ = std::make_unique<FichaConteudo>(projeto);
     viewport_ = std::make_unique<juce::Viewport>();
     viewport_->setViewedComponent(conteudo_.get(), false);
@@ -6085,7 +6123,8 @@ void FichaPanelComponent::mostrarItem(const std::string& itemId) {
     modoLote_ = false;
     viewport_->setViewedComponent(conteudo_.get(), false);
     conteudo_->construirParaItem(itemId);
-    aviso_.setText({}, juce::dontSendNotification);
+    definirAviso({});
+    anexarPresets();
     atualizarContagem();
     resized();
     repaint();
@@ -6112,12 +6151,13 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
             if (aoAplicarSucesso) aoAplicarSucesso(itemId);
         };
         conteudoLote_->aoPedirFocoGrade = [this] { if (aoPedirFocoGrade) aoPedirFocoGrade(); };
-        conteudoLote_->aoMudarAviso = [this](const juce::String& texto) { aviso_.setText(texto, juce::dontSendNotification); };
+        conteudoLote_->aoMudarAviso = [this](const juce::String& texto) { definirAviso(texto); };
         conteudoLote_->aoIniciarLoteAtualizacao = [this] { if (aoIniciarLoteAtualizacao) aoIniciarLoteAtualizacao(); };
         conteudoLote_->aoFinalizarLoteAtualizacao = [this] { if (aoFinalizarLoteAtualizacao) aoFinalizarLoteAtualizacao(); };
     }
     viewport_->setViewedComponent(conteudoLote_.get(), false);
     conteudoLote_->mostrarSelecao(itemIds);
+    anexarPresets();
     atualizarContagem();
     resized();
     repaint();
@@ -6128,7 +6168,7 @@ void FichaPanelComponent::atualizarContagem() {
     const size_t n = selecaoPreset_.size();
     contagem_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
     contagem_.setColour(juce::Label::textColourId, tk.textoPrimario);
-    aviso_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+    aviso_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro)));
     aviso_.setColour(juce::Label::textColourId, tk.textoSecundario);
     contagem_.setText(n == 0 ? juce::String()
                       : n == 1 ? matriz::i18n::t("ficha.um_selecionado")
@@ -6150,41 +6190,46 @@ void FichaPanelComponent::paint(juce::Graphics& g) {
 
 void FichaPanelComponent::resized() {
     auto area = getLocalBounds();
-    if (presets_.getParentComponent() == nullptr) {
-        addAndMakeVisible(presets_);
-        presets_.onClick = [this] { abrirPresets(); };
-    }
     presets_.setEnabled(editavel_ && !selecaoPreset_.empty());
     if (contagem_.getParentComponent() == nullptr) {
         contagem_.setMinimumHorizontalScale(0.7f);
         contagem_.setJustificationType(juce::Justification::centredLeft);
         contagem_.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(contagem_);
-        aviso_.setJustificationType(juce::Justification::topLeft);
-        aviso_.setInterceptsMouseClicks(false, false);
+        aviso_.setJustificationType(juce::Justification::centredRight);
+        aviso_.setMinimumHorizontalScale(0.8f);
         addAndMakeVisible(aviso_);
         atualizarContagem();
     }
     const auto& tk = matriz::ui::tema();
-    // Faixa fixa, de altura sempre igual (o card abaixo nunca muda de lugar): linha 1 = contagem à esquerda e
-    // Presets à direita; linha 2 = reservada para avisos (ex.: tipos de mídia misturados), mesmo vazia.
-    const int alturaControle = 24;
-    const int alturaAviso = 32;
-    auto faixa = area.removeFromTop(tk.espacoPainel + alturaControle + tk.espacoPequeno + alturaAviso + tk.espacoPequeno);
-    faixa.removeFromTop(tk.espacoPainel);
-    faixa = faixa.reduced(tk.espacoPainel, 0);
-    auto linhaControles = faixa.removeFromTop(alturaControle);
-    const int larguraPreset = 170;
-    presets_.setBounds(linhaControles.removeFromRight(larguraPreset));
-    linhaControles.removeFromRight(tk.espacoMedio);
-    contagem_.setBounds(linhaControles);
+    // Faixa fixa, de altura sempre igual (o card abaixo nunca muda de lugar): contagem à esquerda e, à direita, o
+    // aviso da seleção (ex.: tipos de mídia misturados; o texto inteiro fica no tooltip). O Presets mora no card.
+    const int alturaControle = 22;
+    auto faixa = area.removeFromTop(tk.espacoPequeno + alturaControle + tk.espacoPequeno);
     faixa.removeFromTop(tk.espacoPequeno);
-    aviso_.setBounds(faixa.removeFromTop(alturaAviso));
+    faixa = faixa.reduced(tk.espacoPainel, 0).removeFromTop(alturaControle);
+    contagem_.setBounds(faixa.removeFromLeft(juce::jmin(200, faixa.getWidth() * 45 / 100)));
+    aviso_.setBounds(faixa);
     viewport_->setBounds(area);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     int altura = viewport_->getHeight();
     if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura, altura);
     else conteudo_->relayout(largura, altura);
+}
+
+void FichaPanelComponent::anexarPresets() {
+    if (modoLote_ && conteudoLote_) {
+        conteudo_->definirBotaoPresets(nullptr);
+        conteudoLote_->definirBotaoPresets(&presets_);
+    } else {
+        if (conteudoLote_) conteudoLote_->definirBotaoPresets(nullptr);
+        conteudo_->definirBotaoPresets(&presets_);
+    }
+}
+
+void FichaPanelComponent::definirAviso(const juce::String& texto) {
+    aviso_.setText(texto, juce::dontSendNotification);
+    aviso_.setTooltip(texto);
 }
 
 void FichaPanelComponent::abrirPresets() {

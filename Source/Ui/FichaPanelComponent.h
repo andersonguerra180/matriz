@@ -80,9 +80,12 @@ public:
 private:
     void abrirPresets();
     void atualizarContagem();
-    // Faixa fixa acima dos cards: contagem à esquerda, Presets à direita. O
+    void anexarPresets();
+    void definirAviso(const juce::String& texto);
+    // Faixa fixa acima dos cards: contagem à esquerda e aviso da seleção à direita. O
     // viewport começa abaixo dela, então o card ASSET & USER METADATA fica na
-    // mesma posição com 1 ou N arquivos e nada fica sobreposto.
+    // mesma posição com 1 ou N arquivos e nada fica sobreposto. O botão Presets é
+    // reparentado para o cabeçalho do card (ver FichaConteudo::definirBotaoPresets).
     juce::Label contagem_;
     juce::Label aviso_;  // linha 2 da faixa: avisos da seleção
     juce::TextButton presets_;
