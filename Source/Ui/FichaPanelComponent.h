@@ -79,7 +79,7 @@ public:
 
 private:
     void abrirPresets();
-    juce::TextButton presets_{"Presets ▾"};
+    juce::TextButton presets_;
     std::vector<std::string> selecaoPreset_;
     ProjetoAberto& projeto_;
     std::string itemIdAtual_;

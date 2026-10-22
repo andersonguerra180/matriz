@@ -5841,6 +5841,7 @@ private:
 // ---------------------------------------------------------------------------
 
 FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(projeto) {
+    presets_.setButtonText(juce::String::fromUTF8("Presets \xe2\x96\xbe"));
     conteudo_ = std::make_unique<FichaConteudo>(projeto);
     viewport_ = std::make_unique<juce::Viewport>();
     viewport_->setViewedComponent(conteudo_.get(), false);
@@ -5963,8 +5964,12 @@ void FichaPanelComponent::resized() {
         presets_.onClick = [this] { abrirPresets(); };
     }
     presets_.setEnabled(editavel_ && !selecaoPreset_.empty());
-    presets_.setBounds(area.removeFromTop(28).removeFromRight(170).reduced(4, 2));
     viewport_->setBounds(area);
+    const auto& tk = matriz::ui::tema();
+    const int larguraPreset = 170;
+    presets_.setBounds(area.getRight() - larguraPreset - tk.espacoPainel,
+                       area.getY() + tk.espacoPainel, larguraPreset, 24);
+    presets_.toFront(false);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     int altura = viewport_->getHeight();
     if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura, altura);
@@ -5979,7 +5984,7 @@ void FichaPanelComponent::abrirPresets() {
     if (!dados.isObject()) dados = juce::var(new juce::DynamicObject());
     std::vector<juce::String> nomes;
     juce::PopupMenu menu;
-    menu.addItem(1, "Save metadata as preset...", selecaoPreset_.size() == 1);
+    menu.addItem(1, "Save metadata as preset...", !selecaoPreset_.empty());
     menu.addSeparator();
     for (const auto& prop : dados.getDynamicObject()->getProperties()) {
         nomes.push_back(prop.name.toString());
@@ -6001,9 +6006,17 @@ void FichaPanelComponent::abrirPresets() {
                 if (nome.isEmpty()) return;
                 auto* valores = new juce::DynamicObject();
                 // Apenas campos editoriais reutilizáveis; identidade e GPS ficam fora do preset.
-                for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "collection_type", "source_media", "ai_generated", "lista"}) {
-                    const auto valor = seguro->projeto_.lerMetadado(ids.front(), campo).value_or("");
-                    if (!valor.empty()) valores->setProperty(juce::Identifier(campo), juce::String::fromUTF8(valor.c_str()));
+                for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "content_type", "collection_type", "source_media", "ai_generated", "lista"}) {
+                    const auto valorComum = seguro->projeto_.lerMetadado(ids.front(), campo).value_or("");
+                    bool igualEmTodos = true;
+                    for (size_t i = 1; i < ids.size(); ++i) {
+                        if (seguro->projeto_.lerMetadado(ids[i], campo).value_or("") != valorComum) {
+                            igualEmTodos = false;
+                            break;
+                        }
+                    }
+                    if (igualEmTodos && !valorComum.empty())
+                        valores->setProperty(juce::Identifier(campo), juce::String::fromUTF8(valorComum.c_str()));
                 }
                 dados.getDynamicObject()->setProperty(juce::Identifier(nome), juce::var(valores));
                 if (!arquivo.replaceWithText(juce::JSON::toString(dados)))
@@ -6016,7 +6029,7 @@ void FichaPanelComponent::abrirPresets() {
         auto preset = dados.getProperty(juce::Identifier(nomes[static_cast<size_t>(indice)]), {});
         if (auto* objeto = preset.getDynamicObject()) {
             std::vector<std::pair<std::string, std::string>> campos;
-            for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "collection_type", "source_media", "ai_generated", "lista"})
+            for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "content_type", "collection_type", "source_media", "ai_generated", "lista"})
                 if (objeto->hasProperty(juce::Identifier(campo))) campos.emplace_back(campo, objeto->getProperty(juce::Identifier(campo)).toString().toStdString());
             seguro->projeto_.salvarMetadadoEmLote(ids, campos);
             seguro->mostrarSelecao(ids);
