@@ -6685,9 +6685,22 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
 
     try {
         auto stmt = leitura().prepare(
-            "SELECT COALESCE(metadados_editados, 0) != 0 FROM item WHERE id = ?");
+            "SELECT COALESCE(metadados_editados, 0) != 0, content_type, collection_type, ano, "
+            "dc_subject, lista, source_media, "
+            "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = item.id "
+            "AND g.latitude IS NOT NULL AND g.longitude IS NOT NULL) "
+            "FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(itemId));
-        if (stmt.step()) r.metadadosEditados = stmt.columnInt(0) != 0;
+        if (stmt.step()) {
+            r.metadadosEditados = stmt.columnInt(0) != 0;
+            if (!stmt.columnIsNull(1)) r.contentType = stmt.columnText(1);
+            if (!stmt.columnIsNull(2)) r.collectionType = stmt.columnText(2);
+            if (!stmt.columnIsNull(3)) r.ano = extrairAnoDeData(juce::String::fromUTF8(stmt.columnText(3).c_str()));
+            if (!stmt.columnIsNull(4)) r.subject = stmt.columnText(4);
+            if (!stmt.columnIsNull(5)) r.lista = stmt.columnText(5);
+            if (!stmt.columnIsNull(6)) r.sourceMedia = stmt.columnText(6);
+            r.temGeolocalizacao = stmt.columnInt(7) != 0;
+        }
     } catch (...) {}
 
     r.tags = lerTags(itemId);

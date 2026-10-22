@@ -353,7 +353,12 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         atualizarContagens();
     };
     fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
-        if (mosaico_) mosaico_->atualizarItemEmMemoria(itemId);
+        if (mosaico_) {
+            mosaico_->atualizarItemEmMemoria(itemId);
+            // O campo recém-gravado já está no snapshot em memória: refaz o
+            // funil agora, sem esperar a contagem assíncrona nem reler o catálogo.
+            aplicarFiltrosAdicionais();
+        }
         if (aoItemAlterado) aoItemAlterado(itemId);
     };
     // Item 3 (correção METADATA 2026-09-28): E ficava preso no campo de

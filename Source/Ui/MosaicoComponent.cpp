@@ -468,6 +468,17 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     // aoItemAlterado, mas E e W caíam só neste caminho genérico, que nunca
     // relia essas duas flags do banco.
     if (auto resumo = projeto_.obterItemResumo(itemId)) {
+        it->tipoMidia = resumo->tipoMidia;
+        it->contentType = resumo->contentType;
+        it->collectionType = resumo->collectionType;
+        it->ano = resumo->ano;
+        it->subject = resumo->subject;
+        it->lista = resumo->lista;
+        it->sourceMedia = resumo->sourceMedia;
+        it->tags = resumo->tags;
+        it->aiGenerated = resumo->aiGenerated;
+        it->temGeolocalizacao = resumo->temGeolocalizacao;
+        it->metadadosEditados = resumo->metadadosEditados;
         it->marcadoRevisado = resumo->marcadoRevisado;
         it->marcadoWatermark = resumo->marcadoWatermark;
         it->marcadoBounce = resumo->marcadoBounce;
