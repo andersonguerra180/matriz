@@ -19,6 +19,18 @@ using matriz::db::Value;
 
 namespace {
 
+juce::String semAcentos(const juce::String& texto) {
+    const auto acentos = juce::String::fromUTF8("áàâãäåéèêëíìîïóòôõöúùûüçñÁÀÂÃÄÅÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ");
+    const juce::String bases("aaaaaaeeeeiiiiooooouuuucnAAAAAAEEEEIIIIOOOOOUUUUCN");
+    juce::String out;
+    for (auto c : texto) {
+        if (c >= 0x0300 && c <= 0x036f) continue;
+        const int i = acentos.indexOfChar(c);
+        out += juce::String::charToString(i >= 0 ? bases[i] : c);
+    }
+    return out;
+}
+
 std::string aparar(const std::string& s) {
     return juce::String::fromUTF8(s.c_str()).trim().toStdString();
 }
@@ -29,7 +41,9 @@ std::string aparar(const std::string& s) {
 std::string padraoLike(const std::string& chaveNome) {
     juce::String out;
     for (auto c : juce::String::fromUTF8(chaveNome.c_str())) {
-        if (c < 128) {
+        if (juce::String("aeioucnAEIOUCN").containsChar(c)) {
+            out << "%"; // inclui a grafia acentuada e Unicode decomposto
+        } else if (c < 128) {
             if (c == '%' || c == '_' || c == '\\') out << '\\';
             out << juce::String::charToString(c);
         } else {
@@ -75,7 +89,7 @@ std::vector<Parte> partirComSeparadores(const std::string& valor) {
 }  // namespace
 
 std::string chave(const std::string& nome) {
-    const juce::String limpo = juce::String::fromUTF8(nome.c_str()).trim();
+    const juce::String limpo = semAcentos(juce::String::fromUTF8(nome.c_str()).trim());
 #if JUCE_MAC
     // juce::String::toLowerCase usa towlower, que depende do locale do
     // processo — no app (locale "C") "É" continuava "É". CoreFoundation

@@ -115,7 +115,9 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
     std::cout << "\n-- Collection package, phase 1: case-insensitive tags/people/subjects --\n";
 
     checar(nomes::chave("  SHOW ") == "show", "the key ignores case and spaces at the ends");
-    checar(nomes::chave("S\xc3\xa3o") != nomes::chave("Sao"), juce::String::fromUTF8("accents still count (\"S\xc3\xa3o\" != \"Sao\")"));
+    checar(nomes::chave(juce::String::fromUTF8("avó, você, ação").toStdString()) == "avo, voce, acao", "acute, circumflex and tilde share unaccented metadata keys");
+    checar(nomes::chave("Sa\xcc\x83o") == "sao", "decomposed tilde also matches");
+    checar(nomes::chave("S\xc3\xa3o") == nomes::chave("Sao"), juce::String::fromUTF8("accent variants share the same key (\"S\xc3\xa3o\" == \"Sao\")"));
     checar(nomes::chave("\xc3\x89POCA") == nomes::chave("\xc3\xa9poca"), "upper/lower case of accented letters is the same name");
     {
         std::map<std::string, std::string> vocab = {{"show", "Show"}, {"tour", "Tour"}};

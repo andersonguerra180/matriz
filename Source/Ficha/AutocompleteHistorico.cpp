@@ -3,6 +3,7 @@
 #include <map>
 
 #include "../Model/Project.h"
+#include "../Model/NomesCanonicos.h"
 
 #include <algorithm>
 #include <cctype>
@@ -53,7 +54,7 @@ std::vector<std::string> AutocompleteRepository::listar(matriz::db::Database& db
             while (st.step()) {
                 if (st.columnIsNull(0)) continue;
                 const std::string v = aparar(st.columnText(0));
-                if (!v.empty()) porChave.emplace(juce::String::fromUTF8(v.c_str()).toLowerCase(), v);
+                if (!v.empty()) porChave.emplace(juce::String(matriz::model::nomes::chave(v)), v);
             }
         } catch (...) {}
     };
