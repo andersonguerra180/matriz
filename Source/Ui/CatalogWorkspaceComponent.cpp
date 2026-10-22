@@ -2116,7 +2116,9 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     // barra (media type, ano/DATE, collection, Hide Edited, Hide Unselected,
     // busca e a seleção herdada da árvore). O aplicarFiltrosAdicionais()
     // no fim desta função recalcula a grade já sem nada marcado.
-    if (chave == "all") limparTodosOsFiltros();
+    const bool resetCompleto = chave == "all";
+    if (resetCompleto && mosaico_) mosaico_->iniciarLoteAtualizacao();
+    if (resetCompleto) limparTodosOsFiltros();
     // A pasta vinda do Folder Map (filtroHerdadoIds_) NÃO cai aqui: os filtros da
     // coluna esquerda funilam dentro dela; só ALL ASSETS (limparTodosOsFiltros,
     // acima) a desliga.
@@ -2149,6 +2151,7 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     }
 
     aplicarFiltrosAdicionais();
+    if (resetCompleto) mosaico_->finalizarLoteAtualizacao();
 }
 
 void CatalogWorkspaceComponent::atualizarBotoesSidebar() {

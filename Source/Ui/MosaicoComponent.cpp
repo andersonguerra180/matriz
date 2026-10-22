@@ -706,7 +706,8 @@ void MosaicoComponent::recomputarBuscaResultado() {
 
     if (buscaTermos_.isEmpty()) {
         buscaResultado_ = std::nullopt;
-        aplicarFiltrosEOrdenacao();
+        if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
+        else aplicarFiltrosEOrdenacao();
         return;
     }
 

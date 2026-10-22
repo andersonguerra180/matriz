@@ -125,7 +125,8 @@ public:
     void definirOcultarEditados(bool ocultar) {
         if (ocultarEditados_ != ocultar) {
             ocultarEditados_ = ocultar;
-            aplicarFiltrosEOrdenacao();
+            if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
+            else aplicarFiltrosEOrdenacao();
             repaint();
         }
     }
@@ -135,7 +136,8 @@ public:
     void definirMostrarOcultos(bool mostrar) {
         if (mostrarOcultos_ != mostrar) {
             mostrarOcultos_ = mostrar;
-            aplicarFiltrosEOrdenacao();
+            if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
+            else aplicarFiltrosEOrdenacao();
             repaint();
         }
     }
@@ -143,7 +145,8 @@ public:
     void definirOcultarNaoSelecionados(bool ocultar) {
         if (ocultarNaoSelecionados_ != ocultar) {
             ocultarNaoSelecionados_ = ocultar;
-            aplicarFiltrosEOrdenacao();
+            if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
+            else aplicarFiltrosEOrdenacao();
             repaint();
         }
     }
