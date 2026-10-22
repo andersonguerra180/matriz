@@ -2106,40 +2106,10 @@ private:
             alturaVal = static_cast<int>(dados["alturaPx"]);
         }
 
-        if ((larguraVal <= 0 || alturaVal <= 0) && arquivo) {
-            juce::File f(arquivo->caminhoAbsoluto);
-            if (f.existsAsFile()) {
-                try {
-                    auto image = Exiv2::ImageFactory::open(f.getFullPathName().toStdString());
-                    image->readMetadata();
-                    larguraVal = image->pixelWidth();
-                    alturaVal = image->pixelHeight();
-                } catch (...) {
-                    auto img = juce::ImageFileFormat::loadFrom(f);
-                    if (img.isValid()) {
-                        larguraVal = img.getWidth();
-                        alturaVal = img.getHeight();
-                    }
-                }
-
-                // Decodificar imagem/Exiv2 na thread de UI trava a navegação
-                // (trocar de foto vira um spinner) — cacheia o resultado no
-                // JSON do arquivo pra nunca mais precisar reabrir o arquivo
-                // só pra ler largura/altura.
-                if (larguraVal > 0 && alturaVal > 0) {
-                    juce::var dadosCache = dados.isObject() ? dados : juce::var(new juce::DynamicObject());
-                    dadosCache.getDynamicObject()->setProperty("larguraPx", larguraVal);
-                    dadosCache.getDynamicObject()->setProperty("alturaPx", alturaVal);
-                    std::string novoJson = juce::JSON::toString(dadosCache, true).toStdString();
-                    try {
-                        projeto_.projeto().registro().run(
-                            "UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE id = ?",
-                            {matriz::db::Value::of(novoJson), matriz::db::Value::of(arquivo->id)});
-                        dados = dadosCache;
-                    } catch (...) {}
-                }
-            }
-        }
+        // A ficha roda na message thread. Abrir o original aqui para obter
+        // dimensões ausentes bloqueava a navegação por dezenas de segundos
+        // quando o arquivo estava em Google Drive/iCloud. Dimensões técnicas
+        // são preenchidas pela análise de ingest; a UI nunca força download.
 
         int exifOrient = 1;
         if (dados.isObject() && dados.hasProperty("bruto")) {
