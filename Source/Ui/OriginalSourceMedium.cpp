@@ -581,8 +581,8 @@ void OriginalSourceMediumEditorComponent::addComboField(const juce::String& key,
     sf.labelText = label;
 
     sf.label = std::make_unique<juce::Label>("", traduzirRotuloSubcampo(label, isPt));
-    sf.label->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-    sf.label->setColour(juce::Label::textColourId, tk.textoSecundario);
+    sf.label->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+    sf.label->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*sf.label);
 
     sf.combo = std::make_unique<juce::ComboBox>();
@@ -610,8 +610,8 @@ void OriginalSourceMediumEditorComponent::addTextField(const juce::String& key, 
     sf.labelText = label;
 
     sf.label = std::make_unique<juce::Label>("", traduzirRotuloSubcampo(label, isPt));
-    sf.label->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-    sf.label->setColour(juce::Label::textColourId, tk.textoSecundario);
+    sf.label->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+    sf.label->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*sf.label);
 
     // Fase 4: só DEVICE tem histórico pra sugerir — os outros textFields
@@ -721,8 +721,10 @@ void OriginalSourceMediumEditorComponent::rebuildSubfields() {
     resized();
 }
 
+// Mesma cadência dos campos da ficha (rótulo 16 + 2, campo 28, 4 de respiro): o DEVICE (e os demais
+// subcampos) caem exatamente na linha seguinte da coluna vizinha (People).
 int OriginalSourceMediumEditorComponent::getPreferredHeight() const {
-    return 34 + static_cast<int>(subfields_.size()) * 52;
+    return 28 + static_cast<int>(subfields_.size()) * 50;
 }
 
 void OriginalSourceMediumEditorComponent::paint(juce::Graphics& g) {
@@ -734,16 +736,16 @@ void OriginalSourceMediumEditorComponent::resized() {
     if (area.isEmpty()) return;
 
     if (comboMedium_) {
-        comboMedium_->setBounds(area.removeFromTop(26));
-        area.removeFromTop(8);
+        comboMedium_->setBounds(area.removeFromTop(28));
+        area.removeFromTop(4);
     }
 
     for (auto& sf : subfields_) {
         if (sf.label) sf.label->setBounds(area.removeFromTop(16));
         area.removeFromTop(2);
-        if (sf.combo) sf.combo->setBounds(area.removeFromTop(26));
-        else if (sf.textEditor) sf.textEditor->setBounds(area.removeFromTop(26));
-        area.removeFromTop(8);
+        if (sf.combo) sf.combo->setBounds(area.removeFromTop(28));
+        else if (sf.textEditor) sf.textEditor->setBounds(area.removeFromTop(28));
+        area.removeFromTop(4);
     }
 }
 
