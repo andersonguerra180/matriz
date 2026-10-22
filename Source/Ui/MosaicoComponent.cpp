@@ -148,9 +148,17 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 item.nestCapaImagem = it->second.capaImagem.empty() ? std::string()
                                       : pastaDoProjeto.getChildFile(juce::String(it->second.capaImagem)).getFullPathName().toStdString();
                 item.nestIcone = it->second.icone;
+                item.nestNome = it->second.nome;
+                if (item.nestCapa && !item.nestOrigem.empty()) {
+                    item.titulo = !item.nestNome.empty() ? item.nestNome : matriz::i18n::t("intake.container_" + juce::String(item.nestOrigem)).toStdString();
+                    item.nomeOriginalArquivo = item.titulo;
+                }
             }
         };
         aplicar(itensTodos_);
+        textosTodos_.clear();
+        textosTodos_.reserve(itensTodos_.size());
+        for (const auto& item : itensTodos_) textosTodos_.push_back(calcularTextos(item));
         aplicarFiltrosEOrdenacao();
         return;
     }
