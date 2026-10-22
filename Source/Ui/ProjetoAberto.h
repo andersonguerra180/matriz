@@ -374,6 +374,10 @@ public:
     void salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
                               const std::vector<std::pair<std::string, std::string>>& camposEValores,
                               const std::set<std::pair<std::string, std::string>>& pular = {});
+    // Original Source Medium = Phone Dump nos itens que entraram pelo fluxo PHONE DUMP do Intake
+    // (gravarOrigemPhoneDump). Uma transação só; silencioso (sem Undo, sem metadados_editados, sem evento).
+    // Seguro de chamar de qualquer thread.
+    void definirOrigemPhoneDump(const std::vector<std::string>& itemIds);
     // Backfill silencioso do EVENT DATE (item.ano) quando ele ainda está
     // vazio. Deliberadamente NÃO passa por salvarMetadado: não marca
     // metadados_editados, não entra no Undo e não dispara evento — isto é

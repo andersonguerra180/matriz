@@ -2458,22 +2458,17 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
     std::vector<ItemIntake> novosItens;
     novosItens.reserve(quarentena.size());
     std::vector<std::string> idsCelularSemMedium;
-    auto ehOrigemCelular = [](const juce::String& caminho) {
-        return caminho.containsIgnoreCase("Received from phone") || caminho.containsIgnoreCase("extraidos_whatsapp") ||
-               caminho.containsIgnoreCase("whatsapp");
-    };
-    auto jsonSmartphone = [] {
-        OriginalSourceMediumInfo info;
-        info.medium = "Internal Storage / Smartphone";
-        return info.serialize();
+    // Registro explícito de importação pelo fluxo PHONE DUMP (container gallery/whatsapp ou conversa de WhatsApp);
+    // nada de caminho ou tag.
+    auto ehImportadoPeloPhoneDump = [](const std::string& containerOrigem, const std::string& collectionType) {
+        return containerOrigem == "gallery" || containerOrigem == "whatsapp" || collectionType == "WhatsApp Chat";
     };
 
     for (const auto& item : quarentena) {
         // CONTAINER: só a capa aparece no Intake (representa a importação inteira); os demais membros ficam escondidos.
         if (!item.nestOrigem.empty() && !item.nestCapa) {
-            // Os membros escondidos também são "do celular": recebem o Original Source Medium (a cover é tratada abaixo).
-            const juce::String camMembro = !item.caminhoAbsolutoOrigem.empty() ? juce::String::fromUTF8(item.caminhoAbsolutoOrigem.c_str()) : juce::String();
-            const bool origemCelular = item.nestOrigem == "gallery" || item.nestOrigem == "whatsapp" || ehOrigemCelular(camMembro);
+            // Os membros escondidos também vieram pelo Phone Dump: recebem o Original Source Medium (a cover é tratada abaixo).
+            const bool origemCelular = ehImportadoPeloPhoneDump(item.nestOrigem, item.collectionType.value_or(std::string()));
             if (origemCelular && (item.sourceMedia.empty() ||
                                   OriginalSourceMediumInfo::deserialize(item.sourceMedia).isNoneOrUnknown()))
                 idsCelularSemMedium.push_back(item.id);
@@ -2536,10 +2531,13 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
             it.caminhoMiniatura = projeto_.projeto().pasta().getChildFile(
                 juce::String::fromUTF8(item.miniaturaCaminhoRelativo.c_str())).getFullPathName();
 
-        // IMPORT FROM PHONE (galeria/WhatsApp): chega com Original Source Medium = Internal Storage / Smartphone,
-        // o que também o faz passar pelo filtro PHONE DUMP. Só preenche quando ainda não há medium definido.
-        if (ehOrigemCelular(it.caminhoOrigem) && (it.sourceMedia.isEmpty() || OriginalSourceMediumInfo::deserialize(it.sourceMedia.toStdString()).isNoneOrUnknown())) {
-            it.sourceMedia = juce::String::fromUTF8(jsonSmartphone().c_str());
+        // IMPORT FROM PHONE (galeria/WhatsApp): o registro da importação garante Original Source Medium = Phone Dump,
+        // também em itens antigos que ficaram sem medium. Só preenche quando ainda não há medium definido.
+        if (ehImportadoPeloPhoneDump(item.nestOrigem, item.collectionType.value_or(std::string())) &&
+            (it.sourceMedia.isEmpty() || OriginalSourceMediumInfo::deserialize(it.sourceMedia.toStdString()).isNoneOrUnknown())) {
+            OriginalSourceMediumInfo phoneDump;
+            phoneDump.medium = kMediumPhoneDump;
+            it.sourceMedia = juce::String::fromUTF8(phoneDump.serialize().c_str());
             idsCelularSemMedium.push_back(it.id);
         }
 
@@ -2548,9 +2546,8 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
 
     if (!idsCelularSemMedium.empty()) {
         ProjetoAberto* projeto = &projeto_;
-        const std::string json = jsonSmartphone();
-        poolMetadadoLote_.addJob([projeto, ids = std::move(idsCelularSemMedium), json] {
-            projeto->salvarMetadadoEmLote(ids, {{"source_media", json}});  // uma transação só
+        poolMetadadoLote_.addJob([projeto, ids = std::move(idsCelularSemMedium)] {
+            projeto->definirOrigemPhoneDump(ids);  // uma transação só, silencioso (não vira "editado")
         });
     }
 
@@ -2645,14 +2642,10 @@ void IntakeWorkspaceComponent::atualizarComboAno() {
 void IntakeWorkspaceComponent::atualizarFiltragem() {
     indicesFiltrados_.clear();
 
-    auto ehDump = [&](const ItemIntake& it) -> bool {
-        // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
-        if (it.collection == "WhatsApp Chat" || it.containerOrigem == "whatsapp" || it.containerOrigem == "gallery" ||
-            it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
-            it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
-            return true;  // sai do Phone Dump só se o filtro mudar (antes sumia ao ficar sem pasta no Folder Map)
-        }
-        return false;
+    // PHONE DUMP: só Original Source Medium = Phone Dump ou o registro explícito da importação pelo fluxo
+    // PHONE DUMP (container gallery/whatsapp, conversa de WhatsApp). Sem heurística de tag, caminho ou texto do medium.
+    auto ehDump = [](const ItemIntake& it) -> bool {
+        return OriginalSourceMediumVocabulary::itemIsPhoneDump(it.sourceMedia.toStdString(), it.containerOrigem.toStdString(), it.collection.toStdString());
     };
 
     for (size_t i = 0; i < todosItens_.size(); ++i) {
@@ -2711,14 +2704,10 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     contagemOther_ = 0;
     contagemPhoneDump_ = 0;
 
-    auto ehDump = [&](const ItemIntake& it) -> bool {
-        // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
-        if (it.collection == "WhatsApp Chat" || it.containerOrigem == "whatsapp" || it.containerOrigem == "gallery" ||
-            it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
-            it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
-            return true;  // sai do Phone Dump só se o filtro mudar (antes sumia ao ficar sem pasta no Folder Map)
-        }
-        return false;
+    // PHONE DUMP: só Original Source Medium = Phone Dump ou o registro explícito da importação pelo fluxo
+    // PHONE DUMP (container gallery/whatsapp, conversa de WhatsApp). Sem heurística de tag, caminho ou texto do medium.
+    auto ehDump = [](const ItemIntake& it) -> bool {
+        return OriginalSourceMediumVocabulary::itemIsPhoneDump(it.sourceMedia.toStdString(), it.containerOrigem.toStdString(), it.collection.toStdString());
     };
 
     for (const auto& item : todosItens_) {

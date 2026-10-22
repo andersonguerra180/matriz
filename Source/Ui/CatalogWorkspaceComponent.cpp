@@ -1,6 +1,7 @@
 #include "CatalogWorkspaceComponent.h"
 #include "ContainerVisual.h"
 #include "TiposContainer.h"
+#include "OriginalSourceMedium.h"
 
 #include <algorithm>
 #include "AcoesItem.h"
@@ -1282,26 +1283,10 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     // PROJECT: container nascido de um questionário (DDP, vinil, fita, produção, YouTube).
     auto ehProjeto = [](const ItemResumo& it) { return ehOrigemProject(juce::String(it.nestOrigem)); };
 
-    auto ehDump = [&](const ItemResumo& it) -> bool {
-        juce::String src(it.sourceMedia);
-        juce::String path(it.caminhoAbsolutoOrigem);
-        juce::String relPath(it.caminhoRelativoArquivo);
-        bool match = (it.collectionType.value_or("") == "WhatsApp Chat" || it.nestOrigem == "whatsapp" || it.nestOrigem == "gallery" ||
-                      src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
-                      path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
-                      relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
-        if (!match) {
-            for (const auto& tag : it.tags) {
-                if (juce::String(tag).equalsIgnoreCase("whatsapp") || juce::String(tag).equalsIgnoreCase("celular") || juce::String(tag).equalsIgnoreCase("smartphone")) {
-                    match = true;
-                    break;
-                }
-            }
-        }
-        if (match) {
-            return true;  // todo item vindo do celular é Phone Dump (antes sumia ao ficar sem pasta)
-        }
-        return false;
+    // PHONE DUMP: só Original Source Medium = Phone Dump ou o registro explícito da importação pelo fluxo
+    // PHONE DUMP do Intake (container gallery/whatsapp, conversa de WhatsApp). Sem heurística de tag nem de caminho.
+    auto ehDump = [](const ItemResumo& it) -> bool {
+        return OriginalSourceMediumVocabulary::itemIsPhoneDump(it.sourceMedia, it.nestOrigem, it.collectionType.value_or(""));
     };
 
     if (filtroHerdadoIds_ || ocultarComGeo_) anyFilter = true;
@@ -1680,26 +1665,10 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
             auto ehProjeto = [](const ItemResumo& it) { return ehOrigemProject(juce::String(it.nestOrigem)); };
 
-            auto ehDump = [&](const ItemResumo& it) -> bool {
-                juce::String src(it.sourceMedia);
-                juce::String path(it.caminhoAbsolutoOrigem);
-                juce::String relPath(it.caminhoRelativoArquivo);
-                bool match = (it.collectionType.value_or("") == "WhatsApp Chat" || it.nestOrigem == "whatsapp" || it.nestOrigem == "gallery" ||
-                      src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
-                              path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
-                              relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
-                if (!match) {
-                    for (const auto& tag : it.tags) {
-                        if (juce::String(tag).equalsIgnoreCase("whatsapp") || juce::String(tag).equalsIgnoreCase("celular") || juce::String(tag).equalsIgnoreCase("smartphone")) {
-                            match = true;
-                            break;
-                        }
-                    }
-                }
-                if (match) {
-                    return true;  // todo item vindo do celular é Phone Dump (antes sumia ao ficar sem pasta)
-                }
-                return false;
+            // PHONE DUMP: só Original Source Medium = Phone Dump ou o registro explícito da importação pelo fluxo
+            // PHONE DUMP do Intake (container gallery/whatsapp, conversa de WhatsApp). Sem heurística de tag nem de caminho.
+            auto ehDump = [](const ItemResumo& it) -> bool {
+                return OriginalSourceMediumVocabulary::itemIsPhoneDump(it.sourceMedia, it.nestOrigem, it.collectionType.value_or(""));
             };
 
             std::map<int, int> contagemPorAno;

@@ -2,6 +2,7 @@
 #include "FichasEmbutidas.h"
 #include "TiposContainer.h"
 #include "TraducaoContent.h"
+#include "OriginalSourceMedium.h"
 #include "../Diag/Watchdog.h"
 
 #include "../Ingest/Miniaturas.h"
@@ -1769,6 +1770,19 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
         if (itemIds.size() <= 2000) EventBus::obterInstancia().dispararItensAlterados(itemIds, tipo);
         else EventBus::obterInstancia().dispararItemAlterado("", tipo);
     });
+}
+
+void ProjetoAberto::definirOrigemPhoneDump(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_ || !projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        matriz::ui::gravarOrigemPhoneDump(db, itemIds);
+        db.exec("COMMIT");
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+    }
 }
 
 bool ProjetoAberto::preencherAnoPadraoSeVazio(const std::string& itemId, const std::string& ano) {

@@ -33,6 +33,7 @@
 #include "Ingest/Loudness.h"
 #include "Ingest/Miniaturas.h"
 #include "Ingest/PainelInconsistencias.h"
+#include "Ui/OriginalSourceMedium.h"
 #include "Ingest/CacheArquivo.h"
 #include "Model/Project.h"
 #include "Model/ProjectLog.h"
@@ -3337,6 +3338,26 @@ void testarPdfWindows(const juce::File& dirTemp) {
 }
 #endif
 
+// Filtro PHONE DUMP: só Original Source Medium = Phone Dump ou registro explícito da importação.
+void testarFiltroPhoneDump() {
+    using V = matriz::ui::OriginalSourceMediumVocabulary;
+    matriz::ui::OriginalSourceMediumInfo pd;
+    pd.medium = matriz::ui::kMediumPhoneDump;
+    pd.recordingDevice = "iPhone 14";
+    const std::string json = pd.serialize();
+    check(V::itemIsPhoneDump(json, "", ""), "Phone Dump: medium = Phone Dump entra no filtro (mesmo com DEVICE)");
+    check(V::itemIsPhoneDump("Phone Dump", "", ""), "Phone Dump: medium em texto legado entra no filtro");
+    check(V::itemIsPhoneDump("", "gallery", ""), "Phone Dump: container gallery (registro da importação) entra no filtro");
+    check(V::itemIsPhoneDump("", "whatsapp", ""), "Phone Dump: container whatsapp entra no filtro");
+    check(V::itemIsPhoneDump("", "", "WhatsApp Chat"), "Phone Dump: conversa de WhatsApp entra no filtro");
+    matriz::ui::OriginalSourceMediumInfo sm;
+    sm.medium = "Internal Storage / Smartphone";
+    sm.recordingDevice = "iPhone 14";
+    check(!V::itemIsPhoneDump(sm.serialize(), "", ""), "Phone Dump: Smartphone por EXIF NÃO entra no filtro");
+    check(!V::itemIsPhoneDump("", "drive", ""), "Phone Dump: container de outra origem NÃO entra no filtro");
+    check(!V::itemIsPhoneDump("", "", ""), "Phone Dump: item comum NÃO entra no filtro");
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -3382,6 +3403,7 @@ int main() {
     testarSidecarsEtapa8(tmpDir);
     testarDataDeVideo(tmpDir);
     testarExportIntakePacoteCollection(tmpDir);
+    testarFiltroPhoneDump();
 
     tmpDir.deleteRecursively();
 

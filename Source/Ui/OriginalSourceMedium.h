@@ -12,7 +12,13 @@
 #include <functional>
 #include <memory>
 
+namespace matriz::db { class Database; }
+
 namespace matriz::ui {
+
+// Valor de ORIGINAL SOURCE MEDIUM gravado em tudo que entra pelo fluxo PHONE DUMP do Intake
+// (QR Code/USB e WhatsApp) e usado pelo filtro PHONE DUMP.
+inline constexpr const char* kMediumPhoneDump = "Phone Dump";
 
 struct OriginalSourceMediumInfo {
     std::string medium = "None / Unknown";
@@ -60,10 +66,21 @@ public:
     static const std::vector<MediumCategoryGroup>& getMediumCategories();
     static juce::String translateMedium(const juce::String& name, bool isPt);
     static std::string canonicalMedium(const std::string& name);
+    // rawSourceMedium = o valor gravado (JSON do Original Source Medium ou texto legado).
+    static bool isPhoneDump(const std::string& rawSourceMedium);
+    // Filtro PHONE DUMP: medium = Phone Dump OU registro explícito de importação pelo fluxo PHONE DUMP.
+    static bool itemIsPhoneDump(const std::string& rawSourceMedium, const std::string& containerOrigin,
+                                const std::string& collectionType);
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
     static void populateMediumCombo(juce::ComboBox& combo, bool includeNone = true);
 #endif
 };
+
+// Grava ORIGINAL SOURCE MEDIUM = Phone Dump nos itens que entraram pelo fluxo PHONE DUMP do Intake
+// (QR Code/USB, WhatsApp). Mantém o resto do medium (ex.: DEVICE lido do EXIF). Silencioso como um
+// backfill: não marca metadados_editados, não entra no Undo e não dispara evento. Quem chama cuida da
+// transação e do writeMutex; roda em qualquer thread.
+void gravarOrigemPhoneDump(matriz::db::Database& registro, const std::vector<std::string>& itemIds);
 
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
 class OriginalSourceMediumEditorComponent : public juce::Component {

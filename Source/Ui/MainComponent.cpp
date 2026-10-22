@@ -4244,6 +4244,26 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         // CONTAINER de importação: no fim do lote, os itens criados por esta chamada viram um nest com origem.
         const std::set<std::string> meus(itemIds.begin(), itemIds.end());
         const std::string origem = origemDoLote;
+        if (origem == "gallery") {
+            // Galeria do celular (QR Code/USB): tudo que chega ganha Original Source Medium = Phone Dump,
+            // com ou sem container (um arquivo só não vira container).
+            juce::Component::SafePointer<MainComponent> seguroPhoneDump(this);
+            const juce::ScopedLock sl(estadoLote->lock);
+            estadoLote->aoConcluir.push_back([seguroPhoneDump, meus](const std::vector<std::string>& processados) {
+                if (!seguroPhoneDump || !seguroPhoneDump->projetoAberto_) return;
+                std::vector<std::string> doLote;
+                for (const auto& id : processados) if (meus.count(id)) doLote.push_back(id);
+                if (doLote.empty()) return;
+                ProjetoAberto* proj = seguroPhoneDump->projetoAberto_.get();
+                seguroPhoneDump->poolVaults_.addJob([seguroPhoneDump, proj, doLote] {
+                    proj->definirOrigemPhoneDump(doLote);
+                    juce::MessageManager::callAsync([seguroPhoneDump, proj] {
+                        if (!seguroPhoneDump || seguroPhoneDump->projetoAberto_.get() != proj) return;
+                        if (seguroPhoneDump->intakeWorkspace_) seguroPhoneDump->intakeWorkspace_->recarregar();
+                    });
+                });
+            });
+        }
         const std::string capaDoContainer = sobre != nullptr ? sobre->capaContainer : std::string();
         const bool capaFrameDoVideo = sobre != nullptr && sobre->capaFrameDoVideo;
         const std::string iconeDoContainer = sobre != nullptr ? sobre->iconeContainer : std::string();

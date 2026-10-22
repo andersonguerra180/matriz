@@ -11,6 +11,7 @@
 #include "../Model/NomesSeguros.h"
 #include "../Model/ProjectLog.h"
 #include "../Ui/LogosTipoArquivo.h"
+#include "../Ui/OriginalSourceMedium.h"
 
 namespace matriz::whatsapp {
 
@@ -632,6 +633,16 @@ ResultadoConversa ingerirConversa(matriz::model::Project& staging, const Convers
             for (const auto& id : membros) juntar(id);
         } catch (const std::exception& e) {
             juce::Logger::writeToLog("WhatsApp: não foi possível agrupar a conversa — " + juce::String(e.what()));
+        }
+    }
+    // Tudo que entra pelo fluxo PHONE DUMP recebe Original Source Medium = Phone Dump (é o que o filtro PHONE DUMP lê).
+    if (!res.conversaItemId.empty()) {
+        try {
+            std::vector<std::string> idsPhoneDump = membros;
+            idsPhoneDump.push_back(res.conversaItemId);
+            matriz::ui::gravarOrigemPhoneDump(db, idsPhoneDump);
+        } catch (const std::exception& e) {
+            juce::Logger::writeToLog("WhatsApp: não foi possível marcar o Original Source Medium como Phone Dump — " + juce::String(e.what()));
         }
     }
     if (!res.conversaItemId.empty()) colocarLogoComoMiniatura(staging, res.conversaItemId, tmp);

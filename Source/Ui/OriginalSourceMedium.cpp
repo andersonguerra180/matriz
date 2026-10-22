@@ -4,6 +4,8 @@
 // ==============================================================================
 
 #include "OriginalSourceMedium.h"
+#include "../Db/Database.h"
+#include "../Model/Project.h"
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 
@@ -28,7 +30,8 @@ static const std::vector<MediumCategoryGroup> kMediumVocab = {
             "Flash Drive / USB Drive",
             "External SSD / Portable SSD",
             "External Hard Drive (HDD)",
-            "Internal Storage / Smartphone"
+            "Internal Storage / Smartphone",
+            "Phone Dump"
         }
     },
     {
@@ -139,6 +142,7 @@ static const std::pair<const char*, const char*> kMediumTranslations[] = {
     {"External SSD / Portable SSD", "SSD Externo / Portátil"},
     {"External Hard Drive (HDD)", "Disco Rígido Externo (HDD)"},
     {"Internal Storage / Smartphone", "Armazenamento Interno / Celular"},
+    {kMediumPhoneDump, "Phone Dump"},
     // Audio Tape / Disc
     {"1/4\" Tape", "Fita 1/4\""},
     {"1/2\" Tape", "Fita 1/2\""},
@@ -300,6 +304,46 @@ static juce::String traduzirOpcaoSubcampo(const juce::String& op, bool isPt) {
 
 const std::vector<MediumCategoryGroup>& OriginalSourceMediumVocabulary::getMediumCategories() {
     return kMediumVocab;
+}
+
+bool OriginalSourceMediumVocabulary::isPhoneDump(const std::string& rawSourceMedium) {
+    if (rawSourceMedium.empty()) return false;
+    const auto medium = juce::String::fromUTF8(OriginalSourceMediumInfo::deserialize(rawSourceMedium).medium.c_str()).trim();
+    return medium.equalsIgnoreCase(kMediumPhoneDump);
+}
+
+bool OriginalSourceMediumVocabulary::itemIsPhoneDump(const std::string& rawSourceMedium, const std::string& containerOrigin,
+                                                     const std::string& collectionType) {
+    // Só duas fontes valem: o Original Source Medium = Phone Dump ou o registro explícito de que o item
+    // entrou pelo fluxo PHONE DUMP do Intake (container "gallery"/"whatsapp" ou conversa de WhatsApp).
+    // Caminho, tag e texto do medium NÃO entram.
+    return isPhoneDump(rawSourceMedium) || containerOrigin == "gallery" || containerOrigin == "whatsapp" ||
+           collectionType == "WhatsApp Chat";
+}
+
+void gravarOrigemPhoneDump(matriz::db::Database& registro, const std::vector<std::string>& itemIds) {
+    using matriz::db::Value;
+    const std::string agora = matriz::model::agoraIso8601();
+    auto leitura = registro.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND nivel = 'raiz' "
+                                    "AND nivel_indice = 0 AND campo_id = 'source_media'");
+    for (const auto& itemId : itemIds) {
+        if (itemId.empty()) continue;
+        leitura.reset();
+        leitura.bind(1, Value::of(itemId));
+        auto info = OriginalSourceMediumInfo::deserialize(leitura.step() ? leitura.columnText(0) : std::string());
+        if (info.medium == kMediumPhoneDump) continue;
+        info.medium = kMediumPhoneDump;
+        const std::string json = info.serialize();
+        // 'humano': uma releitura técnica do arquivo não volta o medium para Smartphone.
+        registro.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                     "VALUES (?, ?, 'raiz', 0, 'source_media', ?, 'humano', ?) "
+                     "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, "
+                     "fonte = 'humano', atualizado_em = excluded.atualizado_em",
+                     {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(json), Value::of(agora)});
+        try {
+            registro.run("UPDATE item SET source_media = ? WHERE id = ?", {Value::of(json), Value::of(itemId)});
+        } catch (...) {}
+    }
 }
 
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
