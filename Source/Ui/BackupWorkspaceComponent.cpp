@@ -1869,7 +1869,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial",
         // Image
         "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-        "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "Technical Photography",
+        "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "360 Photo", "Technical Photography",
         // Docs
         "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Personal Document", "Manual", "Report", "Reference", "Technical Documentation",
         "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",

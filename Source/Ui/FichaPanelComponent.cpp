@@ -369,6 +369,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
         {"Exhibition", juce::String::fromUTF8("Exposição")},
         {"Raw Photos", "Fotos RAW"},
+        {"360 Photo", "Foto 360"},
         {"Technical Photography", juce::String::fromUTF8("Fotografia Técnica")},
         // Item "CONTENT — imagens também podem ser documentos": uma imagem
         // (JPG/PNG/TIFF/etc.) pode ser um documento digitalizado — isso é
@@ -433,7 +434,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
                 "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "Technical Photography", "Document"};
+                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "360 Photo", "Technical Photography", "Document"};
     } else if (cat == MediaCategory::Docs) {
         keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Personal Document", "Manual", "Report", "Reference",
                 "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",

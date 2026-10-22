@@ -69,6 +69,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
         {"Exhibition", juce::String::fromUTF8("Exposição")},
         {"Raw Photos", "Fotos RAW"},
+        {"360 Photo", "Foto 360"},
         {"Technical Photography", juce::String::fromUTF8("Fotografia Técnica")},
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},

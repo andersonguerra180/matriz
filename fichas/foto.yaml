@@ -44,10 +44,6 @@ grupos:
       - id: evento
         rotulo: Evento
         tipo: opcao_livre
-      - id: conteudo_foto
-        rotulo: Conteúdo da foto
-        tipo: opcao
-        opcoes: [Foto convencional, 360 Photo, Panorama, Screenshot, Outro]
       - id: pessoas_identificadas
         rotulo: Pessoas identificadas
         tipo: lista_pessoas
