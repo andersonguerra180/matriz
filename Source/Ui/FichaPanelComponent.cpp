@@ -1084,6 +1084,10 @@ public:
                 if (geolocalizacao_.statusBadge) {
                     rightX -= 145;
                     geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 145, 20);
+                    if (geolocalizacao_.overrideGeo) {
+                        geolocalizacao_.statusBadge->setVisible(false);
+                        geolocalizacao_.overrideGeo->setBounds(rightX, y + padCardY, 145, 20);
+                    }
                     rightX -= 8;
                 }
                 int tituloX = x + padCardX;
@@ -1297,6 +1301,10 @@ public:
             if (geolocalizacao_.statusBadge) {
                 rightX -= 135;
                 geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 135, 20);
+                    if (geolocalizacao_.overrideGeo) {
+                        geolocalizacao_.statusBadge->setVisible(false);
+                        geolocalizacao_.overrideGeo->setBounds(rightX, y + padCardY, 135, 20);
+                    }
                 rightX -= 8;
             }
             geolocalizacao_.titulo->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
@@ -1864,10 +1872,26 @@ public:
                                                       txt(geolocalizacao_.editorState), txt(geolocalizacao_.editorCountry) });
         };
         addAndMakeVisible(*geolocalizacao_.btnOpen);
+        geolocalizacao_.protegida = geoOpt && geoOpt->latitude && geoOpt->longitude;
+        if (geolocalizacao_.protegida) {
+            geolocalizacao_.overrideGeo = std::make_unique<juce::ToggleButton>("OVERRIDE");
+            auto atualizarTrava = [this] {
+                const bool livre = geolocalizacao_.overrideGeo->getToggleState();
+                for (auto* editor : {geolocalizacao_.editorCoords.get(), geolocalizacao_.editorAddress.get(),
+                                    geolocalizacao_.editorCity.get(), geolocalizacao_.editorState.get(), geolocalizacao_.editorCountry.get()})
+                    if (editor) editor->setEnabled(livre);
+                geolocalizacao_.btnCarregarFavorito->setEnabled(livre);
+                geolocalizacao_.btnGet->setEnabled(livre);
+            };
+            geolocalizacao_.overrideGeo->onClick = atualizarTrava;
+            addAndMakeVisible(*geolocalizacao_.overrideGeo);
+            atualizarTrava();
+        }
     }
 
 
     void salvarGeolocalizacao(const std::string& itemId) {
+        if (geolocalizacao_.protegida && (!geolocalizacao_.overrideGeo || !geolocalizacao_.overrideGeo->getToggleState())) return;
         if (!geolocalizacao_.editorCoords) return;
         matriz::analytics::AssetGeolocation geo;
         geo.assetId = itemId;
@@ -3677,6 +3701,8 @@ private:
     } preservation_;
 
     struct SecaoGeolocalizacao {
+        bool protegida = false;
+        std::unique_ptr<juce::ToggleButton> overrideGeo;
         std::unique_ptr<juce::Label>       titulo;
         std::unique_ptr<juce::Label>       statusBadge;
         std::unique_ptr<juce::Label>       labelCoords;
@@ -4042,6 +4068,8 @@ public:
                 if (geoLote_.badge) {
                     rightXg -= 145;
                     geoLote_.badge->setBounds(rightXg, y + padCardY, 145, 20);
+                geoLote_.badge->setVisible(false);
+                if (geoLote_.overrideGeo) geoLote_.overrideGeo->setBounds(rightXg, y + padCardY, 145, 20);
                     rightXg -= 8;
                 }
                 geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
@@ -4197,6 +4225,8 @@ public:
             if (geoLote_.badge) {
                 rightXg -= 135;
                 geoLote_.badge->setBounds(rightXg, y + padCardY, 135, 20);
+                geoLote_.badge->setVisible(false);
+                if (geoLote_.overrideGeo) geoLote_.overrideGeo->setBounds(rightXg, y + padCardY, 135, 20);
                 rightXg -= 8;
             }
             geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
@@ -4473,6 +4503,7 @@ private:
     };
 
     struct SecaoGeoLote {
+        std::unique_ptr<juce::ToggleButton> overrideGeo;
         std::unique_ptr<juce::Label> titulo;
         std::unique_ptr<juce::Label> badge;
         std::unique_ptr<juce::Label> labelCoords;
@@ -5026,6 +5057,9 @@ private:
             geoLote_.badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             geoLote_.badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*geoLote_.badge);
+            geoLote_.overrideGeo = std::make_unique<juce::ToggleButton>("OVERRIDE");
+            geoLote_.overrideGeo->setTooltip("Allow overwriting existing GPS coordinates in this selection");
+            addAndMakeVisible(*geoLote_.overrideGeo);
 
             // Item 2 (correção METADATA 2026-09-28): mesmo padrão de "valor
             // comum" dos campos Dublin Core (addEditableTextLote) — um valor
@@ -5658,6 +5692,7 @@ private:
                 auto existenteOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(dbGeoLote, id);
                 matriz::analytics::AssetGeolocation geo = existenteOpt.value_or(matriz::analytics::AssetGeolocation{});
                 geo.assetId = id;
+                if (geo.latitude && geo.longitude && (!geoLote_.overrideGeo || !geoLote_.overrideGeo->getToggleState())) continue;
                 // Nunca reescreve por cima de uma fonte mais autoritativa
                 // (EXIF embutido, geocodificação) — só recalcula a fonte
                 // quando ela já era "do usuário" ou inexistente.
