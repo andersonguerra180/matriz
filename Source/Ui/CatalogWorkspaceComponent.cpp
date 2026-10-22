@@ -347,18 +347,25 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         });
     };
     fichaPanel_->aoAplicarEmLote = [this] {
-        atualizarContagens();
+        if (loteMetadadosProfundidade_ > 0) contagensAdiadasDuranteLote_ = true;
+        else atualizarContagens();
     };
     fichaPanel_->aoAplicarGeoEmLote = [this] {
-        atualizarContagens();
+        if (loteMetadadosProfundidade_ > 0) contagensAdiadasDuranteLote_ = true;
+        else atualizarContagens();
     };
     fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
         if (mosaico_) {
             mosaico_->atualizarItemEmMemoria(itemId);
-            atualizarListasDoContentEmMemoria();
-            // O campo recém-gravado já está no snapshot em memória: refaz o
-            // funil agora, sem esperar a contagem assíncrona nem reler o catálogo.
-            aplicarFiltrosAdicionais();
+            if (loteMetadadosProfundidade_ > 0) {
+                listasAdiadasDuranteLote_ = true;
+                filtrosAdiadosDuranteLote_ = true;
+            } else {
+                atualizarListasDoContentEmMemoria();
+                // O campo recém-gravado já está no snapshot em memória: refaz o
+                // funil agora, sem esperar a contagem assíncrona nem reler o catálogo.
+                aplicarFiltrosAdicionais();
+            }
         }
         if (aoItemAlterado) aoItemAlterado(itemId);
     };
@@ -368,8 +375,30 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     // atalho). Mesmo padrão do "Select All" (btnSelecionarTodos_ abaixo).
     // Adiado (callAsync): o onChange de um dropdown roda com o popup ainda aberto;
     // ao fechar, o foco volta ao ComboBox e desfazia um grab síncrono.
-    fichaPanel_->aoIniciarLoteAtualizacao = [this] { if (mosaico_) mosaico_->iniciarLoteAtualizacao(); };
-    fichaPanel_->aoFinalizarLoteAtualizacao = [this] { if (mosaico_) mosaico_->finalizarLoteAtualizacao(); };
+    fichaPanel_->aoIniciarLoteAtualizacao = [this] {
+        ++loteMetadadosProfundidade_;
+        if (mosaico_) mosaico_->iniciarLoteAtualizacao();
+    };
+    fichaPanel_->aoFinalizarLoteAtualizacao = [this] {
+        if (loteMetadadosProfundidade_ > 0) --loteMetadadosProfundidade_;
+        if (loteMetadadosProfundidade_ == 0) {
+            if (listasAdiadasDuranteLote_) {
+                listasAdiadasDuranteLote_ = false;
+                atualizarListasDoContentEmMemoria();
+            }
+            if (filtrosAdiadosDuranteLote_) {
+                filtrosAdiadosDuranteLote_ = false;
+                aplicarFiltrosAdicionais();
+            }
+        }
+        // aplicarFiltrosAdicionais atualiza o predicado enquanto o lote do
+        // mosaico ainda está aberto; finalizar faz uma única ordenação.
+        if (mosaico_) mosaico_->finalizarLoteAtualizacao();
+        if (loteMetadadosProfundidade_ == 0 && contagensAdiadasDuranteLote_) {
+            contagensAdiadasDuranteLote_ = false;
+            atualizarContagens();
+        }
+    };
     fichaPanel_->aoPedirFocoGrade = [this] {
         juce::Component::SafePointer<MosaicoComponent> safeMosaico(mosaico_.get());
         juce::MessageManager::callAsync([safeMosaico] {

@@ -811,7 +811,8 @@ void MosaicoComponent::definirIncluirOcultosNaSelecao(bool incluir) {
 
 void MosaicoComponent::definirFiltroItens(std::optional<std::set<std::string>> itemIds) {
     filtroItens_ = std::move(itemIds);
-    aplicarFiltrosEOrdenacao();
+    if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
+    else aplicarFiltrosEOrdenacao();
 }
 
 void MosaicoComponent::definirSubpastas(std::vector<SubpastaInfo> subpastas) {

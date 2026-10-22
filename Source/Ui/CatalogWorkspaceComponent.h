@@ -310,6 +310,10 @@ private:
     bool contagensAguardandoSnapshot_ = false;
     bool filtrosAguardandoSnapshot_ = false;
     bool reaplicandoFiltrosAposSnapshot_ = false;
+    int loteMetadadosProfundidade_ = 0;
+    bool listasAdiadasDuranteLote_ = false;
+    bool filtrosAdiadosDuranteLote_ = false;
+    bool contagensAdiadasDuranteLote_ = false;
     // Arquivos vindos de "Show content in grid" (Folder Map/árvores): fica
     // guardado aqui pra sobreviver a toda reaplicação de filtros (ex.: salvar
     // um campo da ficha chama aplicarFiltrosAdicionais()). Cai com HOME,
