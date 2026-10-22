@@ -696,7 +696,9 @@ private:
             // Outer container box
             // Risco visível: par "parecido" (pHash) ganha borda e fundo âmbar; idêntico (SHA-256) borda verde.
             const bool ehPrevisto = grupo_.criterio == "PROBABLE" || grupo_.criterio == "SIMILAR";
-            const juce::Colour corAmbar(0xfff59e0b), corSeguro(0xff22c55e);
+            const juce::Colour corAmbar = grupo_.criterio == "PROBABLE" ? juce::Colour(0xffffa000) : juce::Colour(0xff32bced);
+            const juce::Colour corSeguro(0xff1ec45b);
+            const auto corCriterio = grupo_.criterio == "IDENTICAL" ? corSeguro : corAmbar;
             g.setColour(tk.painel);
             g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
             if (ehPrevisto) {
@@ -735,7 +737,7 @@ private:
                 // 3. Top Banner strip (Storage card style header)
                 g.saveState();
                 g.reduceClipRegion(cardRect.toNearestInt().withHeight(24));
-                g.setColour(isDup ? tk.alerta.withAlpha(0.18f) : tk.acento.withAlpha(0.18f));
+                g.setColour(corCriterio);
                 g.fillRoundedRectangle(static_cast<float>(x), static_cast<float>(y), static_cast<float>(subWidth), 24.0f, 6.0f);
                 g.fillRect(static_cast<float>(x), static_cast<float>(y) + 12.0f, static_cast<float>(subWidth), 12.0f);
                 g.restoreState();
@@ -745,7 +747,7 @@ private:
                 g.drawHorizontalLine(y + 24, static_cast<float>(x), static_cast<float>(x + subWidth));
 
                 // Badge / Header text
-                g.setColour(isDup ? tk.alerta : tk.acento);
+                g.setColour(juce::Colours::black);
                 g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 juce::String headerTag = isDup ? matriz::i18n::t("duplicatas.possible_duplicate") : matriz::i18n::t("duplicatas.existing_original");
                 if (!m.collectionNome.empty()) {
@@ -753,7 +755,7 @@ private:
                 }
                 if (grupo_.criterio == "IDENTICAL") headerTag << " \u00B7 IDENTICAL";
                 else if (grupo_.criterio == "PROBABLE") headerTag << " \u00B7 PROBABLE \u00B7 REVIEW";
-                else if (grupo_.criterio == "SIMILAR") headerTag << " \u00B7 SIMILAR SHOT \u00B7 REVIEW";
+                else headerTag << " \u00B7 POSSIBLE \u00B7 REVIEW";
                 // Versão de resolução menor (ex.: foto recuperada de HD com problema): marca qual lado tem menos qualidade.
                 int larguraSelo = 0;
                 if (m.largura > 0 && m.altura > 0 && other.largura > 0 && other.altura > 0) {
