@@ -406,6 +406,16 @@ private:
 
         void definirComoCapa(const std::string& novoId) {
             if (nestId_.empty()) return;
+            const auto info = projeto_.nestDoItem(novoId);
+            if (info && ehOrigemProject(juce::String(info->origem))) {
+                if (const auto arq = projeto_.arquivoPrincipal(novoId)) {
+                    const juce::File imagem(arq->caminhoAbsoluto);
+                    if (projeto_.definirCapaDoContainer(nestId_, imagem)) {
+                        esquecerImagemDaCapa(projeto_.projeto().pasta().getChildFile(".miniaturas/capa_container_" + juce::String(nestId_) + ".jpg").getFullPathName());
+                        EventBus::obterInstancia().dispararItemAlterado({}, "nest");
+                    }
+                }
+            }
             projeto_.definirCapaDoNest(nestId_, novoId);
             if (novoId != itemId_) {
                 carregarAsset(novoId);
@@ -780,7 +790,7 @@ private:
             }
 
             if (capaProjeto_ && capaProjeto_->isVisible() && area.getHeight() > 420) {
-                capaProjeto_->setBounds(area.removeFromTop(juce::jmin(330, area.getHeight() * 2 / 5)).reduced(12, 10));
+                capaProjeto_->setBounds(area.removeFromTop(juce::jmin(190, area.getHeight() / 4)).reduced(12, 10));
             }
             if (preview_) preview_->setBounds(area);
             if (escuta_) escuta_->setBounds(area);

@@ -46,6 +46,13 @@ void CapaProjetoComponent::recarregar() {
                 const auto arquivo = projeto_.projeto().pasta().getChildFile(juce::String::fromUTF8(info->capaImagem.c_str()));
                 if (arquivo.existsAsFile()) caminhoCapa_ = arquivo.getFullPathName();
             }
+            if (caminhoCapa_.isEmpty()) {
+                if (const auto principal = projeto_.arquivoPrincipal(info->capaId)) {
+                    const juce::File imagem(principal->caminhoAbsoluto);
+                    if (imagem.existsAsFile() && imagem.hasFileExtension("jpg;jpeg;png;tif;tiff;bmp;gif;webp"))
+                        caminhoCapa_ = imagem.getFullPathName();
+                }
+            }
             // Artista/banda: a resposta do questionário (campo "artist"); sem ela, o SUBJECT do arquivo-capa.
             std::string folha;
             std::map<std::string, std::string> respostas;
@@ -118,12 +125,12 @@ void CapaProjetoComponent::resized() {
         areaTexto_ = areaSoltar_ = {};
         return;
     }
-    const int lado = juce::jmin(area.getHeight(), juce::jmax(120, area.getWidth() / 2 - 16));
+    const int lado = juce::jmin(area.getHeight(), juce::jmax(96, area.getWidth() / 3 - 16));
     areaCapa_ = area.removeFromLeft(lado).withHeight(lado);
     area.removeFromLeft(24);
     areaTexto_ = area;
     auto texto = area;
-    texto.removeFromTop(112);
+    texto.removeFromTop(juce::jmin(90, getHeight() / 2));
     auto botoes = texto.removeFromTop(30);
     btnTrocar_.setBounds(botoes.removeFromLeft(juce::jmin(150, botoes.getWidth() / 2)));
     botoes.removeFromLeft(10);
