@@ -1830,7 +1830,12 @@ public:
                                                       txt(geolocalizacao_.editorState), txt(geolocalizacao_.editorCountry) });
         };
         addAndMakeVisible(*geolocalizacao_.btnOpen);
-        geolocalizacao_.protegida = geoOpt && geoOpt->latitude && geoOpt->longitude;
+        // Só o GPS que veio incorporado no arquivo é imutável por padrão.
+        // Dados manuais continuam editáveis; o EXIF exige uma decisão
+        // explícita no OVERRIDE antes de qualquer campo poder ser alterado.
+        geolocalizacao_.protegida = geoOpt &&
+                                    geoOpt->source == matriz::analytics::GeoSource::EmbeddedMetadata &&
+                                    geoOpt->hasValidCoordinates();
         if (geolocalizacao_.protegida) {
             geolocalizacao_.overrideGeo = std::make_unique<juce::ToggleButton>("OVERRIDE");
             auto atualizarTrava = [this] {
