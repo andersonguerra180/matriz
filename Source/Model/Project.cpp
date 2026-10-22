@@ -1212,6 +1212,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // 5. Garantir que os índices de performance para acervos grandes existam
     try {
         registro.exec("CREATE INDEX IF NOT EXISTS idx_item_quarentena_criado ON item(em_quarentena, criado_em)");
+        registro.exec(
+            "CREATE INDEX IF NOT EXISTS idx_item_catalogo_codigo ON item(codigo_acervo) "
+            "WHERE COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata'");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_item_master ON arquivo(item_id, eh_master)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_estado_sincronizacao ON arquivo(estado_sincronizacao)");
         // FKs ON DELETE CASCADE sem índice na coluna filha: cada DELETE FROM item
