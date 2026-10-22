@@ -1155,11 +1155,11 @@ public:
                     }
                 }
                 if (geolocalizacao_.statusBadge) {
-                    rightX -= 145;
-                    geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 145, 20);
+                    rightX -= 116;
+                    geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 116, 20);
                     if (geolocalizacao_.overrideGeo) {
                         geolocalizacao_.statusBadge->setVisible(false);
-                        geolocalizacao_.overrideGeo->setBounds(rightX, y + padCardY, 145, 20);
+                        geolocalizacao_.overrideGeo->setBounds(rightX, y + padCardY, 116, 20);
                     }
                     rightX -= 8;
                 }
@@ -1635,25 +1635,30 @@ public:
 
         geolocalizacao_.titulo = std::make_unique<juce::Label>();
         geolocalizacao_.titulo->setText(isPt ? juce::String::fromUTF8("GEOLOCALIZAÇÃO") : juce::String("GEO LOCATION"), juce::dontSendNotification);
-        geolocalizacao_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        geolocalizacao_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         geolocalizacao_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.titulo);
 
+        // Origem da geolocalização: pílula curta no cabeçalho do card (o texto completo vai no tooltip).
         geolocalizacao_.statusBadge = std::make_unique<juce::Label>();
+        const juce::String bolinha = juce::String::fromUTF8("\xe2\x97\x8f ");
         if (!geoOpt || geoOpt->source == matriz::analytics::GeoSource::None) {
-            geolocalizacao_.statusBadge->setText(isPt ? juce::String::fromUTF8("[ SEM DADOS GPS - PREENCHIMENTO MANUAL ]") : juce::String("[ NO GPS DATA - MANUAL FILL ]"), juce::dontSendNotification);
-            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            geolocalizacao_.statusBadge->setText(bolinha + (isPt ? juce::String::fromUTF8("Sem GPS") : juce::String("No GPS")), juce::dontSendNotification);
+            geolocalizacao_.statusBadge->setTooltip(isPt ? juce::String::fromUTF8("Sem dados GPS: preenchimento manual") : juce::String("No GPS data: manual fill"));
+            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, tk.textoSecundario);
         } else if (geoOpt->source == matriz::analytics::GeoSource::EmbeddedMetadata) {
-            geolocalizacao_.statusBadge->setText(isPt ? juce::String::fromUTF8("[ GPS EXIF EXTRAÍDO AUTOMATICAMENTE ]") : juce::String("[ EXIF GPS AUTO-EXTRACTED ]"), juce::dontSendNotification);
-            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::lightgreen);
+            geolocalizacao_.statusBadge->setText(bolinha + (isPt ? juce::String("GPS EXIF") : juce::String("EXIF GPS")), juce::dontSendNotification);
+            geolocalizacao_.statusBadge->setTooltip(isPt ? juce::String::fromUTF8("GPS do EXIF extraído automaticamente") : juce::String("EXIF GPS auto-extracted"));
+            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colour(0xff2e8b57));
         } else {
-            geolocalizacao_.statusBadge->setText(isPt ? juce::String::fromUTF8("[ GEOLOCALIZAÇÃO DEFINIDA PELO USUÁRIO ]") : juce::String("[ USER-DEFINED GEOLOCATION ]"), juce::dontSendNotification);
-            // Ajuste de layout METADATA: geolocalização definida pelo
-            // usuário em texto preto.
-            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::black);
+            geolocalizacao_.statusBadge->setText(bolinha + (isPt ? juce::String::fromUTF8("Definida (usuário)") : juce::String("User-defined")), juce::dontSendNotification);
+            geolocalizacao_.statusBadge->setTooltip(isPt ? juce::String::fromUTF8("Geolocalização definida pelo usuário") : juce::String("User-defined geolocation"));
+            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colour(0xff3a7ac9));
         }
+        geolocalizacao_.statusBadge->setColour(juce::Label::backgroundColourId, tk.painelAlt.withAlpha(0.5f));
+        geolocalizacao_.statusBadge->setColour(juce::Label::outlineColourId, tk.borda);
         geolocalizacao_.statusBadge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-        geolocalizacao_.statusBadge->setJustificationType(juce::Justification::centredRight);
+        geolocalizacao_.statusBadge->setJustificationType(juce::Justification::centred);
         addAndMakeVisible(*geolocalizacao_.statusBadge);
 
         // Coordinates (Lat, Lng)
