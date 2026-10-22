@@ -361,7 +361,12 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
             gravarCampoNativo("camera_model", cam);
 
             matriz::ui::OriginalSourceMediumInfo osm;
-            osm.medium = "Native Digital";
+            const auto camera = juce::String::fromUTF8(cam.c_str()).toLowerCase();
+            const bool smartphone = camera.contains("iphone") || camera.contains("pixel") ||
+                camera.contains("galaxy") || camera.contains("sm-") || camera.contains("huawei") ||
+                camera.contains("xiaomi") || camera.contains("redmi") || camera.contains("oneplus") ||
+                camera.contains("moto ") || camera.contains("motorola") || camera.contains("oppo") || camera.contains("realme");
+            osm.medium = smartphone ? "Internal Storage / Smartphone" : "Native Digital";
             osm.recordingDevice = cam;
             gravarCampoNativo("source_media", osm.serialize());
         }
