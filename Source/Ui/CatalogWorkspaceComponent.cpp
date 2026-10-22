@@ -1279,11 +1279,6 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
                                        ? std::optional<juce::String>(matriz::i18n::t("catwork.sem_leva_recente"))
                                        : std::nullopt);
 
-    std::set<std::string> itensExtraidos;
-    try {
-        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
-    } catch (...) {}
-
     // PROJECT: container nascido de um questionário (DDP, vinil, fita, produção, YouTube).
     auto ehProjeto = [](const ItemResumo& it) { return ehOrigemProject(juce::String(it.nestOrigem)); };
 
