@@ -78,6 +78,9 @@ public:
     void lookAndFeelChanged() override;
 
 private:
+    void abrirPresets();
+    juce::TextButton presets_{"Presets ▾"};
+    std::vector<std::string> selecaoPreset_;
     ProjetoAberto& projeto_;
     std::string itemIdAtual_;
     bool modoLote_ = false;

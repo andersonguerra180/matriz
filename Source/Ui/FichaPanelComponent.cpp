@@ -5893,6 +5893,7 @@ void FichaPanelComponent::setEditavel(bool editavel) {
 }
 
 void FichaPanelComponent::mostrarItem(const std::string& itemId) {
+    selecaoPreset_ = itemId.empty() ? std::vector<std::string>{} : std::vector<std::string>{itemId};
     // Trocar de item é o ponto de perda mais comum (Bug 1): sem isto, texto
     // digitado no card de lote (se estava em modo lote) é descartado quando
     // conteudoLote_ é escondido, e construirParaItem() só flusha o próprio
@@ -5913,6 +5914,7 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
     }
 
     salvarPendencias();
+    selecaoPreset_ = itemIds;
     itemIdAtual_.clear();
     modoLote_ = true;
     if (!conteudoLote_) {
@@ -5949,11 +5951,71 @@ void FichaPanelComponent::paint(juce::Graphics& g) {
 
 void FichaPanelComponent::resized() {
     auto area = getLocalBounds();
+    if (presets_.getParentComponent() == nullptr) {
+        addAndMakeVisible(presets_);
+        presets_.onClick = [this] { abrirPresets(); };
+    }
+    presets_.setEnabled(editavel_ && !selecaoPreset_.empty());
+    presets_.setBounds(area.removeFromTop(28).removeFromRight(170).reduced(4, 2));
     viewport_->setBounds(area);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     int altura = viewport_->getHeight();
     if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura, altura);
     else conteudo_->relayout(largura, altura);
+}
+
+void FichaPanelComponent::abrirPresets() {
+    if (selecaoPreset_.empty() || projeto_.somenteLeitura()) return;
+    salvarPendencias();
+    const auto arquivo = projeto_.projeto().pasta().getChildFile("metadata-presets.json");
+    auto dados = juce::JSON::parse(arquivo.loadFileAsString());
+    if (!dados.isObject()) dados = juce::var(new juce::DynamicObject());
+    std::vector<juce::String> nomes;
+    juce::PopupMenu menu;
+    menu.addItem(1, "Save metadata as preset...", selecaoPreset_.size() == 1);
+    menu.addSeparator();
+    for (const auto& prop : dados.getDynamicObject()->getProperties()) {
+        nomes.push_back(prop.name.toString());
+        menu.addItem(static_cast<int>(nomes.size()) + 1, prop.name.toString());
+    }
+    juce::Component::SafePointer<FichaPanelComponent> seguro(this);
+    const auto ids = selecaoPreset_;
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&presets_), [seguro, arquivo, dados, nomes, ids](int opcao) mutable {
+        if (!seguro || opcao <= 0) return;
+        if (opcao == 1) {
+            auto* dialogo = new juce::AlertWindow("Metadata preset", "Preset name", juce::MessageBoxIconType::NoIcon);
+            dialogo->addTextEditor("nome", "");
+            dialogo->addButton("Save", 1);
+            dialogo->addButton("Cancel", 0);
+            juce::Component::SafePointer<juce::AlertWindow> dialogoSeguro(dialogo);
+            dialogo->enterModalState(true, juce::ModalCallbackFunction::create([seguro, dialogoSeguro, arquivo, dados, ids](int resultado) mutable {
+                if (!seguro || !dialogoSeguro || resultado != 1) return;
+                const auto nome = dialogoSeguro->getTextEditorContents("nome").trim();
+                if (nome.isEmpty()) return;
+                auto* valores = new juce::DynamicObject();
+                // Apenas campos editoriais reutilizáveis; identidade e GPS ficam fora do preset.
+                for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "collection_type", "source_media", "ai_generated", "lista"}) {
+                    const auto valor = seguro->projeto_.lerMetadado(ids.front(), campo).value_or("");
+                    if (!valor.empty()) valores->setProperty(juce::Identifier(campo), juce::String::fromUTF8(valor.c_str()));
+                }
+                dados.getDynamicObject()->setProperty(juce::Identifier(nome), juce::var(valores));
+                if (!arquivo.replaceWithText(juce::JSON::toString(dados)))
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Metadata preset", "Could not save preset.");
+            }), true);
+            return;
+        }
+        const int indice = opcao - 2;
+        if (indice < 0 || indice >= static_cast<int>(nomes.size())) return;
+        auto preset = dados.getProperty(juce::Identifier(nomes[static_cast<size_t>(indice)]), {});
+        if (auto* objeto = preset.getDynamicObject()) {
+            std::vector<std::pair<std::string, std::string>> campos;
+            for (const auto* campo : {"dc_creator", "dc_subject", "dc_publisher", "dc_contributor", "dc_description", "dc_rights", "dc_language", "collection_type", "source_media", "ai_generated", "lista"})
+                if (objeto->hasProperty(juce::Identifier(campo))) campos.emplace_back(campo, objeto->getProperty(juce::Identifier(campo)).toString().toStdString());
+            seguro->projeto_.salvarMetadadoEmLote(ids, campos);
+            seguro->mostrarSelecao(ids);
+            if (seguro->aoMudar) seguro->aoMudar();
+        }
+    });
 }
 
 void FichaPanelComponent::lookAndFeelChanged() {
