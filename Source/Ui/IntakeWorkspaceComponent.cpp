@@ -2625,10 +2625,6 @@ void IntakeWorkspaceComponent::atualizarComboAno() {
 
 void IntakeWorkspaceComponent::atualizarFiltragem() {
     indicesFiltrados_.clear();
-    std::set<std::string> itensExtraidos;
-    try {
-        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
-    } catch (...) {}
 
     auto ehDump = [&](const ItemIntake& it) -> bool {
         // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
@@ -2695,11 +2691,6 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     contagemDoc_ = 0;
     contagemOther_ = 0;
     contagemPhoneDump_ = 0;
-
-    std::set<std::string> itensExtraidos;
-    try {
-        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
-    } catch (...) {}
 
     auto ehDump = [&](const ItemIntake& it) -> bool {
         // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
