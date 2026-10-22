@@ -2187,6 +2187,64 @@ int rodarLoteSelfTest() {
                 checar(c == kItensPorLado, "Catalog CONTENT written to every selected item" + n(c));
             }
 
+            // AI GENERATED em lote: ligar grava o campo + as 4 tags em todos; desligar tira tudo.
+            {
+                auto* cbIa = dynamic_cast<juce::ComboBox*>(ficha->editorDoCampoLoteParaTeste("ai_generated"));
+                checar(cbIa != nullptr && cbIa->getNumItems() == 2, "AI GENERATED dropdown exists in batch mode");
+                auto comTagsIa = [&](bool esperado) {
+                    int ok = 0;
+                    for (const auto& id : sel) {
+                        const auto tags = pa->lerTags(id);
+                        auto tem = [&](const char* t) { return std::find(tags.begin(), tags.end(), std::string(t)) != tags.end(); };
+                        const bool todas = tem("IA") && tem("AI") && tem("CONTEUDO IA") && tem("AI CONTENT");
+                        const bool campo = !pa->lerMetadado(id, "ai_generated").value_or("").empty();
+                        if (todas == esperado && campo == esperado) ++ok;
+                    }
+                    return ok;
+                };
+                if (cbIa && cbIa->getNumItems() == 2) {
+                    cbIa->setSelectedItemIndex(0, juce::sendNotificationSync);  // YES
+                    bombear(300);
+                    checar(comTagsIa(true) == kItensPorLado, "AI GENERATED = YES writes the field and the 4 tags on every selected item" + n(comTagsIa(true)));
+                    cbIa->setSelectedItemIndex(1, juce::sendNotificationSync);  // NO
+                    bombear(300);
+                    checar(comTagsIa(false) == kItensPorLado, "AI GENERATED = NO clears the field and the 4 tags on every selected item" + n(comTagsIa(false)));
+                    cbIa->setSelectedItemIndex(0, juce::sendNotificationSync);  // YES de novo
+                    bombear(300);
+                    checar(comTagsIa(true) == kItensPorLado, "AI GENERATED = YES again turns it back on" + n(comTagsIa(true)));
+                    cbIa->setSelectedItemIndex(1, juce::sendNotificationSync);
+                    bombear(300);
+
+                    // Ficha INDIVIDUAL: o toggle reflete o estado, liga e desliga campo + tags, e relido continua certo.
+                    const std::vector<std::string> selVec(sel.begin(), sel.end());
+                    const std::string um = selVec.front();
+                    ficha->mostrarItem(um);
+                    bombear(100);
+                    auto* tg = dynamic_cast<juce::ToggleButton*>(ficha->editorDoCampoParaTeste("raiz", 0, "ai_generated"));
+                    checar(tg != nullptr && !tg->getToggleState(), "single: AI generated toggle starts off for an item without it");
+                    if (tg) {
+                        tg->triggerClick();
+                        bombear(200);
+                        const auto tags = pa->lerTags(um);
+                        auto tem = [&](const char* t) { return std::find(tags.begin(), tags.end(), std::string(t)) != tags.end(); };
+                        checar(tem("IA") && tem("AI") && tem("CONTEUDO IA") && tem("AI CONTENT") && !pa->lerMetadado(um, "ai_generated").value_or("").empty(),
+                               "single: turning AI generated on writes the field and the 4 tags");
+                        ficha->mostrarItem(um);
+                        bombear(100);
+                        auto* tg2 = dynamic_cast<juce::ToggleButton*>(ficha->editorDoCampoParaTeste("raiz", 0, "ai_generated"));
+                        checar(tg2 != nullptr && tg2->getToggleState(), "single: the toggle shows on when the item is reopened");
+                        if (tg2) {
+                            tg2->triggerClick();
+                            bombear(200);
+                            checar(pa->lerTags(um).empty() && pa->lerMetadado(um, "ai_generated").value_or("").empty(),
+                                   "single: turning AI generated off clears the field and the 4 tags");
+                        }
+                    }
+                    ficha->mostrarSelecao(selVec);
+                    bombear(100);
+                }
+            }
+
             auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(ficha->editorDoCampoLoteParaTeste("source_media"));
             checar(osm != nullptr, "ORIGINAL SOURCE MEDIUM editor exists in batch mode");
             std::string smGravado;

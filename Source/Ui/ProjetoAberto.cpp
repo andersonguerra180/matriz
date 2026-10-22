@@ -1459,6 +1459,7 @@ std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId,
     if (!projeto_) return std::nullopt;
     static const std::set<std::string> kColunasPermitidas = {
         "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo", "lista",
+        "ai_generated",  // sem isto a ficha nunca via o campo (sempre nullopt) e o seletor AI generated aparecia desmarcado
         "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
         "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
         "dc_language", "dc_relation", "dc_coverage", "dc_rights",
