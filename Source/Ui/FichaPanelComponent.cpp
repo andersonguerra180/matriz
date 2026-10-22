@@ -4450,6 +4450,9 @@ private:
         std::unique_ptr<juce::TextButton> botaoGet;               // GET: local atual (pelo IP)
         std::unique_ptr<juce::TextButton> botaoOpen;              // OPEN: abre no Google Maps
         bool tocado = false;
+        // Todos os selecionados chegaram com coordenadas GPS embutidas: o card inteiro fica
+        // bloqueado (só leitura) até o OVERRIDE ser ligado.
+        bool todosProtegidos = false;
         // Valor comum (ou vazio se os selecionados divergem) capturado ao
         // montar o card — item 2 (correção METADATA 2026-09-28): só um
         // subcampo cujo texto mudou em relação a isto é gravado; um "mixed"
@@ -5013,9 +5016,12 @@ private:
             // com 1000+ itens isso sozinho já levava quase 3 s pra montar o
             // card.
             auto geoPorId = matriz::analytics::AssetGeolocationRepository::obterPorAssetIds(projeto_.projeto().registro(), itemIds_);
+            size_t comGpsEmbutido = 0;
             for (const auto& id : itemIds_) {
                 auto it = geoPorId.find(id);
                 const matriz::analytics::AssetGeolocation* geoPtr = it != geoPorId.end() ? &it->second : nullptr;
+                if (geoPtr && geoPtr->source == matriz::analytics::GeoSource::EmbeddedMetadata && geoPtr->hasValidCoordinates())
+                    ++comGpsEmbutido;
                 std::string c = geoPtr ? formatarCoords(*geoPtr) : std::string();
                 std::string a = (geoPtr && geoPtr->formattedAddress) ? *geoPtr->formattedAddress : std::string();
                 std::string ci = (geoPtr && geoPtr->city) ? *geoPtr->city : std::string();
@@ -5195,6 +5201,23 @@ private:
                                                           txt(geoLote_.editorState), txt(geoLote_.editorCountry) });
             };
             addAndMakeVisible(*geoLote_.botaoOpen);
+
+            // GPS embutido em TODOS os selecionados: o card inteiro fica só leitura (os valores continuam
+            // visíveis) até o OVERRIDE ser ligado. Com seleção mista, os itens com GPS embutido são
+            // pulados em aplicarGeoAgora() até o OVERRIDE, e os demais seguem editáveis.
+            geoLote_.todosProtegidos = !itemIds_.empty() && comGpsEmbutido == itemIds_.size();
+            geoLote_.overrideGeo->setTooltip(isPt ? "Permitir sobrescrever as coordenadas GPS embutidas nos arquivos desta seleção"
+                                                  : "Allow overwriting the GPS coordinates embedded in the files of this selection");
+            auto atualizarTravaGeoLote = [this] {
+                const bool livre = !geoLote_.todosProtegidos || geoLote_.overrideGeo->getToggleState();
+                for (auto* editor : {geoLote_.editorCoords.get(), geoLote_.editorAddress.get(), geoLote_.editorCity.get(),
+                                     geoLote_.editorState.get(), geoLote_.editorCountry.get()})
+                    if (editor) editor->setEnabled(livre);  // desabilitado = valores visíveis, sem edição
+                geoLote_.botaoFavoritos->setEnabled(livre);
+                geoLote_.botaoGet->setEnabled(livre);
+            };
+            geoLote_.overrideGeo->onClick = atualizarTravaGeoLote;
+            atualizarTravaGeoLote();
         };
 
         auto addDublinCoreLote = [&addEditableTextLote, &addDropdownLote, isPt]() {
@@ -5557,6 +5580,7 @@ private:
         const bool stateMudou   = geoLote_.editorState   && geoLote_.editorState->getText()   != geoLote_.seedState;
         const bool countryMudou = geoLote_.editorCountry && geoLote_.editorCountry->getText() != geoLote_.seedCountry;
         if (!coordsMudou && !addrMudou && !cityMudou && !stateMudou && !countryMudou) return;
+        if (geoLote_.todosProtegidos && (!geoLote_.overrideGeo || !geoLote_.overrideGeo->getToggleState())) return;
 
         std::optional<double> novaLat, novaLng;
         if (coordsMudou) {
@@ -5621,7 +5645,10 @@ private:
                 auto existenteOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(dbGeoLote, id);
                 matriz::analytics::AssetGeolocation geo = existenteOpt.value_or(matriz::analytics::AssetGeolocation{});
                 geo.assetId = id;
-                if (geo.latitude && geo.longitude && (!geoLote_.overrideGeo || !geoLote_.overrideGeo->getToggleState())) {
+                // Só o GPS que veio embutido no arquivo é protegido; coordenadas digitadas pelo usuário
+                // continuam editáveis. OVERRIDE libera.
+                const bool gpsEmbutido = geo.source == matriz::analytics::GeoSource::EmbeddedMetadata && geo.hasValidCoordinates();
+                if (gpsEmbutido && (!geoLote_.overrideGeo || !geoLote_.overrideGeo->getToggleState())) {
                     ++concluidos;
                     if (ehLote) {
                         ProgressoGlobal::obterInstancia().atualizarProgresso(
@@ -5632,7 +5659,8 @@ private:
                 // Nunca reescreve por cima de uma fonte mais autoritativa
                 // (EXIF embutido, geocodificação) — só recalcula a fonte
                 // quando ela já era "do usuário" ou inexistente.
-                bool sourceEhDeUsuario = geo.source == matriz::analytics::GeoSource::None ||
+                // Coordenadas embutidas sobrescritas com OVERRIDE passam a ser dado do usuário.
+                bool sourceEhDeUsuario = (gpsEmbutido && coordsMudou) || geo.source == matriz::analytics::GeoSource::None ||
                     geo.source == matriz::analytics::GeoSource::UserCoordinates ||
                     geo.source == matriz::analytics::GeoSource::UserAddress ||
                     geo.source == matriz::analytics::GeoSource::UserCity ||
