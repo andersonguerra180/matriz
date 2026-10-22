@@ -17,7 +17,7 @@ namespace matriz::ui {
 
 namespace {
 constexpr int kLarguraFiltros = 290;
-constexpr int kLarguraFicha = 340;
+constexpr int kLarguraFicha = 330;
 constexpr int kAlturaCabecalho = 46;
 constexpr int kMenuExtrairDaPasta = 9001;
 constexpr int kMenuMoverParaPasta = 9002;
@@ -38,7 +38,7 @@ const ProjetoAberto::NoArvore* acharNo(const ProjetoAberto::NoArvore& no, const 
 
 // Janela da pasta (duplo clique no nó do Folder Map), como no Mini: cabeçalho com o nome (duplo clique renomeia), VOLTAR e
 // busca; coluna esquerda com os filtros (só desta pasta) e a árvore das subpastas; grade com todos os arquivos da pasta e das
-// subpastas; ficha de metadados que só aparece quando há arquivo selecionado.
+// subpastas; ficha de metadados fixa (coluna sempre presente, vazia até haver arquivo selecionado).
 class JanelaPastaFlutuante::Conteudo : public juce::Component {
 public:
     Conteudo(ProjetoAberto& projeto, const std::string& pastaId, const juce::String& nome, std::function<void()> aoMudouDados,
@@ -64,8 +64,11 @@ public:
         addAndMakeVisible(viewportFiltros_);
 
         // Metadados originais do arquivo selecionado, SOMENTE LEITURA (o mesmo painel do INTAKE).
+        // Ficha fixa: a coluna existe desde que a janela abre (vazia até selecionar um arquivo).
         painel_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
-        addChildComponent(*painel_);
+        painel_->definirLayoutCompacto(true);
+        painel_->mostrarItem({});
+        addAndMakeVisible(*painel_);
 
         // Thumbnails / lista, como na aba METADATA.
         for (auto* b : { &btnGrade_, &btnLista_ }) {
@@ -153,10 +156,8 @@ public:
         rotuloArvore_ = esquerda.removeFromTop(22).reduced(10, 0);
         arvore_.setBounds(esquerda);
 
-        if (painel_->isVisible()) {
-            painel_->setBounds(area.removeFromRight(kLarguraFicha));
-            area.removeFromRight(1);
-        }
+        painel_->setBounds(area.removeFromRight(kLarguraFicha));
+        area.removeFromRight(1);
         auto topo = area.removeFromTop(30).reduced(12, 4);
         lblContagem_.setBounds(topo);
         if (overlay_ != nullptr) overlay_->setBounds(getLocalBounds());
@@ -298,12 +299,7 @@ private:
 
     void aoMudarSelecao() {
         const auto sel = mosaico_->itensSelecionados();
-        if (sel.empty()) {
-            painel_->setVisible(false);
-        } else {
-            painel_->mostrarItem(*sel.begin());
-            painel_->setVisible(true);
-        }
+        painel_->mostrarItem(sel.empty() ? std::string() : *sel.begin());
         atualizarContagem();
         resized();
     }
