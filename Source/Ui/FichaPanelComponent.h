@@ -84,6 +84,7 @@ private:
     // viewport começa abaixo dela, então o card ASSET & USER METADATA fica na
     // mesma posição com 1 ou N arquivos e nada fica sobreposto.
     juce::Label contagem_;
+    juce::Label aviso_;  // linha 2 da faixa: avisos da seleção
     juce::TextButton presets_;
     std::vector<std::string> selecaoPreset_;
     ProjetoAberto& projeto_;

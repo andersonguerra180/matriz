@@ -4232,6 +4232,9 @@ public:
     // NUNCA chama isto: o usuário está indo pra outro campo, e roubar o
     // foco de volta pra grade tiraria o foco de onde ele acabou de clicar.
     std::function<void()> aoPedirFocoGrade;
+    // Aviso de seleção (ex.: tipos de mídia misturados): quem desenha é a faixa fixa do FichaPanelComponent,
+    // não o conteúdo — um texto aqui empurraria os cards para baixo.
+    std::function<void(const juce::String&)> aoMudarAviso;
     // Real-time (correção METADATA): disparado por item, a cada campo
     // aplicado — mesma função que o single-item usa (aoAplicarSucesso) pra
     // manter o card do item em memória atualizado sem recarregar a lista
@@ -4462,6 +4465,7 @@ private:
 
     void limpar() {
         comitarPendencias();
+        if (aoMudarAviso) aoMudarAviso({});
         cabecalho_.reset();
         mensagem_.reset();
         botoesTipo_.clear();
@@ -4487,11 +4491,7 @@ private:
     }
 
     void construirMensagemMisto() {
-        mensagem_ = std::make_unique<juce::Label>();
-        mensagem_->setText(matriz::i18n::t("ficha.lote_tipo_misto"), juce::dontSendNotification);
-        mensagem_->setColour(juce::Label::textColourId, matriz::ui::tema().textoSecundario);
-        mensagem_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteCorpo)));
-        addAndMakeVisible(*mensagem_);
+        if (aoMudarAviso) aoMudarAviso(matriz::i18n::t("ficha.lote_tipo_misto"));
     }
 
     void construirSeletorTipoMidia() {
@@ -5910,6 +5910,7 @@ void FichaPanelComponent::mostrarItem(const std::string& itemId) {
     modoLote_ = false;
     viewport_->setViewedComponent(conteudo_.get(), false);
     conteudo_->construirParaItem(itemId);
+    aviso_.setText({}, juce::dontSendNotification);
     atualizarContagem();
     resized();
     repaint();
@@ -5936,6 +5937,7 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
             if (aoAplicarSucesso) aoAplicarSucesso(itemId);
         };
         conteudoLote_->aoPedirFocoGrade = [this] { if (aoPedirFocoGrade) aoPedirFocoGrade(); };
+        conteudoLote_->aoMudarAviso = [this](const juce::String& texto) { aviso_.setText(texto, juce::dontSendNotification); };
         conteudoLote_->aoIniciarLoteAtualizacao = [this] { if (aoIniciarLoteAtualizacao) aoIniciarLoteAtualizacao(); };
         conteudoLote_->aoFinalizarLoteAtualizacao = [this] { if (aoFinalizarLoteAtualizacao) aoFinalizarLoteAtualizacao(); };
     }
@@ -5951,6 +5953,8 @@ void FichaPanelComponent::atualizarContagem() {
     const size_t n = selecaoPreset_.size();
     contagem_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
     contagem_.setColour(juce::Label::textColourId, tk.textoPrimario);
+    aviso_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+    aviso_.setColour(juce::Label::textColourId, tk.textoSecundario);
     contagem_.setText(n == 0 ? juce::String()
                       : n == 1 ? matriz::i18n::t("ficha.um_selecionado")
                                : matriz::i18n::t("ficha.lote_titulo").replace("{n}", juce::String((int) n)),
@@ -5981,16 +5985,26 @@ void FichaPanelComponent::resized() {
         contagem_.setJustificationType(juce::Justification::centredLeft);
         contagem_.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(contagem_);
+        aviso_.setJustificationType(juce::Justification::topLeft);
+        aviso_.setInterceptsMouseClicks(false, false);
+        addAndMakeVisible(aviso_);
         atualizarContagem();
     }
     const auto& tk = matriz::ui::tema();
-    // Faixa fixa: mesma margem em cima, embaixo e nas laterais.
+    // Faixa fixa, de altura sempre igual (o card abaixo nunca muda de lugar): linha 1 = contagem à esquerda e
+    // Presets à direita; linha 2 = reservada para avisos (ex.: tipos de mídia misturados), mesmo vazia.
     const int alturaControle = 24;
-    auto faixa = area.removeFromTop(alturaControle + 2 * tk.espacoPainel).reduced(tk.espacoPainel);
+    const int alturaAviso = 32;
+    auto faixa = area.removeFromTop(tk.espacoPainel + alturaControle + tk.espacoPequeno + alturaAviso + tk.espacoPequeno);
+    faixa.removeFromTop(tk.espacoPainel);
+    faixa = faixa.reduced(tk.espacoPainel, 0);
+    auto linhaControles = faixa.removeFromTop(alturaControle);
     const int larguraPreset = 170;
-    presets_.setBounds(faixa.removeFromRight(larguraPreset));
-    faixa.removeFromRight(tk.espacoMedio);
-    contagem_.setBounds(faixa);
+    presets_.setBounds(linhaControles.removeFromRight(larguraPreset));
+    linhaControles.removeFromRight(tk.espacoMedio);
+    contagem_.setBounds(linhaControles);
+    faixa.removeFromTop(tk.espacoPequeno);
+    aviso_.setBounds(faixa.removeFromTop(alturaAviso));
     viewport_->setBounds(area);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     int altura = viewport_->getHeight();
