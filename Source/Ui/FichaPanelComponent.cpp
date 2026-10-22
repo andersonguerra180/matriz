@@ -544,6 +544,12 @@ public:
         };
         drawCard(quadroDublinCore_);
         drawCard(quadroUserAsset_);
+        if (!quadroTecnico_.isEmpty()) {  // bloco técnico: caixa tingida dentro do card
+            g.setColour(tk.painelAlt.withAlpha(0.45f));
+            g.fillRoundedRectangle(quadroTecnico_.toFloat(), 6.0f);
+            g.setColour(tk.borda.withAlpha(0.8f));
+            g.drawRoundedRectangle(quadroTecnico_.toFloat().reduced(0.5f), 6.0f, 1.0f);
+        }
         drawCard(quadroGeoLocation_);
         if (iconeGeo_.isValid() && !iconeGeoBounds_.isEmpty())
             g.drawImage(iconeGeo_, iconeGeoBounds_.toFloat(), juce::RectanglePlacement::centred);
@@ -715,6 +721,7 @@ public:
         geolocalizacao_ = {};
         quadroDublinCore_ = {};
         quadroUserAsset_ = {};
+        quadroTecnico_ = {};
         quadroGeoLocation_ = {};
         secHeaderDublinCore_.reset();
         btnAjudaDublinCore_.reset();
@@ -907,26 +914,34 @@ public:
         const int padCardY = 10;
         bool ehDuasColunas = (larguraUtil >= 440);
 
-        // Dados técnicos (somente leitura): grade de `colunas` colunas no topo
-        // do card ASSET & USER METADATA, na ordem em que foram adicionados.
-        // Rótulo em cima, valor embaixo; devolve o y logo abaixo da grade.
+        // Dados técnicos (somente leitura): bloco compacto, uma caixa só, em `colunas` colunas
+        // (4 x 2 no painel largo), na ordem em que foram adicionados. Rótulo cinza em cima, valor
+        // em negrito embaixo, sem caixas individuais. Devolve o y logo abaixo do bloco.
         auto layoutGradeTecnica = [&](int colunas, int yIni) {
-            const int larguraGrade = larguraUtil - 2 * padCardX;
+            quadroTecnico_ = {};
+            int quantas = 0;
+            for (auto& cu : camposUnificados_)
+                if (cu && cu->bloco == BlocoFicha::UserAsset && cu->ehAutoFixed) ++quantas;
+            if (quantas == 0) return yIni;
+            const int padBloco = 10;
+            const int larguraGrade = larguraUtil - 2 * padCardX - 2 * padBloco;
             const int gapGrade = tk.espacoMedio;
             const int larguraCelula = (larguraGrade - gapGrade * (colunas - 1)) / colunas;
-            const int alturaLinhaGrade = 16 + 24 + tk.espacoPequeno;
-            int coluna = 0, yAtual = yIni, quantas = 0;
+            const int alturaCelula = 15 + 19;
+            int coluna = 0, linha = 0;
+            const int xBloco = x + padCardX;
             for (auto& cu : camposUnificados_) {
                 if (!cu || cu->bloco != BlocoFicha::UserAsset || !cu->ehAutoFixed) continue;
-                const int cx = x + padCardX + coluna * (larguraCelula + gapGrade);
-                cu->rotulo->setBounds(cx, yAtual, larguraCelula, 16);
-                cu->editor->setBounds(cx, yAtual + 16, larguraCelula, 24);
-                ++quantas;
-                if (++coluna == colunas) { coluna = 0; yAtual += alturaLinhaGrade; }
+                const int cx = xBloco + padBloco + coluna * (larguraCelula + gapGrade);
+                const int cy = yIni + padBloco + linha * (alturaCelula + tk.espacoPequeno);
+                cu->rotulo->setBounds(cx, cy, larguraCelula, 15);
+                cu->editor->setBounds(cx, cy + 15, larguraCelula, 19);
+                if (++coluna == colunas) { coluna = 0; ++linha; }
             }
-            if (quantas > 0 && coluna != 0) yAtual += alturaLinhaGrade;
-            if (quantas > 0) yAtual += tk.espacoPequeno;  // respiro antes dos campos editáveis
-            return yAtual;
+            const int linhas = linha + (coluna != 0 ? 1 : 0);
+            const int altura = 2 * padBloco + linhas * alturaCelula + (linhas - 1) * tk.espacoPequeno;
+            quadroTecnico_ = juce::Rectangle<int>(xBloco, yIni, larguraUtil - 2 * padCardX, altura);
+            return yIni + altura + tk.espacoMedio;
         };
 
         // Presets + AI generated no cabeçalho do card ASSET & USER METADATA,
@@ -990,7 +1005,8 @@ public:
             // List | Creator, Content | Source medium, People | Tags,
             // File name | Path. Cada coluna cascateia sozinha, então o
             // Source medium (mais alto) não abre vão ao lado de Content.
-            auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1, LinhaUnificada*& notasFora) {
+            auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1, LinhaUnificada*& notasFora,
+                                           LinhaUnificada** pathFora = nullptr) {
                 std::vector<LinhaUnificada*> ordenados;
                 for (auto& campo : camposUnificados_) if (campo && campo->bloco == bloco) ordenados.push_back(campo.get());
                 if (bloco == BlocoFicha::UserAsset) {
@@ -999,25 +1015,25 @@ public:
                         if (id == "subject" || id == "event_date") return 0;
                         if (id == "lista" || id == "creator") return 1;
                         if (id == "collection" || id == "source_media") return 2;
-                        if (campo->ehPeople || campo->ehTags) return 3;
-                        if (id == "filename" || id == "path") return 4;
-                        if (id == "ai_generated") return 6;
+                        if (campo->ehPeople) return 3;
+                        if (campo->ehTags || id == "filename") return 4;
                         return 5;
                     };
                     std::stable_sort(ordenados.begin(), ordenados.end(), [&](auto* a, auto* b) { return prioridade(a) < prioridade(b); });
                 }
                 for (auto* cu : ordenados) {
-                    if (cu->ehAutoFixed) continue;  // vai na grade técnica (layoutGradeTecnica)
+                    if (cu->ehAutoFixed) continue;  // vai no bloco técnico (layoutGradeTecnica)
                     if (cu->campoId == "ai_generated") continue;  // checkbox do cabeçalho
 
                     if (bloco == BlocoFicha::UserAsset) {
                         if (cu->ehNotes)  { notasFora = cu; continue; }
+                        if (cu->campoId == "path" && pathFora != nullptr) { *pathFora = cu; continue; }
                     }
 
                     bool useCol1 = (y1 < y0);
-                    if (bloco == BlocoFicha::UserAsset)
+                    if (bloco == BlocoFicha::UserAsset)  // direita: Event date, Creator, Source medium (+Device), File name
                         useCol1 = cu->campoId == "event_date" || cu->campoId == "creator" || cu->campoId == "source_media" ||
-                                  cu->campoId == "path" || cu->ehTags;
+                                  cu->campoId == "filename";
 
                     int currX = useCol1 ? x1 : x0;
                     int& currY = useCol1 ? y1 : y0;
@@ -1044,9 +1060,6 @@ public:
                             cu->editor->setBounds(currX, currY, colW, kAlturaCampo);
                             currY += kAlturaCampo + tk.espacoPequeno;
                         }
-                    } else if (cu->ehNotes) {
-                        cu->editor->setBounds(currX, currY, colW, 64);
-                        currY += 64 + tk.espacoPequeno;
                     } else {
                         cu->editor->setBounds(currX, currY, colW, kAlturaCampo);
                         currY += kAlturaCampo + tk.espacoPequeno;
@@ -1077,23 +1090,29 @@ public:
                 y += padCardY;
             }
             if (!colapsadoUserAsset_) {
-                y = layoutGradeTecnica(4, y);
                 int y0 = y;
                 int y1 = y;
                 LinhaUnificada* notasFora = nullptr;
-                layoutCamposDoBloco(BlocoFicha::UserAsset, y0, y1, notasFora);
+                LinhaUnificada* pathFora = nullptr;
+                layoutCamposDoBloco(BlocoFicha::UserAsset, y0, y1, notasFora, &pathFora);
                 int yPosColunas = std::max(y0, y1);
-                int cardBBottom = yPosColunas + padCardY;
 
-                // NOTES: última linha do card, ocupando as DUAS colunas
-                // (item 1 da 3ª correção de UI) — estica com extraNotas até
-                // o conjunto de cards preencher a coluna inteira da ficha.
+                // PATH: linha própria, largura inteira, logo abaixo das duas colunas.
+                if (pathFora) {
+                    const int nx = x + padCardX;
+                    pathFora->rotulo->setBounds(nx, yPosColunas, innerW - 85, 16);
+                    pathFora->badge->setBounds(nx + innerW - 80, yPosColunas, 80, 16);
+                    pathFora->editor->setBounds(nx, yPosColunas + 18, innerW, kAlturaCampo);
+                    yPosColunas += 18 + kAlturaCampo + tk.espacoPequeno;
+                }
+                // Bloco técnico (leitura) e, por último, a linha de NOTES (estica com extraNotas quando expandida).
+                yPosColunas = layoutGradeTecnica(4, yPosColunas);
+                int cardBBottom = yPosColunas + padCardY;
                 if (notasFora) {
-                    int nx = x + padCardX;
-                    notasFora->rotulo->setBounds(nx, yPosColunas, innerW - 85, 16);
-                    notasFora->badge->setBounds(nx + innerW - 80, yPosColunas, 80, 16);
-                    int ny = yPosColunas + 18;
-                    ny = layoutLinhaNotas(nx, ny, innerW, notasFora);
+                    const int nx = x + padCardX;
+                    notasFora->rotulo->setBounds({});
+                    notasFora->badge->setBounds({});
+                    const int ny = layoutLinhaNotas(nx, yPosColunas, innerW, notasFora);
                     cardBBottom = ny + padCardY;
                 }
 
@@ -1265,9 +1284,10 @@ public:
 
         // --- Single Column Layout with distinct block sections ---
         int innerW = larguraUtil - 2 * padCardX;
-        auto layoutCamposDoBloco1Col = [&](BlocoFicha bloco) {
+        auto layoutCamposDoBloco1Col = [&](BlocoFicha bloco, bool soNotes = false) {
             for (auto& cu : camposUnificados_) {
                 if (!cu || cu->bloco != bloco || cu->ehAutoFixed || cu->campoId == "ai_generated") continue;
+                if (cu->ehNotes != soNotes) continue;
                 int rotuloW = innerW - 100;
                 cu->rotulo->setBounds(x + padCardX, y, rotuloW, 16);
                 cu->badge->setBounds(x + padCardX + innerW - 95, y, 95, 16);
@@ -1325,8 +1345,9 @@ public:
             y += padCardY;
         }
         if (!colapsadoUserAsset_) {
-            y = layoutGradeTecnica(2, y);
             layoutCamposDoBloco1Col(BlocoFicha::UserAsset);
+            y = layoutGradeTecnica(2, y);
+            layoutCamposDoBloco1Col(BlocoFicha::UserAsset, true);  // NOTES por último
             int cardBBottom1 = y + padCardY;
             quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop1, larguraUtil, cardBBottom1 - cardBTop1);
             y = cardBBottom1 + tk.espacoMedio;
@@ -2566,19 +2587,19 @@ private:
 
             linha->rotulo = std::make_unique<juce::Label>();
             linha->rotulo->setText(rotulo, juce::dontSendNotification);
-            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoSecundario);
+            linha->rotulo->setBorderSize({0, 0, 0, 0});
             addAndMakeVisible(*linha->rotulo);
 
-            // Dados técnicos viram células da grade somente leitura no topo do
-            // card — sem badge [AUTO + FIXO] (a posição já diz que não edita).
+            // Dados técnicos: células do bloco de leitura no fim do card ASSET & USER —
+            // sem badge [AUTO + FIXO] e sem caixa própria (a posição já diz que não edita).
             auto lbl = std::make_unique<juce::Label>();
-            lbl->setText(valor, juce::dontSendNotification);
+            lbl->setText(valor.isNotEmpty() ? valor : juce::String::fromUTF8("\xe2\x80\x94"), juce::dontSendNotification);
             lbl->setTooltip(valor);
-            lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            lbl->setColour(juce::Label::textColourId, tk.campoLeituraTecnica);
-            lbl->setColour(juce::Label::backgroundColourId, tk.painelAlt.withAlpha(0.6f));
-            lbl->setColour(juce::Label::outlineColourId, tk.borda);
+            lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+            lbl->setColour(juce::Label::textColourId, tk.textoPrimario);
+            lbl->setBorderSize({0, 0, 0, 0});
             addAndMakeVisible(*lbl);
             linha->editor = std::move(lbl);
 
@@ -3849,6 +3870,7 @@ private:
 
     juce::Rectangle<int> quadroDublinCore_;
     juce::Rectangle<int> quadroUserAsset_;
+    juce::Rectangle<int> quadroTecnico_;
     juce::Rectangle<int> quadroGeoLocation_;
 };
 
