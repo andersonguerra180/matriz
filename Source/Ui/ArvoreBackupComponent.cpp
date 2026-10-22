@@ -2916,6 +2916,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
                 g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
                 g.drawText(rotulo, tag.toNearestInt(), juce::Justification::centred, false);
             }
+            g.setColour(juce::Colours::black);  // título do container no canvas: preto (antes herdava o branco da tag/pílula)
             g.setFont(fonteUi(11.5f, juce::Font::bold));
             g.drawFittedText(lf.titulo, b.withTrimmedTop(100.0f).reduced(4.0f, 0.0f).toNearestInt(), juce::Justification::centredTop, 2, 0.85f);
             continue;
