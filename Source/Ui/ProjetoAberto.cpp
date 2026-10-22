@@ -358,7 +358,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'etapa_producao'), "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'versao_escolhida'), "
         "EXISTS(SELECT 1 FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'ai_generated' AND TRIM(COALESCE(c.valor, '')) != ''), "
-        "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = i.id AND g.latitude IS NOT NULL AND g.longitude IS NOT NULL) "
+        "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = i.id AND ("
+        "g.latitude IS NOT NULL OR g.longitude IS NOT NULL OR "
+        "TRIM(COALESCE(g.formatted_address, '')) != '' OR TRIM(COALESCE(g.city, '')) != '' OR "
+        "TRIM(COALESCE(g.state_province, '')) != '' OR TRIM(COALESCE(g.country, '')) != '')) "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -6687,8 +6690,10 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
         auto stmt = leitura().prepare(
             "SELECT COALESCE(metadados_editados, 0) != 0, content_type, collection_type, ano, "
             "dc_subject, lista, source_media, "
-            "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = item.id "
-            "AND g.latitude IS NOT NULL AND g.longitude IS NOT NULL) "
+            "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = item.id AND ("
+            "g.latitude IS NOT NULL OR g.longitude IS NOT NULL OR "
+            "TRIM(COALESCE(g.formatted_address, '')) != '' OR TRIM(COALESCE(g.city, '')) != '' OR "
+            "TRIM(COALESCE(g.state_province, '')) != '' OR TRIM(COALESCE(g.country, '')) != '')) "
             "FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(itemId));
         if (stmt.step()) {
