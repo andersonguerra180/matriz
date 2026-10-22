@@ -888,6 +888,21 @@ public:
             return yAtual;
         };
 
+        // AI generated: checkbox no cabeçalho do card ASSET & USER METADATA,
+        // à esquerda dos botões ? e ▼. Devolve o rightX livre para o título.
+        auto posicionarAiGeradoNoCabecalho = [&](int rightX, int yCabecalho) {
+            for (auto& cu : camposUnificados_) {
+                if (!cu || cu->campoId != "ai_generated" || !cu->editor) continue;
+                const int larguraAi = 150;
+                rightX -= larguraAi;
+                cu->editor->setBounds(rightX, yCabecalho, larguraAi, 20);
+                if (cu->rotulo) cu->rotulo->setBounds({});
+                if (cu->badge) cu->badge->setBounds({});
+                rightX -= 8;
+            }
+            return rightX;
+        };
+
         if (ehDuasColunas) {
             int innerW = larguraUtil - 2 * padCardX;
             int gap = 16;
@@ -923,6 +938,7 @@ public:
                 }
                 for (auto* cu : ordenados) {
                     if (cu->ehAutoFixed) continue;  // vai na grade técnica (layoutGradeTecnica)
+                    if (cu->campoId == "ai_generated") continue;  // checkbox do cabeçalho
 
                     if (bloco == BlocoFicha::UserAsset) {
                         if (cu->ehNotes)  { notasFora = cu; continue; }
@@ -984,6 +1000,7 @@ public:
                     btnAjudaUserAsset_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
                     rightX -= 8;
                 }
+                rightX = posicionarAiGeradoNoCabecalho(rightX, y + padCardY);
                 secHeaderUserAsset_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
                 y += padCardY + 24;
             } else {
@@ -1167,7 +1184,7 @@ public:
         int innerW = larguraUtil - 2 * padCardX;
         auto layoutCamposDoBloco1Col = [&](BlocoFicha bloco) {
             for (auto& cu : camposUnificados_) {
-                if (!cu || cu->bloco != bloco || cu->ehAutoFixed) continue;
+                if (!cu || cu->bloco != bloco || cu->ehAutoFixed || cu->campoId == "ai_generated") continue;
                 int rotuloW = innerW - 100;
                 cu->rotulo->setBounds(x + padCardX, y, rotuloW, 16);
                 cu->badge->setBounds(x + padCardX + innerW - 95, y, 95, 16);
@@ -1220,6 +1237,7 @@ public:
                 btnAjudaUserAsset_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
                 rightX -= 8;
             }
+            rightX = posicionarAiGeradoNoCabecalho(rightX, y + padCardY);
             secHeaderUserAsset_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
             y += padCardY + 24;
         } else {
@@ -2384,6 +2402,7 @@ private:
             bool vis = !colapsadoUserAsset_;
             for (auto& cu : camposUnificados_) {
                 if (cu && cu->bloco == BlocoFicha::UserAsset) {
+                    if (cu->campoId == "ai_generated") continue;  // checkbox do cabeçalho: sempre visível
                     if (cu->rotulo) cu->rotulo->setVisible(vis);
                     if (cu->badge) cu->badge->setVisible(vis);
                     if (cu->editor) cu->editor->setVisible(vis);
@@ -2678,7 +2697,7 @@ private:
 
             auto toggle = std::make_unique<juce::ToggleButton>();
             toggle->setToggleState(ligado, juce::dontSendNotification);
-            toggle->setButtonText("");
+            toggle->setButtonText(rotulo);  // checkbox no cabeçalho do card (rótulo e selo ficam sem tamanho)
             toggle->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
             toggle->setColour(juce::ToggleButton::tickColourId, tk.acento);
 
@@ -2992,7 +3011,7 @@ private:
                                 "collection_type");
             addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
-            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
+            addEditableToggle("ai_generated", isPt ? "Gerado por IA" : "AI generated", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
@@ -3021,7 +3040,7 @@ private:
                                 "collection_type");
             addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
-            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
+            addEditableToggle("ai_generated", isPt ? "Gerado por IA" : "AI generated", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
@@ -3047,7 +3066,7 @@ private:
                                 "collection_type");
             addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
-            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
+            addEditableToggle("ai_generated", isPt ? "Gerado por IA" : "AI generated", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
@@ -3071,7 +3090,7 @@ private:
                                 "collection_type");
             addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
             addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
-            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
+            addEditableToggle("ai_generated", isPt ? "Gerado por IA" : "AI generated", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
