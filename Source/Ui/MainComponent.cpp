@@ -2024,6 +2024,7 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
             treeWorkspace_->aoAbrirPastaJanela = [this](const std::string& pastaId, const juce::String& nome) {
                 abrirJanelaDaPasta(pastaId, nome);
             };
+            treeWorkspace_->aoMudarSemPasta = [this] { if (cartoesAnalytics_) cartoesAnalytics_->recarregar(); };
             treeWorkspace_->aoAbrirProject = [this](const std::string& nestId, const std::string& origem) { abrirProjectDoContainer(nestId, origem); };
             treeWorkspace_->aoAbrirContainerJanela = [this](const std::string& nestId, const juce::String& nome) {
                 // Container: abre direto o preview do arquivo-capa (o mesmo do Open Project); a janela de

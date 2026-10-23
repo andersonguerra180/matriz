@@ -3550,6 +3550,9 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                         if (safeThis && safeThis->pastaPodeAutoOrganizar(pId))
                             safeThis->aplicarAutoOrganizacaoNaPasta(pId, regraNo.toStdString());
                     });
+                    menu.addItem(i18n::t("arvore_backup.auto_importar_sem_pasta"), editavel, false, [safeThis, pId, nomeNo, regraNo] {
+                        if (safeThis) safeThis->importarSemPastaNaPasta(pId, nomeNo, regraNo);
+                    });
                     menu.addItem(i18n::t("arvore_backup.auto_desligar"), editavel, false, [safeThis, pId] {
                         if (!safeThis) return;
                         safeThis->projeto_.desligarAutoOrganizacao(pId);
@@ -4070,6 +4073,59 @@ void ArvoreBackupComponent::aplicarAutoOrganizacaoNaPasta(const std::string& pas
         default: ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.auto_falha")); break;
     }
     recarregar();
+}
+
+// IMPORT FROM _no folder: os ids são lidos fora da message thread (os do INTAKE ficam: ainda não entraram no catálogo); depois de
+// confirmar, os arquivos vão para a pasta e a regra dela os distribui nas subpastas AUTO (dois passos de desfazer: organizar, mover).
+void ArvoreBackupComponent::importarSemPastaNaPasta(const std::string& pastaId, const juce::String& nomePasta, const juce::String& regraCsv) {
+    if (!pastaPodeAutoOrganizar(pastaId)) return;
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    ProjetoAberto* proj = &projeto_;
+    const std::string mapa = mapaAtivoId_;
+    poolSemPasta_.addJob([safe, proj, mapa, pastaId, nomePasta, regraCsv] {
+        std::vector<std::string> ids;
+        try {
+            auto st = proj->projeto().registroLeitura().prepare(
+                "SELECT id FROM item WHERE projeto_id = ? AND COALESCE(estado, '') != 'duplicata' AND COALESCE(em_quarentena, 0) = 0 "
+                "AND id NOT IN (SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
+            st.bind(1, matriz::db::Value::of(proj->projeto().projetoId()));
+            st.bind(2, matriz::db::Value::of(mapa));
+            while (st.step()) ids.push_back(st.columnText(0));
+        } catch (...) {}
+        juce::MessageManager::callAsync([safe, pastaId, nomePasta, regraCsv, ids = std::move(ids)] {
+            if (!safe) return;
+            if (ids.empty()) {
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                                 .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                                 .withTitle(i18n::t("arvore_backup.importar_sem_pasta_titulo"))
+                                                 .withMessage(i18n::t("arvore_backup.importar_sem_pasta_vazio"))
+                                                 .withButton(i18n::t("dialogo.ok")),
+                                             juce::ModalCallbackFunction::create([](int) {}));
+                return;
+            }
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                    .withTitle(i18n::t("arvore_backup.importar_sem_pasta_titulo"))
+                    .withMessage(i18n::t("arvore_backup.importar_sem_pasta_msg").replace("{n}", juce::String(static_cast<int>(ids.size())))
+                                     .replace("{nome}", nomePasta))
+                    .withButton(i18n::t("arvore_backup.importar_sem_pasta_btn"))
+                    .withButton(i18n::t("mescla.btn_cancelar")),
+                juce::ModalCallbackFunction::create([safe, pastaId, regraCsv, ids](int r) {
+                    if (r != 1 || !safe || !safe->pastaPodeAutoOrganizar(pastaId)) return;
+                    // WINPORT: Nada de I/O na message thread — as mesmas gravações síncronas do MOVE TO FOLDER e do Reorganize now.
+                    try {
+                        safe->projeto_.adicionarItensAPasta(ids, pastaId);
+                    } catch (...) {
+                        ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.auto_falha"));
+                        safe->recarregar();
+                        return;
+                    }
+                    safe->aplicarAutoOrganizacaoNaPasta(pastaId, regraCsv.toStdString());
+                    if (safe && safe->aoMudarSemPasta) safe->aoMudarSemPasta();
+                }));
+        });
+    });
 }
 
 void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId, bool forcar) {

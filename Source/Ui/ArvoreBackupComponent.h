@@ -95,6 +95,8 @@ public:
     void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);
 
     std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
+    // Arquivos saíram do `_no folder` por uma ação deste mapa (IMPORT FROM _no folder): quem hospeda reconta o card NO FOLDER.
+    std::function<void()> aoMudarSemPasta;
     std::function<void(const juce::Array<juce::File>& files, const std::string& pastaId)> aoIngerirArquivos;
 
     void abrirConversaWhatsapp(const std::string& itemId);
@@ -296,6 +298,8 @@ private:
     bool pastaPodeAutoOrganizar(const std::string& pastaId);
     void mostrarEditorAutoOrganizar(const std::string& pastaId, const juce::String& nomePasta, const juce::String& regraAtual);
     void aplicarAutoOrganizacaoNaPasta(const std::string& pastaId, const std::string& regraCsv);
+    // Pasta com auto-organização: traz os arquivos do `_no folder` (fora do INTAKE) para ela e reorganiza pela regra dela.
+    void importarSemPastaNaPasta(const std::string& pastaId, const juce::String& nomePasta, const juce::String& regraCsv);
     void desenharIndicadorZoom(juce::Graphics& g) const;
     void desenharCabecalhoNo(juce::Graphics& g, const FolderNode& node, juce::Rectangle<float> header) const;
 
@@ -326,6 +330,7 @@ private:
     juce::Rectangle<int> boundsPastaSemPastaVirtual() const;
     void desenharPastaSemPastaVirtual(juce::Graphics& g) const;
     bool semPastaVirtualHover_ = false;
+    juce::ThreadPool poolSemPasta_{1};  // leitura dos ids do `_no folder` para o IMPORT, fora da message thread
 
     // Slider de tamanho. Com folders selecionados age só neles (e PARA quando um encosta num vizinho);
     // sem seleção é a escala GLOBAL: cartões e espaços crescem juntos, então nada se sobrepõe.
