@@ -243,7 +243,7 @@ std::shared_ptr<PainelReceberCelular> mostrarReceberDoCelular(PainelOverlay& ove
 
 // ── Card "Importar do celular": GALLERY ou WHATSAPP ──────────────────────────────────────────────
 
-EscolhaImportacaoCelular::EscolhaImportacaoCelular(bool sistema) : sistema_(sistema) {
+EscolhaImportacaoCelular::EscolhaImportacaoCelular(bool sistema, bool comUsb) : sistema_(sistema), comUsb_(comUsb && !sistema) {
     setComponentID("cel.escolha");
     setWantsKeyboardFocus(false);
     iconeGaleria_ = carregarLogoDeTipo("gallery.png");
@@ -256,14 +256,17 @@ void EscolhaImportacaoCelular::resized() {
     auto r = getLocalBounds();
     r.removeFromTop(44);  // dica
     const int gap = 24;
-    const int larg = (r.getWidth() - gap) / 2;
-    tiles_[0] = r.removeFromLeft(larg);
-    r.removeFromLeft(gap);
-    tiles_[1] = r;
+    const int n = totalTiles();
+    const int larg = (r.getWidth() - gap * (n - 1)) / n;
+    for (int i = 0; i < n - 1; ++i) {
+        tiles_[i] = r.removeFromLeft(larg);
+        r.removeFromLeft(gap);
+    }
+    tiles_[n - 1] = r;
 }
 
 int EscolhaImportacaoCelular::tileEm(juce::Point<int> p) const {
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < totalTiles(); ++i)
         if (tiles_[i].contains(p)) return i;
     return -1;
 }
@@ -283,11 +286,13 @@ void EscolhaImportacaoCelular::mouseExit(const juce::MouseEvent&) {
 
 void EscolhaImportacaoCelular::mouseUp(const juce::MouseEvent& e) {
     const int i = tileEm(e.getPosition());
-    if (i >= 0 && !e.mouseWasDraggedSinceMouseDown()) escolher(i == 0 ? ModoImportacaoCelular::Galeria : ModoImportacaoCelular::WhatsApp);
+    if (i >= 0 && !e.mouseWasDraggedSinceMouseDown())
+        escolher(i == 0 ? ModoImportacaoCelular::Galeria : (i == 1 ? ModoImportacaoCelular::WhatsApp : ModoImportacaoCelular::AndroidUsb));
 }
 
 void EscolhaImportacaoCelular::escolher(ModoImportacaoCelular m) {
-    if (auto* overlay = findParentComponentOfClass<PainelOverlay>()) overlay->concluirExterno(m == ModoImportacaoCelular::Galeria ? 1 : 2);
+    if (auto* overlay = findParentComponentOfClass<PainelOverlay>())
+        overlay->concluirExterno(m == ModoImportacaoCelular::Galeria ? 1 : (m == ModoImportacaoCelular::WhatsApp ? 2 : 3));
 }
 
 bool EscolhaImportacaoCelular::tratarTecla(const juce::KeyPress& k) {
@@ -305,7 +310,7 @@ void EscolhaImportacaoCelular::paint(juce::Graphics& g) {
     g.drawText(t(sistema_ ? "light.cel.escolha.dicaSistema" : "light.cel.escolha.dica"), getLocalBounds().removeFromTop(36),
                juce::Justification::centredLeft, true);
 
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < totalTiles(); ++i) {
         auto r = tiles_[i].toFloat().reduced(2.0f);
         const bool ativo = sobre_ == i;
         g.setColour(p.campo);
@@ -320,8 +325,8 @@ void EscolhaImportacaoCelular::paint(juce::Graphics& g) {
         g.setColour(p.poco);
         g.fillRoundedRectangle(azulejo, 20.0f);
         const auto area = azulejo.reduced(lado * 0.24f);
-        const auto& img = sistema_ ? (i == 0 ? iconeAndroid_ : iconeApple_) : (i == 0 ? iconeGaleria_ : iconeWhatsapp_);
-        if (sistema_) {  // ANDROID/IPHONE: símbolo isolado já em #1B1917 e transparente; 40x40 pt centralizado no quadrado de 80x80
+        const auto& img = sistema_ ? (i == 0 ? iconeAndroid_ : iconeApple_) : (i == 0 ? iconeGaleria_ : (i == 1 ? iconeWhatsapp_ : iconeAndroid_));
+        if (sistema_ || i == 2) {  // ANDROID/IPHONE: símbolo isolado já em #1B1917 e transparente; 40x40 pt centralizado no quadrado de 80x80
             if (img.isValid())
                 g.drawImage(img, azulejo.withSizeKeepingCentre(40.0f, 40.0f), juce::RectanglePlacement::centred);
         } else if (img.isValid()) {
@@ -335,49 +340,51 @@ void EscolhaImportacaoCelular::paint(juce::Graphics& g) {
         }
         g.setColour(p.tinta);
         g.setFont(fonteUi(15.0f, juce::Font::bold).withExtraKerningFactor(0.06f));
-        g.drawText(t(sistema_ ? (i == 0 ? "light.cel.android" : "light.cel.iphone") : (i == 0 ? "light.cel.gallery" : "light.cel.whatsapp")),
+        g.drawText(t(sistema_ ? (i == 0 ? "light.cel.android" : "light.cel.iphone")
+                              : (i == 0 ? "light.cel.gallery" : (i == 1 ? "light.cel.whatsapp" : "cel.usb.card"))),
                    rotulo.toNearestInt(), juce::Justification::centred, true);
         g.setColour(p.mudo);
         g.setFont(fonteUi(13.0f));
         g.drawText(t(sistema_ ? (i == 0 ? "light.cel.escolha.subAndroid" : "light.cel.escolha.subIphone")
-                              : (i == 0 ? "light.cel.escolha.subGaleria" : "light.cel.escolha.subWhatsapp")),
+                              : (i == 0 ? "light.cel.escolha.subGaleria" : (i == 1 ? "light.cel.escolha.subWhatsapp" : "cel.usb.card.sub"))),
                    sub.toNearestInt(), juce::Justification::centred, true);
     }
 }
 
 void mostrarEscolhaImportacaoCelular(PainelOverlay& overlay, std::function<void(std::optional<ModoImportacaoCelular>)> aoConcluir,
-                                     std::weak_ptr<EscolhaImportacaoCelular>* devolver, std::function<void()> aoVoltar) {
-    auto conteudo = std::make_shared<EscolhaImportacaoCelular>();
+                                     std::weak_ptr<EscolhaImportacaoCelular>* devolver, std::function<void()> aoVoltar, bool comUsb) {
+    auto conteudo = std::make_shared<EscolhaImportacaoCelular>(false, comUsb);
     if (devolver != nullptr) *devolver = conteudo;
 
     PainelOverlay::Config cfg;
     cfg.titulo = t("light.cel.escolha.titulo");
     cfg.trilha = t("moldura.trilha.adicionar");
     cfg.conteudo = conteudo;
-    cfg.larguraCartao = 620;
+    cfg.larguraCartao = comUsb ? 880 : 620;
     cfg.alturaConteudo = 300;
     if (aoVoltar) cfg.botoes.push_back({t("imp.voltar"), 9, false, false});
     cfg.botoes.push_back({t("light.ui.common.cancel"), 0, false, true});
     juce::Component::SafePointer<EscolhaImportacaoCelular> seguro(conteudo.get());
     cfg.aoTecla = [seguro](const juce::KeyPress& k) { return seguro != nullptr && seguro->tratarTecla(k); };
     juce::Component::SafePointer<PainelOverlay> pOverlay(&overlay);
-    overlay.mostrar(cfg, [aoConcluir, pOverlay, aoVoltar, devolver](PainelOverlay::Resultado r) {
+    overlay.mostrar(cfg, [aoConcluir, pOverlay, aoVoltar, devolver, comUsb](PainelOverlay::Resultado r) {
         if (r.botaoId == 9) { if (aoVoltar) aoVoltar(); return; }
         if (!aoConcluir) return;
         if (r.botaoId == 1) aoConcluir(ModoImportacaoCelular::Galeria);
+        else if (r.botaoId == 3) aoConcluir(ModoImportacaoCelular::AndroidUsb);
         else if (r.botaoId == 2) {
             // WHATSAPP abre a segunda tela: ANDROID = fluxo do WhatsApp de hoje; IPHONE = QR code da GALLERY.
             // Adiado: este callback roda de dentro do mouseUp do card que o overlay vai substituir.
-            juce::MessageManager::callAsync([aoConcluir, pOverlay, aoVoltar] {
+            juce::MessageManager::callAsync([aoConcluir, pOverlay, aoVoltar, comUsb] {
                 if (pOverlay == nullptr) { aoConcluir(std::nullopt); return; }
                 // VOLTAR da segunda tela (Android/iPhone) reabre esta (Gallery/WhatsApp).
                 mostrarEscolhaSistemaCelular(*pOverlay, [aoConcluir](std::optional<SistemaCelular> s) {
                     if (!s.has_value()) aoConcluir(std::nullopt);
                     else aoConcluir(*s == SistemaCelular::Android ? ModoImportacaoCelular::WhatsApp : ModoImportacaoCelular::Galeria);
-                }, [pOverlay, aoConcluir, aoVoltar] {
-                    juce::MessageManager::callAsync([pOverlay, aoConcluir, aoVoltar] {
+                }, [pOverlay, aoConcluir, aoVoltar, comUsb] {
+                    juce::MessageManager::callAsync([pOverlay, aoConcluir, aoVoltar, comUsb] {
                         if (pOverlay == nullptr) { aoConcluir(std::nullopt); return; }
-                        mostrarEscolhaImportacaoCelular(*pOverlay, aoConcluir, nullptr, aoVoltar);
+                        mostrarEscolhaImportacaoCelular(*pOverlay, aoConcluir, nullptr, aoVoltar, comUsb);
                     });
                 });
             });

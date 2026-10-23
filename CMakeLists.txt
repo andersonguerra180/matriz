@@ -658,12 +658,14 @@ target_sources(matriz PRIVATE
     Source/Celular/RecebimentoCelular.cpp
     Source/Celular/ServidorCelular.cpp
     Source/Celular/ExistentesProjeto.cpp
+    Source/Celular/DispositivoAndroidUsb.cpp
     Source/Whatsapp/ServidorWhatsappApp.cpp
     Source/Whatsapp/WhatsappConversa.cpp
     Source/Whatsapp/WhatsappIngestao.cpp
     Source/Ui/Tablet.cpp
     Source/Ui/OverlayComponent.cpp
     Source/Ui/PainelReceberCelular.cpp
+    Source/Ui/PainelAndroidUsb.cpp
     Source/Ui/PainelImportarWhatsapp.cpp
     Source/Ui/ImportarMenu.cpp
     Source/Ui/ImportarFichas.cpp
@@ -710,6 +712,26 @@ elseif(WIN32)
 endif()
 
 target_include_directories(matriz PRIVATE Source)
+
+# PHONE DUMP > ANDROID USB: libmtp (LGPL 2.1), ligada dinamicamente e copiada para Contents/Frameworks junto com a
+# libusb, como no Android File Transfer. Sem a libmtp o módulo compila desligado (SessaoAndroidUsb::suportado() = false).
+# WINPORT: no Windows o equivalente é WPD (IPortableDevice); ainda não implementado.
+if(APPLE)
+    find_path(MATRIZ_LIBMTP_INCLUDE libmtp.h HINTS /opt/homebrew/opt/libmtp/include /usr/local/opt/libmtp/include)
+    find_library(MATRIZ_LIBMTP_LIB NAMES mtp HINTS /opt/homebrew/opt/libmtp/lib /usr/local/opt/libmtp/lib)
+endif()
+if(APPLE AND MATRIZ_LIBMTP_INCLUDE AND MATRIZ_LIBMTP_LIB)
+    target_include_directories(matriz PRIVATE ${MATRIZ_LIBMTP_INCLUDE})
+    target_link_libraries(matriz PRIVATE ${MATRIZ_LIBMTP_LIB})
+    target_compile_definitions(matriz PRIVATE MATRIZ_COM_LIBMTP=1)
+    add_custom_command(TARGET matriz POST_BUILD
+        COMMAND /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/embutir_libmtp.sh" "$<TARGET_BUNDLE_DIR:matriz>" "${MATRIZ_LIBMTP_LIB}"
+        COMMENT "Embedding libmtp + libusb into the app bundle")
+    message(STATUS "MATRIZ: libmtp ${MATRIZ_LIBMTP_LIB} - PHONE DUMP > ANDROID USB ligado")
+else()
+    target_compile_definitions(matriz PRIVATE MATRIZ_COM_LIBMTP=0)
+    message(STATUS "MATRIZ: libmtp nao encontrada - PHONE DUMP > ANDROID USB desligado")
+endif()
 
 target_compile_definitions(matriz PRIVATE
     JUCE_WEB_BROWSER=0

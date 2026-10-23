@@ -24,6 +24,7 @@
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "LogosTipoArquivo.h"
+#include "PainelAndroidUsb.h"
 #include "PainelImportarWhatsapp.h"
 #include "ImportarMenu.h"
 #include "ContainerVisual.h"
@@ -4539,6 +4540,7 @@ void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id, s
 
 void IntakeWorkspaceComponent::abrirReceberDoCelular(std::function<void()> aoVoltar) {
     if (overlayAtual_ != nullptr) return;
+    aoVoltarEscolhaCelular_ = aoVoltar;
     overlayAtual_ = std::make_unique<PainelOverlay>();
     addAndMakeVisible(*overlayAtual_);
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
@@ -4550,12 +4552,48 @@ void IntakeWorkspaceComponent::abrirReceberDoCelular(std::function<void()> aoVol
             seguro->resized();
             if (modo.has_value()) seguro->iniciarReceberDoCelular(*modo);
         });
-    }, &escolhaImportacaoAtual_, std::move(aoVoltar));
+    }, &escolhaImportacaoAtual_, aoVoltar, matriz::celular::SessaoAndroidUsb::suportado());
+    resized();
+}
+
+void IntakeWorkspaceComponent::abrirAndroidUsbAoPlugar() {
+    if (overlayAtual_ != nullptr || !matriz::celular::SessaoAndroidUsb::suportado()) return;
+    abrirAndroidUsb(nullptr);
+}
+
+// PHONE DUMP > ANDROID USB: navegador do celular plugado por cabo. Os arquivos copiados entram como a galeria do
+// QR code (container "gallery", Original Source Medium = Phone Dump). VOLTAR reabre a escolha GALLERY/WHATSAPP/USB.
+void IntakeWorkspaceComponent::abrirAndroidUsb(std::function<void()> aoVoltarDaEscolha) {
+    if (overlayAtual_ != nullptr) return;
+    auto* pProj = &projeto_.projeto();
+    auto existentes = [pProj]() -> matriz::celular::ConjuntoExistentes {
+        if (pProj == nullptr) return {};
+        return matriz::celular::existentesDoProjeto(*pProj);
+    };
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarAndroidUsb(*overlayAtual_, existentes, [seguro, aoVoltarDaEscolha](RespostaReceberCelular r, bool voltou) {
+        juce::MessageManager::callAsync([seguro, r, voltou, aoVoltarDaEscolha] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (voltou) { seguro->abrirReceberDoCelular(aoVoltarDaEscolha); return; }
+            if (r.concluiu && r.recebidos > 0 && r.pastaSessao.isDirectory() && seguro->aoIngerirArquivosDireto) {
+                if (seguro->aoDefinirOrigemContainer) seguro->aoDefinirOrigemContainer("gallery");  // galeria do celular = container
+                seguro->aoIngerirArquivosDireto({r.pastaSessao});
+            }
+        });
+    }, true);
     resized();
 }
 
 void IntakeWorkspaceComponent::iniciarReceberDoCelular(ModoImportacaoCelular modo) {
     if (overlayAtual_ != nullptr) return;
+    if (modo == ModoImportacaoCelular::AndroidUsb) {
+        abrirAndroidUsb(aoVoltarEscolhaCelular_);
+        return;
+    }
     if (modo == ModoImportacaoCelular::WhatsApp) {
         overlayAtual_ = std::make_unique<PainelOverlay>();
         addAndMakeVisible(*overlayAtual_);

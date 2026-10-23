@@ -275,6 +275,10 @@ ponto com `// WINPORT: <regra>` (`grep -rn "WINPORT:" Source`). Pontos hoje:
 - `BackupWorkspaceComponent.cpp` `exportarChecksumsPara`: `<projeto>.sha256`/`.sha256.tmp` — **NomesSeguros**.
 - `ManifestoSelfTest.cpp`: `/bin/sh` + `shasum` atrás de `JUCE_MAC || JUCE_LINUX`, sem equivalente Windows — **API de
   macOS/Linux**.
+- PHONE DUMP > ANDROID USB (branch `feat/phone-dump-usb`): `Source/Celular/DispositivoAndroidUsb.cpp` usa libmtp +
+  IOKit só no macOS (`JUCE_MAC && MATRIZ_COM_LIBMTP`); no Windows `SessaoAndroidUsb::suportado()` = false e o card
+  ANDROID USB não aparece — **API de macOS sem equivalente Windows** (WPD/IPortableDevice + WM_DEVICECHANGE).
+  A libmtp vem do Homebrew (x86_64 só); release universal precisa compilar libmtp + libusb para arm64+x86_64.
 - AGENTS.md: já existe na main (desde 738321c); a seção do port chega com a windows-port. Na hora do merge, garantir
   `CLAUDE.md` na main com a linha `@AGENTS.md` (hoje não existe CLAUDE.md).
 

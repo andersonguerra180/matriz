@@ -88,6 +88,9 @@ public:
     std::function<void()> aoIngerirDeBridge;
     std::function<void()> aoConfirmarParaGrid;
     std::function<void()> aoPedirAjuda;
+
+    // Android plugado por USB (aviso do MainComponent): abre direto o navegador do celular, se nenhuma janela estiver aberta.
+    void abrirAndroidUsbAoPlugar();
     void setHasParentCatalog(bool hasParent);
 
     // Os comandos do topo do INTAKE moraram numa faixa própria de 44px logo
@@ -272,6 +275,8 @@ private:
     std::vector<std::pair<juce::Array<juce::File>, std::shared_ptr<const matriz::ingest::SobreMaterial>>> youtubePendentes_;
     void abrirReceberDoCelular(std::function<void()> aoVoltar = nullptr);
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
+    void abrirAndroidUsb(std::function<void()> aoVoltar);
+    std::function<void()> aoVoltarEscolhaCelular_;  // VOLTAR da escolha GALLERY/WHATSAPP/USB (reabre o IMPORT)
     std::unique_ptr<juce::TextButton> btnAjuda_;
     bool hasParentCatalog_ = false;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;

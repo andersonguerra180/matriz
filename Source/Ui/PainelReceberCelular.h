@@ -20,8 +20,8 @@
 namespace matriz::ui {
 
 // De onde vêm os arquivos no celular: GALLERY (fotos/vídeos da galeria) ou WHATSAPP (conversa exportada, .zip).
-// Os dois usam o mesmo servidor local; muda o passo a passo mostrado.
-enum class ModoImportacaoCelular { Galeria, WhatsApp };
+// Os dois usam o mesmo servidor local; muda o passo a passo mostrado. ANDROID USB = cabo, sem rede (PainelAndroidUsb).
+enum class ModoImportacaoCelular { Galeria, WhatsApp, AndroidUsb };
 
 struct RespostaReceberCelular {
     bool concluiu = false;          // CONCLUIR (false = FECHAR/Esc)
@@ -84,9 +84,10 @@ std::shared_ptr<PainelReceberCelular> mostrarReceberDoCelular(PainelOverlay& ove
 // Card "Importar do celular": dois ícones grandes (GALLERY e WHATSAPP). `aoConcluir` roda UMA vez com a escolha
 // (nullopt = cancelou). Vive dentro de um PainelOverlay.
 // `sistema` = true: segunda tela (depois de WHATSAPP), com os cards ANDROID e IPHONE no lugar de GALLERY/WHATSAPP.
+// `comUsb` = true (só na primeira tela): terceiro card ANDROID USB.
 class EscolhaImportacaoCelular : public juce::Component {
 public:
-    explicit EscolhaImportacaoCelular(bool sistema = false);
+    explicit EscolhaImportacaoCelular(bool sistema = false, bool comUsb = false);
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseMove(const juce::MouseEvent&) override;
@@ -99,10 +100,12 @@ public:
 private:
     void escolher(ModoImportacaoCelular m);
     int tileEm(juce::Point<int> p) const;
-    juce::Rectangle<int> tiles_[2];
+    int totalTiles() const { return comUsb_ ? 3 : 2; }
+    juce::Rectangle<int> tiles_[3];
     int sobre_ = -1;
     juce::Image iconeGaleria_, iconeWhatsapp_, iconeAndroid_, iconeApple_;
     bool sistema_ = false;
+    bool comUsb_ = false;
 };
 
 // Segunda tela do WHATSAPP: ANDROID segue o fluxo do WhatsApp de hoje; IPHONE abre o mesmo QR code da GALLERY
@@ -114,6 +117,6 @@ void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std
 
 void mostrarEscolhaImportacaoCelular(PainelOverlay& overlay, std::function<void(std::optional<ModoImportacaoCelular>)> aoConcluir,
                                      std::weak_ptr<EscolhaImportacaoCelular>* devolver = nullptr,
-                                     std::function<void()> aoVoltar = nullptr);
+                                     std::function<void()> aoVoltar = nullptr, bool comUsb = false);
 
 } // namespace matriz::ui

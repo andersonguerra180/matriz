@@ -552,6 +552,8 @@ MainComponent::MainComponent() {
     atualizarTooltips();
     addChildComponent(overlay_);
     reconstruirTelaInicial();
+    if (matriz::celular::SessaoAndroidUsb::suportado())
+        avisoUsb_ = std::make_unique<matriz::celular::AvisoUsbPlugado>([this] { aoUsbPlugado(); });
     matriz::whatsapp::ServidorWhatsappApp::instancia().aoConversaRecebida = [this](const juce::File& f, juce::int64 tam) {
         juce::Component::SafePointer<MainComponent> seguro(this);
         juce::MessageManager::callAsync([seguro, f, tam] {
@@ -780,6 +782,17 @@ MainComponent::~MainComponent() {
     if (cancelamentoLote_) cancelamentoLote_->pedir();
     ingestPool_.removeAllJobs(true, 5000);
     esperarJobsDeVaults();
+}
+
+void MainComponent::aoUsbPlugado() {
+    if (!projetoAberto_ || overlay_.estaAberto()) return;
+    if (!sondaUsb_) sondaUsb_ = std::make_unique<matriz::celular::SessaoAndroidUsb>();
+    juce::Component::SafePointer<MainComponent> seguro(this);
+    sondaUsb_->detectar([seguro](bool achou) {
+        if (!achou || seguro == nullptr || !seguro->projetoAberto_ || seguro->overlay_.estaAberto()) return;
+        seguro->mostrarIntake();
+        if (seguro->intakeWorkspace_) seguro->intakeWorkspace_->abrirAndroidUsbAoPlugar();
+    });
 }
 
 void MainComponent::reconstruirTelaInicial() {

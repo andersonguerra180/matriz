@@ -17,6 +17,7 @@
 #include "../Model/NomesCanonicos.h"
 #include "../Consolidacao/PacoteCollection.h"
 #include "../Ingest/SobreMaterial.h"
+#include "../Celular/DispositivoAndroidUsb.h"
 
 // Workflow layer (Phase 1+2)
 #include "HomePanelComponent.h"
@@ -542,6 +543,11 @@ private:
     std::unique_ptr<IngestWizardComponent> ingestWizard_;
     std::unique_ptr<BarraNavegacaoComponent> barraNavegacao_;
     std::unique_ptr<IntakeWorkspaceComponent> intakeWorkspace_; // INTAKE (Quarentena)
+    // PHONE DUMP > ANDROID USB: aparelho USB plugado com projeto aberto -> se for um Android em MTP, abre o Intake
+    // com o navegador do celular (como o agente do Android File Transfer). A sonda só procura, não abre o aparelho.
+    std::unique_ptr<matriz::celular::AvisoUsbPlugado> avisoUsb_;
+    std::unique_ptr<matriz::celular::SessaoAndroidUsb> sondaUsb_;
+    void aoUsbPlugado();
     std::unique_ptr<CatalogWorkspaceComponent> catalogWorkspace_; // GRID
     std::unique_ptr<DuplicatesWorkspaceComponent> duplicatesWorkspace_; // DUPLICATES
     std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // STRUCTURE > SPACE MAP (ex-ANALYTICS/Storage)
