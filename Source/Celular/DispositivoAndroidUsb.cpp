@@ -3,6 +3,7 @@
 #if defined(__APPLE__) && MATRIZ_COM_LIBMTP
 #define MATRIZ_ANDROID_USB 1
 #include <libmtp.h>
+#include <matriz_mtp.h>
 #include <IOKit/IOKitLib.h>
 #else
 #define MATRIZ_ANDROID_USB 0
@@ -43,6 +44,8 @@ struct SessaoAndroidUsb::Nucleo {
     std::deque<std::function<void()>> fila;
     bool encerrar = false;
     std::atomic<bool> cancelarCopia{false};
+    std::deque<EntradaAndroid> miniPendentes;          // protegido por mx
+    std::function<void(std::uint32_t, juce::Image)> aoMiniatura;
 #if MATRIZ_ANDROID_USB
     LIBMTP_mtpdevice_t* aparelho = nullptr;  // só a thread do núcleo mexe
 #endif
@@ -87,9 +90,16 @@ void soltarAparelho(LIBMTP_mtpdevice_t*& aparelho) {
 }
 
 // Conteúdo de uma pasta. false = erro de comunicação (lista vazia de verdade devolve true).
+// Primeiro numa transação só (MATRIZ_MTP_Listar_Pasta, GetObjectPropList nível 1); se o aparelho recusar, o caminho
+// da libmtp, que faz uma consulta por arquivo (minutos numa pasta de WhatsApp).
 bool listarPasta(LIBMTP_mtpdevice_t* aparelho, std::uint32_t memoria, std::uint32_t pasta, std::vector<EntradaAndroid>& saida) {
     LIBMTP_Clear_Errorstack(aparelho);
-    LIBMTP_file_t* lista = LIBMTP_Get_Files_And_Folders(aparelho, memoria, pasta);
+    int rapido = 0;
+    LIBMTP_file_t* lista = MATRIZ_MTP_Listar_Pasta(aparelho, memoria, pasta, &rapido);
+    if (!rapido) {
+        LIBMTP_Clear_Errorstack(aparelho);
+        lista = LIBMTP_Get_Files_And_Folders(aparelho, memoria, pasta);
+    }
     const bool erro = lista == nullptr && LIBMTP_Get_Errorstack(aparelho) != nullptr;
     LIBMTP_Clear_Errorstack(aparelho);
     while (lista != nullptr) {
@@ -138,15 +148,36 @@ int progressoLibmtp(std::uint64_t const enviados, std::uint64_t const, void cons
 void SessaoAndroidUsb::Nucleo::laco() {
     for (;;) {
         std::function<void()> tarefa;
+        EntradaAndroid mini;
+        std::function<void(std::uint32_t, juce::Image)> aoMini;
+        bool ehMini = false;
         {
             std::unique_lock<std::mutex> lk(mx);
-            cv.wait(lk, [this] { return encerrar || !fila.empty(); });
+            cv.wait(lk, [this] { return encerrar || !fila.empty() || !miniPendentes.empty(); });
             if (encerrar) break;
-            tarefa = std::move(fila.front());
-            fila.pop_front();
+            if (!fila.empty()) {
+                tarefa = std::move(fila.front());
+                fila.pop_front();
+            } else {  // miniaturas só quando não há outra tarefa (listar, copiar, preview vêm antes)
+                mini = miniPendentes.front();
+                miniPendentes.pop_front();
+                aoMini = aoMiniatura;
+                ehMini = true;
+            }
         }
         std::lock_guard<std::mutex> lkMtp(mutexLibmtp());
-        tarefa();
+        if (!ehMini) { tarefa(); continue; }
+        if (aparelho == nullptr || !aoMini) continue;
+        unsigned char* dados = nullptr;
+        unsigned int tam = 0;
+        juce::Image img;
+        LIBMTP_Clear_Errorstack(aparelho);
+        if (LIBMTP_Get_Thumbnail(aparelho, mini.id, &dados, &tam) == 0 && dados != nullptr && tam > 0)
+            img = juce::ImageFileFormat::loadFrom(dados, static_cast<size_t>(tam));
+        LIBMTP_Clear_Errorstack(aparelho);
+        std::free(dados);
+        const auto id = mini.id;
+        naMessageThread([aoMini, id, img] { aoMini(id, img); });
     }
     std::lock_guard<std::mutex> lkMtp(mutexLibmtp());
     soltarAparelho(aparelho);
@@ -189,6 +220,20 @@ SessaoAndroidUsb::~SessaoAndroidUsb() {
 }
 
 void SessaoAndroidUsb::cancelar() { nucleo_->cancelarCopia = true; }
+
+void SessaoAndroidUsb::pedirMiniaturas(std::vector<EntradaAndroid> itens, std::function<void(std::uint32_t, juce::Image)> aoChegar) {
+    {
+        std::lock_guard<std::mutex> lk(nucleo_->mx);
+        nucleo_->miniPendentes.assign(itens.begin(), itens.end());
+        nucleo_->aoMiniatura = std::move(aoChegar);
+    }
+    nucleo_->cv.notify_one();
+}
+
+juce::File SessaoAndroidUsb::pastaCache(const juce::String& serial) {
+    const auto nome = matriz::nomes_seguros::sanitizarComponente(serial.isNotEmpty() ? serial : juce::String("android"));
+    return juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Matriz Android USB").getChildFile(nome);
+}
 
 void SessaoAndroidUsb::detectar(std::function<void(bool)> aoTerminar) {
     nucleo_->enfileirar([aoTerminar] {
@@ -279,6 +324,29 @@ void SessaoAndroidUsb::listar(std::uint32_t memoria, std::uint32_t pasta,
         naMessageThread([aoTerminar, ok, itens = std::move(itens), chaveErro] {
             if (aoTerminar) aoTerminar(ok, itens, traduzir(chaveErro));
         });
+    });
+}
+
+void SessaoAndroidUsb::resolver(std::uint32_t memoria, std::vector<juce::String> partes,
+                                std::function<void(std::vector<std::pair<std::uint32_t, juce::String>>)> aoTerminar) {
+    Nucleo* n = nucleo_.get();
+    n->enfileirar([n, memoria, partes = std::move(partes), aoTerminar] {
+        std::vector<std::pair<std::uint32_t, juce::String>> cadeia;
+#if MATRIZ_ANDROID_USB
+        std::uint32_t atual = 0xffffffffu;
+        for (const auto& parte : partes) {
+            std::vector<EntradaAndroid> filhos;
+            if (n->aparelho == nullptr || !listarPasta(n->aparelho, memoria, atual, filhos)) { cadeia.clear(); break; }
+            const auto it = std::find_if(filhos.begin(), filhos.end(),
+                                         [&](const EntradaAndroid& e) { return e.pasta && e.nome.equalsIgnoreCase(parte); });
+            if (it == filhos.end()) { cadeia.clear(); break; }
+            cadeia.emplace_back(it->id, it->nome);
+            atual = it->id;
+        }
+#else
+        (void) n; (void) memoria; (void) partes;
+#endif
+        naMessageThread([aoTerminar, cadeia] { if (aoTerminar) aoTerminar(cadeia); });
     });
 }
 

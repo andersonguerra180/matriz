@@ -80,6 +80,11 @@ public:
     void listar(std::uint32_t memoria, std::uint32_t pasta,
                 std::function<void(bool ok, std::vector<EntradaAndroid>, juce::String erro)> aoTerminar);
 
+    // Acha uma pasta pelo caminho (nomes sem diferenciar maiúsculas, ex.: {"DCIM", "Camera"}) a partir da raiz da
+    // memória. `cadeia` = (id, nome) de cada nível, para a trilha; vazia se não existe.
+    void resolver(std::uint32_t memoria, std::vector<juce::String> partes,
+                  std::function<void(std::vector<std::pair<std::uint32_t, juce::String>> cadeia)> aoTerminar);
+
     // Expande as pastas marcadas (recursivo) em arquivos, com o caminho relativo a partir da pasta marcada.
     // Pode levar minutos (a libmtp faz uma consulta USB por arquivo): `aoProgresso` diz quantos arquivos já achou e
     // qual pasta está lendo.
@@ -94,6 +99,14 @@ public:
 
     // Interrompe a cópia em andamento (o arquivo pela metade é apagado).
     void cancelar();
+
+    // Miniaturas que o próprio Android gera (LIBMTP_Get_Thumbnail; fotos, em geral não vídeos). Cada pedido SUBSTITUI
+    // o anterior (só o que está na tela agora é buscado), uma por vez e só quando não há outra tarefa na fila.
+    // Imagem inválida = o aparelho não tem miniatura para aquele arquivo.
+    void pedirMiniaturas(std::vector<EntradaAndroid> itens, std::function<void(std::uint32_t id, juce::Image)> aoChegar);
+
+    // Pasta de cache temporária deste aparelho (preview, GEO): <temp>/Matriz Android USB/<serial>.
+    static juce::File pastaCache(const juce::String& serial);
 
     struct Nucleo;
 
