@@ -15,10 +15,16 @@ namespace matriz::ui {
 // arquivos da pasta e das subpastas, coluna de filtros de navegação à esquerda e o botão direito padrão do app
 // (+ EXTRACT da pasta e MOVE TO FOLDER). Com `nestId` é a janela de um CONTAINER: só os arquivos dele (pastaId é ignorado). A ficha
 // da direita é SOMENTE LEITURA. Não apaga nada em disco: "extrair" tira o arquivo da pasta (vai para NO FOLDER).
+// Com pastaId == kPastaSemPasta é a pasta virtual `_no folder`: os itens sem pasta no mapa selecionado do Folder Map (os mesmos
+// que o card NO FOLDER conta), carregados fora da message thread; `selecionarTudo` abre com todos eles selecionados.
 class JanelaPastaFlutuante : public juce::DocumentWindow {
 public:
+    static constexpr const char* kPastaSemPasta = "@no_folder";
+    static constexpr const char* kNomeSemPasta = "_no folder";
+
     JanelaPastaFlutuante(ProjetoAberto& projeto, const std::string& pastaId, const juce::String& nomePasta,
-                         std::function<void()> aoFechar, std::function<void()> aoMudouDados, const std::string& nestId = {});
+                         std::function<void()> aoFechar, std::function<void()> aoMudouDados, const std::string& nestId = {},
+                         bool selecionarTudo = false);
     ~JanelaPastaFlutuante() override;
 
     void closeButtonPressed() override;

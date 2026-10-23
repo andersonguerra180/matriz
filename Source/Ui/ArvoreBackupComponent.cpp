@@ -19,6 +19,7 @@
 #include "ImportarMenu.h"
 #include "LogosTipoArquivo.h"
 #include "TrashWindow.h"
+#include "JanelaPastaFlutuante.h"
 #include "../Celular/ExistentesProjeto.h"
 #include "../Whatsapp/WhatsappIngestao.h"
 #include "../Whatsapp/ServidorWhatsappApp.h"
@@ -1020,8 +1021,8 @@ void ArvoreBackupComponent::posicionarPainelPropostas() {
     const auto canvas = areaCanvas();
     const int largura = std::min(kLarguraMax, std::max(220, canvas.getWidth() - 2 * kMargem));
     const int alturaConteudo = static_cast<int>(propostas_.size()) * kLinha + 4;
-    // Containers importados (celular/ingest de pasta) aparecem DEBAIXO do card _trash, que fica no topo.
-    const auto trash = boundsPastaTrash();
+    // Containers importados (celular/ingest de pasta) aparecem DEBAIXO dos cards _trash e _no folder, que ficam no topo.
+    const auto trash = boundsPastaTrash().getUnion(boundsPastaSemPastaVirtual());
     const int yPainel = trash.isEmpty() ? canvas.getY() + kMargem : trash.getBottom() + 12;
     const int alturaMax = std::max(PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 60, canvas.getBottom() - kMargem - yPainel);
     const int altura = painelPropostasRecolhido_
@@ -1632,8 +1633,8 @@ void ArvoreBackupComponent::posicionarContainersNovos() {
     std::set<std::string> pendentes = containersSemPosicao_;
     for (auto& lf : looseFiles_) {
         if (pendentes.count(lf.id) == 0) continue;
-        // Abaixo do card _trash, que fica fixo no canto superior esquerdo da vista.
-        const auto trash = boundsPastaTrash();
+        // Abaixo dos cards _trash e _no folder, que ficam fixos no canto superior esquerdo da vista.
+        const auto trash = boundsPastaTrash().getUnion(boundsPastaSemPastaVirtual());
         const int yTela = std::max(canvas.getY() + 36, trash.isEmpty() ? 0 : trash.getBottom() + 14);
         auto pos = screenToCanvas({canvas.getX() + 36, yTela}).toInt();
         for (int tentativa = 0; tentativa < 400; ++tentativa) {
@@ -2439,16 +2440,60 @@ void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
         g.setColour(tk.acento);
         g.drawRoundedRectangle(card.reduced(0.5f), tk.raioPequeno, 2.0f);
     }
+    const int n = contagemSemPastaAtual();
+    g.setColour(tk.textoSecundario);
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
+    g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
+}
+
+int ArvoreBackupComponent::contagemSemPastaAtual() const {
     const auto agora = juce::Time::getMillisecondCounter();
     if (contagemSemPasta_ < 0 || contagemSemPastaMapa_ != mapaAtivoId_ || agora - contagemSemPastaMs_ > 1000) {
         contagemSemPasta_ = projeto_.contarItensSemPasta(mapaAtivoId_);
         contagemSemPastaMs_ = agora;
         contagemSemPastaMapa_ = mapaAtivoId_;
     }
-    const int n = contagemSemPasta_;
-    g.setColour(tk.textoSecundario);
+    return contagemSemPasta_;
+}
+
+// `_no folder` — mesmo desenho do card _trash, logo abaixo dele (some junto com ele: ORIGINAL ou _trash aberta sobreposta).
+juce::Rectangle<int> ArvoreBackupComponent::boundsPastaSemPastaVirtual() const {
+    const auto trash = boundsPastaTrash();
+    if (trash.isEmpty() || !aoAbrirPastaJanela) return {};  // sem quem abra a janela (ex.: mapa sobreposto), sem card
+    return trash.withY(trash.getBottom() + 8);
+}
+
+void ArvoreBackupComponent::desenharPastaSemPastaVirtual(juce::Graphics& g) const {
+    auto bounds = boundsPastaSemPastaVirtual();
+    if (bounds.isEmpty()) return;
+
+    const auto& tk = tema();
+    const juce::Colour cor(0xff6366f1);  // a cor do card NO FOLDER do Analytics
+    auto bf = bounds.toFloat();
+
+    g.setColour(tk.painel.withAlpha(0.95f));
+    g.fillRoundedRectangle(bf, tk.raioPequeno);
+    g.setColour(semPastaVirtualHover_ ? cor : tk.borda);
+    g.drawRoundedRectangle(bf, tk.raioPequeno, semPastaVirtualHover_ ? 1.5f : 1.0f);
+
+    auto header = bf.removeFromTop(22.0f);
+    g.setColour(tk.painelAlt);
+    g.fillRoundedRectangle(header, tk.raioPequeno);
+    g.fillRect(header.withTrimmedTop(14.0f));
+
+    g.setColour(cor);
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+    g.drawText(JanelaPastaFlutuante::kNomeSemPasta, header.reduced(8.0f, 0.0f), juce::Justification::centredLeft, true);
+
+    g.setColour(tk.textoTerciario);
     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-    g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
+    g.drawText(i18n::t("arvore_backup.sem_pasta_virtual_sub"), header.reduced(8.0f, 0.0f), juce::Justification::centredRight, true);
+
+    auto content = bf.reduced(8.0f, 4.0f);
+    g.setColour(tk.textoPrimario);
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+    g.drawText(juce::String(contagemSemPastaAtual()) + " " + i18n::t("arvore_backup.items"), content.removeFromTop(16.0f),
+               juce::Justification::centredLeft, true);
 }
 
 // LIXEIRA (_trash) — card fixo no canto superior esquerdo do canvas (espaço de TELA, imune ao zoom e pan).
@@ -2704,6 +2749,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         coluna_.paint(g);
         desenharSemPasta(g);
         desenharPastaTrash(g);
+        desenharPastaSemPastaVirtual(g);
         desenharIndicadorZoom(g);
         desenharBarraDeAbas(g);
         return;
@@ -2987,6 +3033,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     coluna_.paint(g);
     desenharSemPasta(g);
     desenharPastaTrash(g);
+    desenharPastaSemPastaVirtual(g);
     desenharIndicadorZoom(g);
     desenharBarraDeAbas(g);
 }
@@ -3186,6 +3233,12 @@ void ArvoreBackupComponent::mouseMove(const juce::MouseEvent& e) {
         trashHover_ = sobreTrash;
         repaint();
     }
+    const bool sobreSemPasta = boundsPastaSemPastaVirtual().contains(e.getPosition());
+    if (sobreSemPasta != semPastaVirtualHover_) {
+        semPastaVirtualHover_ = sobreSemPasta;
+        setMouseCursor(sobreSemPasta ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
     std::string idSob;
     if (areaCanvas().contains(e.getPosition())) {
         const auto p = screenToCanvas(e.getPosition());
@@ -3211,6 +3264,11 @@ void ArvoreBackupComponent::mouseMove(const juce::MouseEvent& e) {
 void ArvoreBackupComponent::mouseExit(const juce::MouseEvent&) {
     if (trashHover_) {
         trashHover_ = false;
+        repaint();
+    }
+    if (semPastaVirtualHover_) {
+        semPastaVirtualHover_ = false;
+        setMouseCursor(juce::MouseCursor::NormalCursor);
         repaint();
     }
     limparDicaPasta();
@@ -3269,6 +3327,12 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
             }
             repaint();
         }
+        return;
+    }
+
+    // `_no folder` — card fixo logo abaixo do _trash: abre a pasta virtual na janela de grade (MOVE TO FOLDER no botão direito).
+    if (boundsPastaSemPastaVirtual().contains(e.getPosition())) {
+        if (aoAbrirPastaJanela) aoAbrirPastaJanela(JanelaPastaFlutuante::kPastaSemPasta, JanelaPastaFlutuante::kNomeSemPasta);
         return;
     }
 
@@ -3834,6 +3898,7 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
 }
 
 void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
+    if (boundsPastaSemPastaVirtual().contains(e.getPosition())) return;  // o primeiro clique já abriu a janela
     if (!mapaAtivoEhOriginal() && boundsPastaTrash().contains(e.getPosition())) {
         if (trashFolderId_.empty()) trashFolderId_ = projeto_.obterOuCriarPastaTrash(mapaAtivoId_);
         limparSelecaoTudo();

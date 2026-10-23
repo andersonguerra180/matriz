@@ -175,7 +175,7 @@ public:
     // WhatsApp: copia UMA mídia da conversa como item comum, na(s) mesma(s) pasta(s) do Folder Map da conversa. A mídia
     // continua dentro da conversa. Entra pelo fluxo normal de ingestão (Intake).
     // Janela flutuante da pasta (duplo clique no card em Structure).
-    void abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta);
+    void abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta, bool selecionarTudo = false);
     void abrirJanelaDoContainer(const std::string& nestId, const juce::String& nome);
     void editarProjetoDoContainer(const std::string& nestId, const std::string& origem);
     void abrirProjectDoContainer(const std::string& nestId, const std::string& origem);

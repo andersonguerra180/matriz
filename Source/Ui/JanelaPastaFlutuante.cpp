@@ -42,8 +42,9 @@ const ProjetoAberto::NoArvore* acharNo(const ProjetoAberto::NoArvore& no, const 
 class JanelaPastaFlutuante::Conteudo : public juce::Component {
 public:
     Conteudo(ProjetoAberto& projeto, const std::string& pastaId, const juce::String& nome, std::function<void()> aoMudouDados,
-             std::string nestId)
-        : projeto_(projeto), pastaId_(pastaId), nome_(nome), aoMudouDados_(std::move(aoMudouDados)), nestId_(std::move(nestId)) {
+             std::string nestId, bool selecionarTudo)
+        : projeto_(projeto), pastaId_(pastaId), nome_(nome), aoMudouDados_(std::move(aoMudouDados)), nestId_(std::move(nestId)),
+          semPasta_(pastaId == kPastaSemPasta), selecionarTudo_(selecionarTudo) {
         mosaico_ = std::make_unique<MosaicoComponent>(projeto_);
         mosaico_->aoAbrirPreview = [this](const std::string& id) { abrirPreview(id); };
         mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> ids) { abrirMenu(std::move(ids)); };
@@ -53,6 +54,12 @@ public:
             if (aguardandoCarga_) {  // a grade terminou de carregar: agora as contagens dos filtros (só desta pasta) são calculáveis
                 aguardandoCarga_ = false;
                 filtros_->recarregar();
+            }
+            // Aberta pelo card NO FOLDER: chega com todos os arquivos selecionados — só depois que o snapshot chegou (o
+            // definirFiltroItens de carregarGrade já avisa aqui, com a grade ainda vazia).
+            if (selecionarTudo_ && !mosaico_->snapshotPendente() && mosaico_->totalItensCarregados() > 0) {
+                selecionarTudo_ = false;
+                mosaico_->selecionarTodos();
             }
         };
         viewportGrade_.setViewedComponent(mosaico_.get(), false);
@@ -88,7 +95,7 @@ public:
         lblTitulo_.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
         lblTitulo_.setColour(juce::Label::textColourId, tema().textoPrimario);
         // Duplo clique no nome abre a caixinha de renomear a pasta.
-        if (nestId_.empty() && !projeto_.somenteLeitura() && !projeto_.mapaSelecionadoNoFolderMap().empty() &&
+        if (nestId_.empty() && !semPasta_ && !projeto_.somenteLeitura() && !projeto_.mapaSelecionadoNoFolderMap().empty() &&
             projeto_.mapaSelecionadoNoFolderMap() != ProjetoAberto::kMapaOriginal) {
             lblTitulo_.setEditable(false, true, true);
             lblTitulo_.onTextChange = [this] {
@@ -122,7 +129,11 @@ public:
         recarregarItens();
     }
 
-    ~Conteudo() override { arvore_.setRootItem(nullptr); }
+    ~Conteudo() override {
+        ++geracaoSemPasta_;
+        poolSemPasta_.removeAllJobs(true, 5000);
+        arvore_.setRootItem(nullptr);
+    }
 
     void paint(juce::Graphics& g) override {
         g.fillAll(tema().fundo);
@@ -186,6 +197,7 @@ public:
             carregarGrade();
             return;
         }
+        if (semPasta_) { recarregarSemPasta(); return; }
         try {
             std::string mapa = projeto_.mapaSelecionadoNoFolderMap();
             if (mapa.empty()) mapa = projeto_.mapaAtivoPadrao();
@@ -216,6 +228,44 @@ public:
     }
 
 private:
+    // `_no folder`: os ids (itensSemPasta, a mesma regra do card NO FOLDER) e quantos deles estão no INTAKE ou com CONTENT =
+    // Hidden — os dois casos que a grade da aba METADATA não mostra — são lidos fora da message thread.
+    void recarregarSemPasta() {
+        lblTitulo_.setText(nome_, juce::dontSendNotification);
+        std::string mapa = projeto_.mapaSelecionadoNoFolderMap();
+        if (mapa.empty()) mapa = projeto_.mapaAtivoPadrao();
+        const int geracao = ++geracaoSemPasta_;
+        juce::Component::SafePointer<Conteudo> seguro(this);
+        ProjetoAberto* proj = &projeto_;
+        poolSemPasta_.addJob([seguro, proj, mapa, geracao] {
+            std::set<std::string> ids;
+            int noIntake = 0, ocultos = 0;
+            try {
+                ids = proj->itensSemPasta(mapa);
+                auto st = proj->projeto().registroLeitura().prepare(
+                    "SELECT COALESCE(SUM(COALESCE(em_quarentena, 0) = 1), 0), "
+                    "COALESCE(SUM(COALESCE(em_quarentena, 0) = 0 AND COALESCE(collection_type, '') = 'Hidden'), 0) "
+                    "FROM item WHERE projeto_id = ? AND COALESCE(estado, '') != 'duplicata' AND id NOT IN "
+                    "(SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
+                st.bind(1, matriz::db::Value::of(proj->projeto().projetoId()));
+                st.bind(2, matriz::db::Value::of(mapa));
+                if (st.step()) { noIntake = st.columnInt(0); ocultos = st.columnInt(1); }
+            } catch (...) {}
+            juce::MessageManager::callAsync([seguro, geracao, ids = std::move(ids), noIntake, ocultos]() mutable {
+                if (seguro == nullptr || geracao != seguro->geracaoSemPasta_.load()) return;
+                seguro->ids_ = std::move(ids);
+                seguro->semPastaNoIntake_ = noIntake;
+                seguro->semPastaOcultos_ = ocultos;
+                ProjetoAberto::NoArvore raiz;
+                raiz.id = kPastaSemPasta;
+                raiz.nome = seguro->nome_;
+                raiz.itemIds = seguro->ids_;
+                seguro->construirArvore(raiz);
+                seguro->carregarGrade();
+            });
+        });
+    }
+
     // O snapshot da grade roda em background (como no resto do app); os filtros recontam quando ele termina.
     void carregarGrade() {
         aguardandoCarga_ = true;
@@ -309,7 +359,9 @@ private:
         const int sel = static_cast<int>(mosaico_->itensSelecionados().size());
         lblContagem_.setText(nome_ + juce::String::fromUTF8("  \xc2\xb7  ") +
                                  i18n::t("janela_pasta.contagem").replace("{n}", juce::String(n)) +
-                                 (sel > 0 ? juce::String::fromUTF8("  \xc2\xb7  ") + i18n::t("janela_pasta.selecionados").replace("{n}", juce::String(sel)) : juce::String()),
+                                 (sel > 0 ? juce::String::fromUTF8("  \xc2\xb7  ") + i18n::t("janela_pasta.selecionados").replace("{n}", juce::String(sel)) : juce::String()) +
+                                 (semPasta_ && semPastaOcultos_ > 0 ? juce::String::fromUTF8("  \xc2\xb7  ") + i18n::t("janela_pasta.sem_pasta_ocultos").replace("{n}", juce::String(semPastaOcultos_)) : juce::String()) +
+                                 (semPasta_ && semPastaNoIntake_ > 0 ? juce::String::fromUTF8("  \xc2\xb7  ") + i18n::t("janela_pasta.sem_pasta_intake").replace("{n}", juce::String(semPastaNoIntake_)) : juce::String()),
                              juce::dontSendNotification);
     }
 
@@ -335,7 +387,7 @@ private:
         if (ids.empty()) return;
         auto menu = acoes::construirMenu(projeto_, ids, ganchos().itemEmMemoria, true);
         menu.addSeparator();
-        menu.addItem(kMenuExtrairDaPasta, i18n::t("janela_pasta.extrair"));
+        if (!semPasta_) menu.addItem(kMenuExtrairDaPasta, i18n::t("janela_pasta.extrair"));  // `_no folder`: não há de onde extrair
         menu.addItem(kMenuMoverParaPasta, i18n::t("janela_pasta.mover"));
         juce::Component::SafePointer<Conteudo> seguro(this);
         ProjetoAberto* proj = &projeto_;
@@ -406,6 +458,11 @@ private:
     juce::Viewport viewportGrade_, viewportFiltros_;
     juce::TextButton btnVoltar_, btnGrade_, btnLista_;
     std::string nestId_;  // não vazio = janela de um CONTAINER (só os membros dele)
+    bool semPasta_ = false;        // pasta virtual `_no folder` (pastaId == kPastaSemPasta)
+    bool selecionarTudo_ = false;  // seleciona tudo quando a grade terminar de carregar
+    int semPastaNoIntake_ = 0, semPastaOcultos_ = 0;
+    std::atomic<int> geracaoSemPasta_{0};
+    juce::ThreadPool poolSemPasta_{1};
     bool aguardandoCarga_ = false;
     juce::Label lblTitulo_, lblContagem_;
     juce::TextEditor campoBusca_;
@@ -416,14 +473,15 @@ private:
 };
 
 JanelaPastaFlutuante::JanelaPastaFlutuante(ProjetoAberto& projeto, const std::string& pastaId, const juce::String& nomePasta,
-                                           std::function<void()> aoFechar, std::function<void()> aoMudouDados, const std::string& nestId)
+                                           std::function<void()> aoFechar, std::function<void()> aoMudouDados, const std::string& nestId,
+                                           bool selecionarTudo)
     : juce::DocumentWindow("FOLDER: " + nomePasta, moldura::paleta().fundo, juce::DocumentWindow::closeButton),
       aoFechar_(std::move(aoFechar)) {
     // Moldura do sistema de janelas: sem barra nativa; cabeçalho + X redondo (mesma ação do antigo EXIT).
     setUsingNativeTitleBar(false);
     setTitleBarHeight(0);
     setResizable(true, false);
-    auto* conteudo = new Conteudo(projeto, pastaId, nomePasta, std::move(aoMudouDados), nestId);
+    auto* conteudo = new Conteudo(projeto, pastaId, nomePasta, std::move(aoMudouDados), nestId, selecionarTudo);
     conteudo_ = conteudo;
     juce::String titulo = i18n::t("arvore_backup.sobreposto_titulo").replace("{nome}", nomePasta);
     if (!nestId.empty()) {  // container: o tipo do PROJECT em destaque (DDP MASTER, VINYL TRANSCRIPTION...) e o nome

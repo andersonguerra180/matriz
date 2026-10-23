@@ -3488,7 +3488,7 @@ void MainComponent::ingerirPastaDoBridge() {
         });
 }
 
-void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta) {
+void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta, bool selecionarTudo) {
     if (!projetoAberto_) return;
     janelaPasta_.reset();
     juce::Component::SafePointer<MainComponent> seguro(this);
@@ -3505,7 +3505,8 @@ void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::S
             if (seguro->mosaico_) seguro->mosaico_->recarregar();
             if (seguro->filtros_) seguro->filtros_->recarregar();
             if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
-        });
+        },
+        std::string(), selecionarTudo);
 }
 
 // Open Project: o player de CD no DDP; nos demais PROJECTS o preview do arquivo-capa, com a capa do projeto e a coluna dos arquivos.

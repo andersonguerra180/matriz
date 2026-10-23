@@ -309,6 +309,7 @@ private:
     mutable juce::uint32 contagemSemPastaMs_ = 0;
     mutable std::string contagemSemPastaMapa_;
     bool semPastaHover_ = false;
+    int contagemSemPastaAtual() const;  // a contagem acima, refeita no máximo 1x/s (compartilhada com o card `_no folder`)
 
     // LIXEIRA (_trash) — card fixo no canto superior esquerdo do canvas (fora do zoom).
     juce::Rectangle<int> boundsPastaTrash() const;
@@ -319,6 +320,12 @@ private:
     std::string trashFolderId_;
     int trashContagem_ = 0;
     bool trashHover_ = false;
+
+    // `_no folder` — card fixo logo abaixo do _trash: pasta virtual com os itens sem pasta do mapa ativo (os mesmos do
+    // SEM PASTA / card NO FOLDER do Analytics). Clique abre a janela de grade (JanelaPastaFlutuante::kPastaSemPasta).
+    juce::Rectangle<int> boundsPastaSemPastaVirtual() const;
+    void desenharPastaSemPastaVirtual(juce::Graphics& g) const;
+    bool semPastaVirtualHover_ = false;
 
     // Slider de tamanho. Com folders selecionados age só neles (e PARA quando um encosta num vizinho);
     // sem seleção é a escala GLOBAL: cartões e espaços crescem juntos, então nada se sobrepõe.
