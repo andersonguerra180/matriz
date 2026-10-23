@@ -326,11 +326,12 @@ private:
     int trashContagem_ = 0;
     bool trashHover_ = false;
 
-    // `_no folder` — card fixo logo abaixo do _trash: pasta virtual com os itens sem pasta do mapa ativo (os mesmos do
-    // SEM PASTA / card NO FOLDER do Analytics). Clique abre a janela de grade (JanelaPastaFlutuante::kPastaSemPasta).
+    // `_no folder` — pasta fixa no canvas logo abaixo do _trash: pasta virtual com os itens sem pasta do mapa ativo (os mesmos do
+    // SEM PASTA / card NO FOLDER do Analytics). Clique seleciona; duplo clique abre o mosaico (JanelaPastaFlutuante::kPastaSemPasta).
     juce::Rectangle<int> boundsPastaSemPastaVirtual() const;
     void desenharPastaSemPastaVirtual(juce::Graphics& g) const;
     bool semPastaVirtualHover_ = false;
+    bool semPastaVirtualSelecionada_ = false;
     juce::ThreadPool poolSemPasta_{1};  // leitura dos ids do `_no folder` para o IMPORT, fora da message thread
 
     // Slider de tamanho. Com folders selecionados age só neles (e PARA quando um encosta num vizinho);

@@ -2473,8 +2473,9 @@ void ArvoreBackupComponent::desenharPastaSemPastaVirtual(juce::Graphics& g) cons
 
     g.setColour(tk.painel.withAlpha(0.95f));
     g.fillRoundedRectangle(bf, tk.raioPequeno);
-    g.setColour(semPastaVirtualHover_ ? cor : tk.borda);
-    g.drawRoundedRectangle(bf, tk.raioPequeno, semPastaVirtualHover_ ? 1.5f : 1.0f);
+    const bool destaque = semPastaVirtualHover_ || semPastaVirtualSelecionada_;
+    g.setColour(destaque ? cor : tk.borda);
+    g.drawRoundedRectangle(bf, tk.raioPequeno, semPastaVirtualSelecionada_ ? 2.0f : (semPastaVirtualHover_ ? 1.5f : 1.0f));
 
     auto header = bf.removeFromTop(22.0f);
     g.setColour(tk.painelAlt);
@@ -2483,7 +2484,8 @@ void ArvoreBackupComponent::desenharPastaSemPastaVirtual(juce::Graphics& g) cons
 
     g.setColour(cor);
     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-    g.drawText(JanelaPastaFlutuante::kNomeSemPasta, header.reduced(8.0f, 0.0f), juce::Justification::centredLeft, true);
+    g.drawText(juce::String::fromUTF8("\xf0\x9f\x93\x81 ") + JanelaPastaFlutuante::kNomeSemPasta, header.reduced(8.0f, 0.0f),
+               juce::Justification::centredLeft, true);
 
     g.setColour(tk.textoTerciario);
     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
@@ -3276,6 +3278,7 @@ void ArvoreBackupComponent::mouseExit(const juce::MouseEvent&) {
 
 void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
     limparDicaPasta();  // clicou: a dica de hover não vale mais
+    if (std::exchange(semPastaVirtualSelecionada_, false)) repaint();  // `_no folder` só fica selecionada se o clique for nela
     grabKeyboardFocus(); // garante que ESC (e os atalhos +/-/F2 já existentes) cheguem a este canvas
     if (!destaqueNovaPastaId_.empty()) { // S4/15 — qualquer clique encerra o destaque da pasta nova
         destaqueNovaPastaId_.clear();
@@ -3333,9 +3336,11 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
-    // `_no folder` — card fixo logo abaixo do _trash: abre a pasta virtual na janela de grade (MOVE TO FOLDER no botão direito).
+    // `_no folder` — pasta fixa logo abaixo do _trash: o clique seleciona, como numa pasta; o duplo clique abre (mouseDoubleClick).
     if (boundsPastaSemPastaVirtual().contains(e.getPosition())) {
-        if (aoAbrirPastaJanela) aoAbrirPastaJanela(JanelaPastaFlutuante::kPastaSemPasta, JanelaPastaFlutuante::kNomeSemPasta);
+        limparSelecaoTudo();
+        semPastaVirtualSelecionada_ = true;
+        repaint();
         return;
     }
 
@@ -3904,7 +3909,11 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
 }
 
 void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
-    if (boundsPastaSemPastaVirtual().contains(e.getPosition())) return;  // o primeiro clique já abriu a janela
+    // `_no folder`: abre o mosaico dos arquivos sem pasta (MOVE TO FOLDER no botão direito; R + REJECT MARKED -> _trash).
+    if (boundsPastaSemPastaVirtual().contains(e.getPosition())) {
+        if (aoAbrirPastaJanela) aoAbrirPastaJanela(JanelaPastaFlutuante::kPastaSemPasta, JanelaPastaFlutuante::kNomeSemPasta);
+        return;
+    }
     if (!mapaAtivoEhOriginal() && boundsPastaTrash().contains(e.getPosition())) {
         if (trashFolderId_.empty()) trashFolderId_ = projeto_.obterOuCriarPastaTrash(mapaAtivoId_);
         limparSelecaoTudo();
