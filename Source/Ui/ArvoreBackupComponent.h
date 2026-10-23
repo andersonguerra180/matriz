@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "ColunaCardsLayout.h"
+#include "BarraLateral.h"
 #include "EventBus.h"
 #include "ProjetoAberto.h"
 
@@ -280,7 +281,13 @@ private:
 
     // Coluna esquerda em cards (MAPA / PASTAS / VISUALIZAÇÃO / SEM PASTA), padrão do
     // INTAKE. O canvas ocupa o resto; tudo aqui é em coordenadas de TELA (do componente).
-    ColunaCardsLayout coluna_;
+    // Mapa "BARRA LATERAL DO STRUCTURE" (240 px): mesmo padrão do INTAKE e do METADATA.
+    barra::Layout coluna_;
+    barra::PilulaLf pilulaLf_;
+    barra::SegmentoLf segmentoLf_;
+    juce::Rectangle<int> trilhoZoom_;         // trilho do – | Fit | +
+    juce::Rectangle<int> rotuloTamanhoBounds_;  // "Size", à esquerda do slider de tamanho
+    juce::Rectangle<int> caixaArvore_;        // fundo claro da árvore do FOLDER EXPLORER
     juce::Rectangle<int> semPastaBounds_;
     juce::Rectangle<int> detalheBounds_;  // lista da pasta selecionada, no espaço livre da coluna
     juce::Rectangle<int> zoomIndicadorBounds_;

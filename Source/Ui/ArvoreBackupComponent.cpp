@@ -617,6 +617,28 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
         mostrarMenuArquivoDetalhe(itemId);
     };
 
+    // Barra lateral no desenho do mapa: pílulas bege, – | Fit | + num trilho, Find com lupa no título do card.
+    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnAutoArranjar_.get(), btnResetTamanhos_.get(), btnMenuMapa_.get(),
+                    btnNovoMapa_.get(), btnFind_.get()})
+        b->setLookAndFeel(&pilulaLf_);
+    btnFind_->getProperties().set("lupa", true);
+    btnFind_->getProperties().set("leve", true);
+    btnMenuMapa_->getProperties().set("leve", true);
+    btnZoomFit_->getProperties().set("destaque", true);
+    for (auto* b : {btnZoomIn_.get(), btnZoomOut_.get(), btnZoomFit_.get()}) b->setLookAndFeel(&segmentoLf_);
+    btnZoomOut_->setButtonText(juce::String::fromUTF8("\xe2\x80\x93"));  // "–"
+    for (auto* sl : {sliderTamanho_.get(), sliderSpread_.get(), sliderSpreadV_.get()}) {
+        sl->setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 24);
+        sl->setColour(juce::Slider::textBoxBackgroundColourId, tema().campoFundo);
+        sl->setColour(juce::Slider::textBoxOutlineColourId, tema().borda);
+        sl->setColour(juce::Slider::textBoxTextColourId, tema().textoPrimario);
+    }
+    for (auto* r : {rotuloSpread_.get(), rotuloSpreadV_.get()}) {
+        r->setFont(barra::fonteChip());
+        r->setColour(juce::Label::textColourId, tema().textoSecundario);
+        r->setBorderSize({});
+    }
+
     // btnReceberCelular_ transferido para INTAKE (item 9C)
     setWantsKeyboardFocus(true);
     setOpaque(true);  // o paint faz fillAll do fundo inteiro
@@ -633,6 +655,9 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 }
 
 ArvoreBackupComponent::~ArvoreBackupComponent() {
+    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnAutoArranjar_.get(), btnZoomIn_.get(), btnZoomOut_.get(),
+                    btnZoomFit_.get(), btnResetTamanhos_.get(), btnMenuMapa_.get(), btnNovoMapa_.get(), btnFind_.get()})
+        if (b) b->setLookAndFeel(nullptr);  // pilulaLf_/segmentoLf_ morrem antes dos botões
     autoRolagem_.stopTimer();
     limparDicaPasta();
     janelaTrash_.reset();
@@ -1755,11 +1780,11 @@ void ArvoreBackupComponent::tentarEnquadrar() {
 
 juce::Rectangle<int> ArvoreBackupComponent::areaBarraAbas() const {
     if (sobreposto_) return {};  // a sobreposição não tem abas
-    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).removeFromTop(kAlturaBarraAbas);
+    return getLocalBounds().withTrimmedLeft(barra::kLargura).removeFromTop(kAlturaBarraAbas);
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaCanvas() const {
-    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).withTrimmedTop(sobreposto_ ? 0 : kAlturaBarraAbas);
+    return getLocalBounds().withTrimmedLeft(barra::kLargura).withTrimmedTop(sobreposto_ ? 0 : kAlturaBarraAbas);
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::boundsDaAba(int indice) const {
@@ -2436,14 +2461,14 @@ void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
 
     if (semPastaHover_) {
         g.setColour(tk.acento.withAlpha(0.22f));
-        g.fillRoundedRectangle(card, tk.raioPequeno);
+        g.fillRoundedRectangle(card, barra::kRaioCard);
         g.setColour(tk.acento);
-        g.drawRoundedRectangle(card.reduced(0.5f), tk.raioPequeno, 2.0f);
+        g.drawRoundedRectangle(card.reduced(0.5f), barra::kRaioCard, 2.0f);
     }
     const int n = contagemSemPastaAtual();
-    g.setColour(tk.textoSecundario);
-    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-    g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
+    g.setColour(tk.textoTerciario);
+    g.setFont(barra::fonteContagem());  // "_NO FOLDER ........ 376 items": a contagem à direita, na linha do título
+    g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredRight, true);
 }
 
 int ArvoreBackupComponent::contagemSemPastaAtual() const {
@@ -3046,9 +3071,22 @@ void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
         g.setColour(tema().borda.withAlpha(0.7f));
         g.drawRoundedRectangle(detalheBounds_.toFloat().reduced(0.5f), tema().raioPequeno, 1.0f);
     }
-    g.setColour(tema().textoTerciario);
-    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-    g.drawText("Zoom " + juce::String(static_cast<int>(zoom_ * 100)) + "%", zoomIndicadorBounds_, juce::Justification::centredLeft);
+    const auto& tk = tema();
+    if (!trilhoZoom_.isEmpty()) barra::pintarTrilhoSegmentado(g, trilhoZoom_);
+    if (!caixaArvore_.isEmpty()) {
+        g.setColour(tk.campoFundo);
+        g.fillRoundedRectangle(caixaArvore_.toFloat(), 8.0f);
+        g.setColour(tk.borda.withAlpha(0.55f));
+        g.drawRoundedRectangle(caixaArvore_.toFloat().reduced(0.5f), 8.0f, 1.0f);
+    }
+    if (!rotuloTamanhoBounds_.isEmpty()) {
+        g.setColour(tk.textoSecundario);
+        g.setFont(barra::fonteChip());
+        g.drawText(i18n::t("arvore_backup.rotulo_tamanho"), rotuloTamanhoBounds_, juce::Justification::centredLeft, false);
+    }
+    g.setColour(tk.textoTerciario);
+    g.setFont(barra::fonteContagem());
+    g.drawText(juce::String(static_cast<int>(zoom_ * 100)) + "%", zoomIndicadorBounds_, juce::Justification::centredRight);
 }
 
 // Cabeçalho do card. Pasta com regra: "AUTO" + um pontinho por bloco, na cor de cada bloco e
@@ -3089,79 +3127,110 @@ void ArvoreBackupComponent::desenharCabecalhoNo(juce::Graphics& g, const FolderN
 }
 
 void ArvoreBackupComponent::resized() {
-    coluna_.comecar(getLocalBounds().removeFromLeft(ColunaCardsLayout::kLargura));
+    using namespace barra;
+    coluna_.comecar(getLocalBounds().removeFromLeft(kLargura));
     auto& corpo = coluna_.corpo();
     const bool original = mapaAtivoEhOriginal();
+    auto linhaDupla = [&](juce::Component* a, juce::Component* b, int altura) {
+        auto linha = corpo.removeFromTop(altura);
+        const int meia = (linha.getWidth() - 8) / 2;
+        if (a) a->setBounds(linha.removeFromLeft(meia));
+        linha.removeFromLeft(8);
+        if (b) b->setBounds(linha);
+    };
 
-    // MAPA — dropdown de mapas, "⋯" e NOVO FOLDER MAP.
+    // 1. MAP: dropdown e "⋯" na mesma linha; "+ New folder map" embaixo.
     coluna_.iniciarCard(i18n::t("arvore_backup.card_mapa"));
-    if (comboMapas_) comboMapas_->setBounds(corpo.removeFromTop(26));
-    corpo.removeFromTop(4);
     {
-        auto linha = corpo.removeFromTop(26);
-        if (btnMenuMapa_) btnMenuMapa_->setBounds(linha.removeFromLeft(30));
-        linha.removeFromLeft(4);
-        if (btnNovoMapa_) btnNovoMapa_->setBounds(linha);
+        auto linha = corpo.removeFromTop(28);
+        if (btnMenuMapa_) btnMenuMapa_->setBounds(linha.removeFromRight(32));
+        linha.removeFromRight(8);
+        if (comboMapas_) comboMapas_->setBounds(linha);
     }
+    corpo.removeFromTop(6);
+    if (btnNovoMapa_) btnNovoMapa_->setBounds(corpo.removeFromTop(kChipH));
     coluna_.finalizarCard();
 
-    // PASTAS — Nova pasta, Renomear, Delete e Ajustar.
+    // 2. FOLDERS: "+ New folder" na linha inteira; Rename | Auto arrange lado a lado.
     coluna_.iniciarCard(i18n::t("arvore_backup.card_pastas"));
-    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnAutoArranjar_.get()}) {
-        if (b) b->setBounds(corpo.removeFromTop(26));
-        corpo.removeFromTop(4);
-    }
+    if (btnCriarPasta_) btnCriarPasta_->setBounds(corpo.removeFromTop(kChipH));
+    corpo.removeFromTop(6);
+    linhaDupla(btnRenomearPasta_.get(), btnAutoArranjar_.get(), kChipH);
     coluna_.finalizarCard();
 
-    // VISUALIZAÇÃO — zoom, tamanho dos cartões e indicador de zoom.
-    coluna_.iniciarCard(i18n::t("arvore_backup.card_visualizacao"));
+    // 3. VIEW numa linha: – | Fit | + agrupados com o zoom ao lado; "Show Project Containers as Folders" logo abaixo.
     {
-        auto linha = corpo.removeFromTop(26);
-        const int w = (linha.getWidth() - 8) / 3;
-        if (btnZoomOut_) btnZoomOut_->setBounds(linha.removeFromLeft(w));
-        linha.removeFromLeft(4);
-        if (btnZoomFit_) btnZoomFit_->setBounds(linha.removeFromLeft(w));
-        linha.removeFromLeft(4);
-        if (btnZoomIn_) btnZoomIn_->setBounds(linha);
+        auto linha = coluna_.iniciarCardEmLinha(i18n::t("arvore_backup.card_visualizacao"), 30);
+        zoomIndicadorBounds_ = linha.removeFromRight(44);
+        linha.removeFromRight(6);
+        trilhoZoom_ = linha.withSizeKeepingCentre(juce::jmin(linha.getWidth(), 100), 30).withX(linha.getRight() - juce::jmin(linha.getWidth(), 100));
+        auto seg = trilhoZoom_;
+        const int wPonta = 28;
+        if (btnZoomOut_) btnZoomOut_->setBounds(seg.removeFromLeft(wPonta));
+        if (btnZoomIn_) btnZoomIn_->setBounds(seg.removeFromRight(wPonta));
+        if (btnZoomFit_) btnZoomFit_->setBounds(seg);
+        corpo.removeFromTop(8);
+        if (chkContainersComoPastas_) chkContainersComoPastas_->setBounds(corpo.removeFromTop(36));
+        coluna_.finalizarCard();
     }
-    corpo.removeFromTop(2);
-    zoomIndicadorBounds_ = corpo.removeFromTop(14);
-    corpo.removeFromTop(4);
-    if (chkContainersComoPastas_) chkContainersComoPastas_->setBounds(corpo.removeFromTop(22));
-    coluna_.finalizarCard();
 
-    // FOLDER SIZE — slider de tamanho (seleção ou todos) e RESET SIZES.
-    coluna_.iniciarCard(i18n::t("arvore_backup.card_tamanho"));
-    if (sliderTamanho_) sliderTamanho_->setBounds(corpo.removeFromTop(22));
-    corpo.removeFromTop(2);
-    if (rotuloSpread_) rotuloSpread_->setBounds(corpo.removeFromTop(14));
-    if (sliderSpread_) sliderSpread_->setBounds(corpo.removeFromTop(22));
-    if (rotuloSpreadV_) rotuloSpreadV_->setBounds(corpo.removeFromTop(14));
-    if (sliderSpreadV_) sliderSpreadV_->setBounds(corpo.removeFromTop(22));
-    corpo.removeFromTop(4);
-    if (btnResetTamanhos_) btnResetTamanhos_->setBounds(corpo.removeFromTop(26));
-    coluna_.finalizarCard();
-
-    // FOLDER EXPLORER — só pastas do mapa ativo; FIND seleciona a pasta (e descendentes) no stage. Ocupa o lugar
-    // que era do NEW FOLDERS (agora uma janela flutuante sobre o stage, ver posicionarPainelPropostas).
+    // 4. FOLDER SIZE: nome à esquerda, slider e valor na mesma linha; "Reset" no título do card.
     {
-        constexpr int kAlturaFind = 26;
-        const int reservadoSemPasta = original ? 0 : 46;
-        const int sobra = corpo.getHeight() - reservadoSemPasta - (ColunaCardsLayout::kCardPad * 2 + ColunaCardsLayout::kHeaderH + 4) - kAlturaFind - 4;
-        const int alturaTree = juce::jlimit(70, 230, static_cast<int>(sobra * 0.62f));
-        coluna_.iniciarCard(i18n::t("arvore_backup.card_explorador"));
-        if (treeExplorador_) treeExplorador_->setBounds(corpo.removeFromTop(alturaTree));
-        corpo.removeFromTop(4);
-        if (btnFind_) btnFind_->setBounds(corpo.removeFromTop(kAlturaFind));
+        auto titulo = coluna_.iniciarCard(i18n::t("arvore_backup.card_tamanho"));
+        if (btnResetTamanhos_) btnResetTamanhos_->setBounds(titulo.removeFromRight(56).withSizeKeepingCentre(56, 24));
+        auto linhaSlider = [&](juce::Rectangle<int>* rotuloPintado, juce::Label* rotulo, juce::Slider* slider) {
+            auto linha = corpo.removeFromTop(24);
+            const auto r = linha.removeFromLeft(64);
+            if (rotuloPintado) *rotuloPintado = r;
+            if (rotulo) rotulo->setBounds(r);
+            if (slider) slider->setBounds(linha);
+        };
+        linhaSlider(&rotuloTamanhoBounds_, nullptr, sliderTamanho_.get());
+        corpo.removeFromTop(6);
+        linhaSlider(nullptr, rotuloSpread_.get(), sliderSpread_.get());
+        corpo.removeFromTop(6);
+        linhaSlider(nullptr, rotuloSpreadV_.get(), sliderSpreadV_.get());
+        coluna_.finalizarCard();
+    }
+
+    // 5. FOLDER EXPLORER cresce: a árvore ocupa toda a altura que sobrar; Find no título do card. Com uma pasta
+    //    selecionada, a lista dela (nome, subpastas, arquivos) divide a sobra com a árvore, logo abaixo do card.
+    const int alturaSemPasta = original ? 0 : (kPadV * 2 + 20 + kEntreCards);
+    const bool comDetalhe = detailViewport_ && detailViewport_->isVisible() && !selectedFolderId_.empty();
+    {
+        const int sobra = corpo.getHeight() - alturaSemPasta;
+        const int alturaCard = comDetalhe ? juce::jmax(140, static_cast<int>(sobra * 0.5f)) : juce::jmax(100, sobra - kEntreCards);
+        const int fundoCard = corpo.getY() + alturaCard;
+        auto titulo = coluna_.iniciarCard(i18n::t("arvore_backup.card_explorador"));
+        if (btnFind_) btnFind_->setBounds(titulo.removeFromRight(72).withSizeKeepingCentre(72, 24));
+        caixaArvore_ = corpo.withBottom(fundoCard - kPadV);
+        if (treeExplorador_) treeExplorador_->setBounds(caixaArvore_.reduced(4));
+        corpo.removeFromTop(caixaArvore_.getHeight());
         coluna_.finalizarCard();
     }
     posicionarPainelPropostas();
 
-    // SEM PASTA — o card com a contagem, clicável e aceitando drop (nunca no ORIGINAL).
+    // Pasta selecionada: nome, subpastas e a lista de arquivos no espaço entre o explorador e o _NO FOLDER.
+    detalheBounds_ = {};
+    if (comDetalhe) {
+        auto area = corpo.withTrimmedBottom(alturaSemPasta);
+        if (area.getHeight() >= 80) {
+            detalheBounds_ = area;
+            detailViewport_->setBounds(area.reduced(1));
+            detailContent_->setSize(area.getWidth() - 2 - detailViewport_->getScrollBarThickness(), detailContent_->getHeight());
+            corpo.removeFromTop(area.getHeight() + kEntreCards);
+        } else {
+            detailViewport_->setBounds({});
+        }
+    } else if (detailViewport_) {
+        detailViewport_->setBounds({});
+    }
+
+    // 6. _NO FOLDER numa linha só, com a contagem à direita — clicável e aceitando drop (nunca no ORIGINAL).
     semPastaBounds_ = {};
     if (!original) {
-        coluna_.iniciarCard(i18n::t("arvore_backup.sem_pasta_titulo"));
-        semPastaBounds_ = corpo.removeFromTop(16);
+        corpo.setTop(juce::jmax(corpo.getY(), corpo.getBottom() - (kPadV * 2 + 20)));  // encostado embaixo da coluna
+        semPastaBounds_ = coluna_.iniciarCardEmLinha(i18n::t("arvore_backup.sem_pasta_titulo"), 20);
         coluna_.finalizarCard();
     }
 
@@ -3174,24 +3243,6 @@ void ArvoreBackupComponent::resized() {
         }
     }
     tentarEnquadrar();
-
-    // Pasta selecionada: nome, subpastas e a lista de arquivos ocupam o espaço que sobra na coluna
-    // esquerda (antes era um painel por cima do canvas, à direita).
-    detalheBounds_ = {};
-    if (detailViewport_ && detailViewport_->isVisible() && !selectedFolderId_.empty()) {
-        auto area = corpo.withTrimmedBottom(0);
-        area.setX(area.getX() - 4);
-        area.setWidth(area.getWidth() + 8);
-        if (area.getHeight() >= 80) {
-            detalheBounds_ = area;
-            detailViewport_->setBounds(area.reduced(1));
-            detailContent_->setSize(area.getWidth() - 2 - detailViewport_->getScrollBarThickness(), detailContent_->getHeight());
-        } else {
-            detailViewport_->setBounds({});
-        }
-    } else if (detailViewport_) {
-        detailViewport_->setBounds({});
-    }
 
     const auto canvas = areaCanvas();
     if (conversaWhatsapp_ && conversaWhatsapp_->isVisible()) {
