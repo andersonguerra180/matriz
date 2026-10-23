@@ -3502,7 +3502,21 @@ void MainComponent::abrirProjectDoContainer(const std::string& nestId, const std
     if (membros.empty()) return;
     std::string capa = membros.front();
     if (const auto info = projetoAberto_->nestDoItem(membros.front())) if (!info->capaId.empty()) capa = info->capaId;
-    abrirPreview(capa);
+    // Preview do próprio container numa janela flutuante, navegando entre os membros dele. O preview embutido
+    // (abrirPreview) depende do mosaico_ do layout antigo, que não existe nas abas atuais (nullptr -> crash).
+    activePreviewWindow_.reset();
+    juce::Component::SafePointer<MainComponent> seguro(this);
+    auto aoFechar = [seguro] {
+        juce::MessageManager::callAsync([seguro] { if (seguro) seguro->activePreviewWindow_.reset(); });
+    };
+    auto aoNavegar = [membros](const std::string& atual, int dir) -> std::optional<std::string> {
+        const auto it = std::find(membros.begin(), membros.end(), atual);
+        if (it == membros.end()) return std::nullopt;
+        const auto idx = static_cast<int>(it - membros.begin()) + dir;
+        if (idx < 0 || idx >= static_cast<int>(membros.size())) return std::nullopt;
+        return membros[static_cast<size_t>(idx)];
+    };
+    activePreviewWindow_ = std::make_unique<FloatingPreviewWindow>(*projetoAberto_, capa, aoFechar, aoNavegar, nullptr);
 }
 
 // Duplo clique num container no Folder Map: a janela de grade só com o conteúdo dele (filtros, thumbs/lista, metadados somente leitura).
