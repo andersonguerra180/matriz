@@ -23,13 +23,26 @@ public:
 
     bool isAtivo() const { return ativo_; }
 
+    // Metade de um seletor segmentado (barras laterais): sem borda própria; ativo = pílula grafite. O trilho atrás dos
+    // dois botões é pintado por quem os posiciona (barra::pintarTrilhoSegmentado).
+    void setSegmentado(bool s) { segmentado_ = s; repaint(); }
+
     void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
         const auto& tk = tema();
         auto bounds = getLocalBounds().toFloat().reduced(0.5f);
         float corner = tk.raioPequeno;
 
+        if (segmentado_) {
+            if (ativo_) {
+                g.setColour(tk.acento);
+                g.fillRoundedRectangle(bounds.reduced(2.0f), (bounds.getHeight() - 4.0f) * 0.5f);
+            } else if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown) {
+                g.setColour(tk.painel.withAlpha(0.7f));
+                g.fillRoundedRectangle(bounds.reduced(2.0f), (bounds.getHeight() - 4.0f) * 0.5f);
+            }
+        }
         // Background fill
-        if (ativo_) {
+        else if (ativo_) {
             g.setColour(tk.acento);
             g.fillRoundedRectangle(bounds, corner);
         } else if (shouldDrawButtonAsDown) {
@@ -44,8 +57,10 @@ public:
         }
 
         // Outline border
-        g.setColour(ativo_ ? tk.acento.darker(0.1f) : tk.borda.withAlpha(0.6f));
-        g.drawRoundedRectangle(bounds, corner, 1.0f);
+        if (!segmentado_) {
+            g.setColour(ativo_ ? tk.acento.darker(0.1f) : tk.borda.withAlpha(0.6f));
+            g.drawRoundedRectangle(bounds, corner, 1.0f);
+        }
 
         // Icon color
         juce::Colour iconCol = ativo_ ? tk.textoSobreAcento 
@@ -86,6 +101,7 @@ public:
 private:
     IconType type_;
     bool ativo_ = false;
+    bool segmentado_ = false;
 };
 
 } // namespace matriz::ui
