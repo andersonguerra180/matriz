@@ -961,14 +961,16 @@ public:
 
         // GET (local atual pelo IP) e OPEN (Google Maps), como em todas as fichas de GEO LOCATION.
         btnGet_ = std::make_unique<juce::TextButton>(i18n::t("imp.ficha.geo.get"));
-        btnGet_->setTooltip("Fill in with the current location (approximate, by IP)");
+        btnGet_->setTooltip(i18n::t("imp.ficha.geo.get.dica"));
         btnGet_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnGet_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
         btnGet_->onClick = [this] {
             juce::Component::SafePointer<juce::Component> seguro(this);
-            matriz::ui::geoacoes::obterLocalAtual([this, seguro](matriz::ui::geoacoes::Local l) {
+            matriz::ui::geoacoes::obterLocal({ edCoords_->getText(), edAddress_->getText(), edCity_->getText(), edState_->getText(), edCountry_->getText() },
+                                             btnGet_.get(), [this, seguro](matriz::ui::geoacoes::Local l) {
                 if (seguro == nullptr) return;
                 if (l.coords.isNotEmpty()) edCoords_->setText(l.coords);
+                if (l.endereco.isNotEmpty()) edAddress_->setText(l.endereco);
                 if (l.cidade.isNotEmpty()) edCity_->setText(l.cidade);
                 if (l.estado.isNotEmpty()) edState_->setText(l.estado);
                 if (l.pais.isNotEmpty()) edCountry_->setText(l.pais);

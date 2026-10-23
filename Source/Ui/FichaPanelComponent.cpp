@@ -1968,14 +1968,19 @@ public:
 
         // GET (local atual) e OPEN (Google Maps): em todas as fichas de GEO LOCATION.
         geolocalizacao_.btnGet = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.get"));
-        geolocalizacao_.btnGet->setTooltip(isPt ? "Preencher com o local atual (aproximado, pelo IP)" : "Fill in with the current location (approximate, by IP)");
+        geolocalizacao_.btnGet->setTooltip(matriz::i18n::t("imp.ficha.geo.get.dica"));
         geolocalizacao_.btnGet->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         geolocalizacao_.btnGet->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
         geolocalizacao_.btnGet->onClick = [this, commitGeo] {
             juce::Component::SafePointer<juce::Component> seguro(this);
-            matriz::ui::geoacoes::obterLocalAtual([this, seguro, commitGeo](matriz::ui::geoacoes::Local l) {
+            const auto txt = [](const std::unique_ptr<juce::TextEditor>& e) { return e ? e->getText() : juce::String(); };
+            const matriz::ui::geoacoes::Local preenchido{ txt(geolocalizacao_.editorCoords), txt(geolocalizacao_.editorAddress),
+                                                          txt(geolocalizacao_.editorCity), txt(geolocalizacao_.editorState),
+                                                          txt(geolocalizacao_.editorCountry) };
+            matriz::ui::geoacoes::obterLocal(preenchido, geolocalizacao_.btnGet.get(), [this, seguro, commitGeo](matriz::ui::geoacoes::Local l) {
                 if (seguro == nullptr) return;
                 if (geolocalizacao_.editorCoords && l.coords.isNotEmpty()) geolocalizacao_.editorCoords->setText(l.coords);
+                if (geolocalizacao_.editorAddress && l.endereco.isNotEmpty()) geolocalizacao_.editorAddress->setText(l.endereco);
                 if (geolocalizacao_.editorCity && l.cidade.isNotEmpty()) geolocalizacao_.editorCity->setText(l.cidade);
                 if (geolocalizacao_.editorState && l.estado.isNotEmpty()) geolocalizacao_.editorState->setText(l.estado);
                 if (geolocalizacao_.editorCountry && l.pais.isNotEmpty()) geolocalizacao_.editorCountry->setText(l.pais);
@@ -5459,15 +5464,18 @@ private:
             addAndMakeVisible(*geoLote_.botaoFavoritos);
 
             geoLote_.botaoGet = std::make_unique<juce::TextButton>(matriz::i18n::t("imp.ficha.geo.get"));
-            geoLote_.botaoGet->setTooltip(isPt ? "Preencher com o local atual (aproximado, pelo IP) e aplicar a todos os selecionados"
-                                               : "Fill in with the current location (approximate, by IP) and apply to all selected");
+            geoLote_.botaoGet->setTooltip(matriz::i18n::t("imp.ficha.geo.get.dica"));
             geoLote_.botaoGet->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
             geoLote_.botaoGet->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
             geoLote_.botaoGet->onClick = [this] {
                 juce::Component::SafePointer<juce::Component> seguro(this);
-                matriz::ui::geoacoes::obterLocalAtual([this, seguro](matriz::ui::geoacoes::Local l) {
+                const auto txt = [](const std::unique_ptr<juce::TextEditor>& e) { return e ? e->getText() : juce::String(); };
+                const matriz::ui::geoacoes::Local preenchido{ txt(geoLote_.editorCoords), txt(geoLote_.editorAddress), txt(geoLote_.editorCity),
+                                                              txt(geoLote_.editorState), txt(geoLote_.editorCountry) };
+                matriz::ui::geoacoes::obterLocal(preenchido, geoLote_.botaoGet.get(), [this, seguro](matriz::ui::geoacoes::Local l) {
                     if (seguro == nullptr) return;
                     if (geoLote_.editorCoords && l.coords.isNotEmpty()) geoLote_.editorCoords->setText(l.coords);
+                    if (geoLote_.editorAddress && l.endereco.isNotEmpty()) geoLote_.editorAddress->setText(l.endereco);
                     if (geoLote_.editorCity && l.cidade.isNotEmpty()) geoLote_.editorCity->setText(l.cidade);
                     if (geoLote_.editorState && l.estado.isNotEmpty()) geoLote_.editorState->setText(l.estado);
                     if (geoLote_.editorCountry && l.pais.isNotEmpty()) geoLote_.editorCountry->setText(l.pais);

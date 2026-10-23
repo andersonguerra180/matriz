@@ -218,10 +218,14 @@ const std::set<std::string>& semOpticosRaros() {
 // ── geolocalização (cidade, estado, país, coordenadas) e botão GET ───────────────────────────────────────
 
 void obterLocalizacao(PainelOverlay& overlay) {
-    // Local aproximado pelo IP, preenchido sem apagar nada. Só roda quando o usuário clica em GET (GeoAcoes).
+    // Tudo vazio: local aproximado pelo IP. Algo preenchido: busca pelo que foi digitado (GeoAcoes::obterLocal), sem apagar o
+    // que o usuário escreveu. Só roda quando o usuário clica em GET.
     juce::Component::SafePointer<PainelOverlay> seguro(&overlay);
-    geoacoes::obterLocalAtual([seguro](geoacoes::Local local) {
+    const geoacoes::Local preenchido{ overlay.valorDoCampo("geo_coord"), overlay.valorDoCampo("geo_endereco"), overlay.valorDoCampo("geo_cidade"),
+                                      overlay.valorDoCampo("geo_estado"), overlay.valorDoCampo("geo_pais") };
+    geoacoes::obterLocal(preenchido, &overlay, [seguro](geoacoes::Local local) {
         if (seguro == nullptr) return;
+        seguro->definirValorCampo("geo_endereco", local.endereco);
         seguro->definirValorCampo("geo_cidade", local.cidade);
         seguro->definirValorCampo("geo_estado", local.estado);
         seguro->definirValorCampo("geo_pais", local.pais);
