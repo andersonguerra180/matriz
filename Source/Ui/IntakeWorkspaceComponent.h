@@ -21,6 +21,7 @@
 namespace matriz::ui {
 
 class FloatingPreviewWindow;
+class JanelaAndroidUsb;
 class PainelMetadadosArquivo;
 
 class IntakeWorkspaceComponent : public juce::Component,
@@ -275,8 +276,8 @@ private:
     std::vector<std::pair<juce::Array<juce::File>, std::shared_ptr<const matriz::ingest::SobreMaterial>>> youtubePendentes_;
     void abrirReceberDoCelular(std::function<void()> aoVoltar = nullptr);
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
-    void abrirAndroidUsb(std::function<void()> aoVoltar);
-    std::function<void()> aoVoltarEscolhaCelular_;  // VOLTAR da escolha GALLERY/WHATSAPP/USB (reabre o IMPORT)
+    void abrirAndroidUsb();
+    std::unique_ptr<JanelaAndroidUsb> janelaAndroidUsb_;  // PHONE DUMP > ANDROID USB (janela própria)
     std::unique_ptr<juce::TextButton> btnAjuda_;
     bool hasParentCatalog_ = false;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;

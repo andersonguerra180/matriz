@@ -25,6 +25,7 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "LogosTipoArquivo.h"
 #include "PainelAndroidUsb.h"
+#include "../Celular/DispositivoAndroidUsb.h"
 #include "PainelImportarWhatsapp.h"
 #include "ImportarMenu.h"
 #include "ContainerVisual.h"
@@ -4542,7 +4543,6 @@ void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id, s
 
 void IntakeWorkspaceComponent::abrirReceberDoCelular(std::function<void()> aoVoltar) {
     if (overlayAtual_ != nullptr) return;
-    aoVoltarEscolhaCelular_ = aoVoltar;
     overlayAtual_ = std::make_unique<PainelOverlay>();
     addAndMakeVisible(*overlayAtual_);
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
@@ -4559,41 +4559,42 @@ void IntakeWorkspaceComponent::abrirReceberDoCelular(std::function<void()> aoVol
 }
 
 void IntakeWorkspaceComponent::abrirAndroidUsbAoPlugar() {
-    if (overlayAtual_ != nullptr || !matriz::celular::SessaoAndroidUsb::suportado()) return;
-    abrirAndroidUsb(nullptr);
+    if (!matriz::celular::SessaoAndroidUsb::suportado()) return;
+    if (janelaAndroidUsb_ != nullptr) { janelaAndroidUsb_->toFront(true); return; }
+    if (overlayAtual_ != nullptr) return;
+    abrirAndroidUsb();
 }
 
-// PHONE DUMP > ANDROID USB: navegador do celular plugado por cabo. Os arquivos copiados entram como a galeria do
-// QR code (container "gallery", Original Source Medium = Phone Dump). VOLTAR reabre a escolha GALLERY/WHATSAPP/USB.
-void IntakeWorkspaceComponent::abrirAndroidUsb(std::function<void()> aoVoltarDaEscolha) {
-    if (overlayAtual_ != nullptr) return;
+// PHONE DUMP > ANDROID USB: o celular numa janela de pasta (mesmo formato da janela do Folder Map). Os arquivos copiados
+// entram como a galeria do QR code (container "gallery", Original Source Medium = Phone Dump).
+void IntakeWorkspaceComponent::abrirAndroidUsb() {
+    if (janelaAndroidUsb_ != nullptr) { janelaAndroidUsb_->toFront(true); return; }
     auto* pProj = &projeto_.projeto();
     auto existentes = [pProj]() -> matriz::celular::ConjuntoExistentes {
         if (pProj == nullptr) return {};
         return matriz::celular::existentesDoProjeto(*pProj);
     };
-    overlayAtual_ = std::make_unique<PainelOverlay>();
-    addAndMakeVisible(*overlayAtual_);
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
-    mostrarAndroidUsb(*overlayAtual_, existentes, [seguro, aoVoltarDaEscolha](RespostaReceberCelular r, bool voltou) {
-        juce::MessageManager::callAsync([seguro, r, voltou, aoVoltarDaEscolha] {
-            if (seguro == nullptr) return;
-            seguro->overlayAtual_.reset();
-            seguro->resized();
-            if (voltou) { seguro->abrirReceberDoCelular(aoVoltarDaEscolha); return; }
-            if (r.concluiu && r.recebidos > 0 && r.pastaSessao.isDirectory() && seguro->aoIngerirArquivosDireto) {
-                if (seguro->aoDefinirOrigemContainer) seguro->aoDefinirOrigemContainer("gallery");  // galeria do celular = container
-                seguro->aoIngerirArquivosDireto({r.pastaSessao});
-            }
+    janelaAndroidUsb_ = std::make_unique<JanelaAndroidUsb>(existentes,
+        [seguro](juce::File pasta, int recebidos) {
+            juce::MessageManager::callAsync([seguro, pasta, recebidos] {
+                if (seguro == nullptr) return;
+                seguro->janelaAndroidUsb_.reset();
+                if (recebidos > 0 && pasta.isDirectory() && seguro->aoIngerirArquivosDireto) {
+                    if (seguro->aoDefinirOrigemContainer) seguro->aoDefinirOrigemContainer("gallery");  // galeria do celular = container
+                    seguro->aoIngerirArquivosDireto({pasta});
+                }
+            });
+        },
+        [seguro] {
+            juce::MessageManager::callAsync([seguro] { if (seguro != nullptr) seguro->janelaAndroidUsb_.reset(); });
         });
-    }, true);
-    resized();
 }
 
 void IntakeWorkspaceComponent::iniciarReceberDoCelular(ModoImportacaoCelular modo) {
     if (overlayAtual_ != nullptr) return;
     if (modo == ModoImportacaoCelular::AndroidUsb) {
-        abrirAndroidUsb(aoVoltarEscolhaCelular_);
+        abrirAndroidUsb();
         return;
     }
     if (modo == ModoImportacaoCelular::WhatsApp) {
