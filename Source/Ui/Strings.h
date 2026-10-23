@@ -1717,6 +1717,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"analytics.sem_pasta", "NO FOLDER"},
         {"analytics.sem_pasta_valor", "{n} files (click)"},
         {"analytics.sem_pasta_original", "ORIGINAL map: no unfiled items"},
+        {"analytics.sem_pasta_onde", "In STRUCTURE › _no folder · {mapa}"},
         {"analytics.btn_root", "GLOBAL ROOT"},
         {"analytics.btn_up", "UP"},
         {"analytics.stats", "TOTAL CATALOG: {t} ASSETS ({ts})  |  VIEWPORT: {v} ({vs})"},

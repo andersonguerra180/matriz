@@ -30,7 +30,7 @@ public:
 
     std::function<void(const std::set<std::string>&)> aoAbrirNoGrid;           // BACKUP HEALTH → itens vulneráveis
     std::function<void(const std::set<std::string>&)> aoClicarNeedsAttention;
-    std::function<void(const std::set<std::string>&)> aoAbrirSemPasta;
+    std::function<void()> aoAbrirSemPasta;                                      // NO FOLDER → STRUCTURE › _no folder (os ids são lidos lá)
     std::function<void()> aoMudarAltura;                                        // (reservado: a altura só depende da largura)
 
     void paint(juce::Graphics& g) override;

@@ -174,7 +174,9 @@ void CartoesAnalyticsComponent::paint(juce::Graphics& g) {
     const juce::String semPastaValor = dados_.semPastaOriginal
         ? juce::String::fromUTF8("\xe2\x80\x94")
         : i18n::t("analytics.sem_pasta_valor").replace("{n}", juce::String(dados_.semPasta));
-    const juce::String semPastaSub = dados_.semPastaOriginal ? i18n::t("analytics.sem_pasta_original") : dados_.semPastaMapaNome;
+    // Onde estão: a pasta `_no folder` da STRUCTURE, no mapa selecionado no Folder Map.
+    const juce::String semPastaSub = dados_.semPastaOriginal ? i18n::t("analytics.sem_pasta_original")
+                                                             : i18n::t("analytics.sem_pasta_onde").replace("{mapa}", dados_.semPastaMapaNome);
 
     struct Card { juce::String titulo, valor, sub; juce::Colour cor; bool clicavel; };
     const Card cards[kNumCards] = {
@@ -236,7 +238,7 @@ void CartoesAnalyticsComponent::mouseDown(const juce::MouseEvent& e) {
             if (aoAbrirNoGrid) aoAbrirNoGrid(ids);
         });
     } else if (h == 5 && !dados_.semPastaOriginal && aoAbrirSemPasta) {
-        aoAbrirSemPasta(projeto_.itensSemPasta(dados_.semPastaMapaId));
+        aoAbrirSemPasta();
     }
 }
 

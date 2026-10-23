@@ -1729,6 +1729,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"analytics.sem_pasta", "SEM PASTA"},
         {"analytics.sem_pasta_valor", "{n} arquivos (clique)"},
         {"analytics.sem_pasta_original", "Mapa ORIGINAL: sem itens sem pasta"},
+        {"analytics.sem_pasta_onde", "Em STRUCTURE › _no folder · {mapa}"},
         {"analytics.btn_root", "RAIZ GLOBAL"},
         {"analytics.btn_up", "SUBIR"},
         {"analytics.stats", "CATÁLOGO TOTAL: {t} ATIVOS ({ts})  |  VISUALIZAÇÃO: {v} ({vs})"},
