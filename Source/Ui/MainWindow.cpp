@@ -693,6 +693,12 @@ void MainWindow::mostrarPreferenciasDialogo() {
             toggleTooltips_->setColour(juce::ToggleButton::textColourId, tk.textoSecundario);
             addAndMakeVisible(*toggleTooltips_);
 
+            toggleLoteDuplicatas_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("preferencias.duplicatas_lote_todas"));
+            toggleLoteDuplicatas_->setTooltip(matriz::i18n::t("preferencias.duplicatas_lote_todas_dica"));
+            toggleLoteDuplicatas_->setToggleState(matriz::app::lerLoteDuplicatasTodasCategorias(), juce::dontSendNotification);
+            toggleLoteDuplicatas_->setColour(juce::ToggleButton::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*toggleLoteDuplicatas_);
+
             btnSave_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("SALVAR E APLICAR") : "SAVE & APPLY");
             btnSave_->setColour(juce::TextButton::buttonColourId, tk.acento);
             btnSave_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
@@ -702,6 +708,8 @@ void MainWindow::mostrarPreferenciasDialogo() {
                 matriz::app::gravarLocale(novoLocale);
                 matriz::app::gravarTema(comboTema_->getSelectedId() == 2 ? "light" : "dark");
                 matriz::app::gravarTooltipsHabilitados(toggleTooltips_->getToggleState());
+                matriz::app::gravarLoteDuplicatasTodasCategorias(toggleLoteDuplicatas_->getToggleState());
+                if (mainWin_ && mainWin_->conteudo_) mainWin_->conteudo_->aplicarPreferenciaLoteDuplicatas();
 
                 if (idiomaMudou && mainWin_) {
                     mainWin_->trocarIdioma(novoLocale);
@@ -723,7 +731,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
             };
             addAndMakeVisible(*btnClose_);
 
-            setSize(420, 310);
+            setSize(420, 360);
         }
 
         void resized() override {
@@ -740,6 +748,8 @@ void MainWindow::mostrarPreferenciasDialogo() {
             area.removeFromTop(12);
 
             toggleTooltips_->setBounds(area.removeFromTop(28));
+            area.removeFromTop(4);
+            toggleLoteDuplicatas_->setBounds(area.removeFromTop(44));  // texto em duas linhas
             
             auto bottomRow = area.removeFromBottom(36);
             btnClose_->setBounds(bottomRow.removeFromRight(100));
@@ -756,6 +766,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
         std::unique_ptr<juce::Label> lblTema_;
         std::unique_ptr<juce::ComboBox> comboTema_;
         std::unique_ptr<juce::ToggleButton> toggleTooltips_;
+        std::unique_ptr<juce::ToggleButton> toggleLoteDuplicatas_;
         std::unique_ptr<juce::TextButton> btnSave_;
         std::unique_ptr<juce::TextButton> btnClose_;
     };
@@ -763,7 +774,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
     auto painel = std::make_unique<PainelPreferencias>(janela, this);
     janela->setContentOwned(painel.release(), true);
     janela->setResizable(false, false);
-    janela->centreWithSize(420, 350);
+    janela->centreWithSize(420, 400);
     janela->setVisible(true);
     janela->enterModalState(true, juce::ModalCallbackFunction::create([janela](int) {
         janela->setVisible(false);

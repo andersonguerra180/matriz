@@ -563,6 +563,10 @@ MainComponent::MainComponent() {
     };
 }
 
+void MainComponent::aplicarPreferenciaLoteDuplicatas() {
+    if (duplicatesWorkspace_) duplicatesWorkspace_->aplicarPreferenciaLote();
+}
+
 void MainComponent::atualizarTooltips() {
     if (matriz::app::lerTooltipsHabilitados()) {
         if (!tooltips_) {

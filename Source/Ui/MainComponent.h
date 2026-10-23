@@ -79,6 +79,8 @@ public:
     ~MainComponent() override;
 
     void atualizarTooltips();
+    // Preferences > lote em todas as categorias de duplicatas: a aba Duplicates mostra/esconde o SELECT ALL na hora.
+    void aplicarPreferenciaLoteDuplicatas();
     void atualizarTema();
     void atualizarIdioma();
     void lookAndFeelChanged() override;

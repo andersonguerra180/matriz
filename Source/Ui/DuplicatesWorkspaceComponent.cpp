@@ -18,6 +18,7 @@
 #include <unordered_set>
 #include "ConflitosMergeDialog.h"
 #include "RevisaoConflitosMergeComponent.h"
+#include "../App/Preferencias.h"
 
 namespace matriz::ui {
 
@@ -545,6 +546,12 @@ public:
         if (onSelectionChanged) onSelectionChanged();
     }
 
+    // SELECT ALL / CLEAR (preferência de lote em todas as categorias): marca ou desmarca todos os cards da lista.
+    void selecionarTodos(bool selecionar) {
+        for (auto* card : cards_) card->definirSelecionado(selecionar);
+        notifySelectionChanged();
+    }
+
     std::function<void()> onSelectionChanged;
 
     void recalculateHeight() {
@@ -947,6 +954,7 @@ private:
         
         bool isExpanded() const { return isExpanded_; }
         bool isSelected() const { return chkSelecionar_->getToggleState(); }
+        void definirSelecionado(bool s) { chkSelecionar_->setToggleState(s, juce::dontSendNotification); }
         size_t groupIndex() const { return index_; }
 
         void toggleExpanded() {
@@ -1138,6 +1146,14 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     btnDismissSelected_->onClick = [this] { resolverSelecionados(false); };
     btnDismissSelected_->setEnabled(false);
     addChildComponent(*btnDismissSelected_);
+
+    btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_selecionar_todos"));
+    btnSelecionarTodos_->setTooltip(matriz::i18n::t("duplicatas.btn_selecionar_todos_dica"));
+    btnSelecionarTodos_->onClick = [this] { if (listaComponent_) listaComponent_->selecionarTodos(true); };
+    addChildComponent(*btnSelecionarTodos_);
+    btnLimparSelecao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_limpar_selecao"));
+    btnLimparSelecao_->onClick = [this] { if (listaComponent_) listaComponent_->selecionarTodos(false); };
+    addChildComponent(*btnLimparSelecao_);
 
     btnReset_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_reset"));
     btnReset_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
@@ -2604,11 +2620,14 @@ void DuplicatesWorkspaceComponent::resetarAba() {
     repaint();
 }
 
+bool DuplicatesWorkspaceComponent::loteTodasCategorias() { return matriz::app::lerLoteDuplicatasTodasCategorias(); }
+
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
     if (gruposDetectados_.empty()) return;
 
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
+    const bool todas = loteTodasCategorias();
     if (!ehDuplicataReal) {
         // Dismiss All: inalterado — não sinaliza nada como duplicata, então
         // não afeta o Make Backup de forma nenhuma.
@@ -2627,7 +2646,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         try {
             db.run("BEGIN TRANSACTION", {});
             for (const auto& group : gruposDetectados_) {
-                if (group.criterio == "PROBABLE" || group.criterio == "SIMILAR") continue;  // só decisão manual
+                if (ehPrevisto(group) && !todas) continue;  // só decisão manual (sem a preferência de lote em todas)
                 acrescentarNota(db, group.duplicata.itemId,
                                 "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
@@ -2637,7 +2656,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         }
 
         gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
-                                               [](const DuplicateGroup& g) { return g.criterio != "PROBABLE" && g.criterio != "SIMILAR"; }),
+                                               [todas](const DuplicateGroup& g) { return todas || !ehPrevisto(g); }),
                                 gruposDetectados_.end());
         if (!gruposDetectados_.empty()) {  // sobraram só PROVÁVEIS: continuam na lista
             listaComponent_->updateList(gruposDetectados_);
@@ -2693,7 +2712,9 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
     // valem sem perguntar (conflitos no histórico + filtro "Merge conflicts").
     // PROVÁVEIS (pHash) nunca entram em decisão em lote: ficam na lista para decisão manual, um a um.
     std::vector<DuplicateGroup> grupos, provaveis;
-    for (const auto& g : gruposDetectados_) ((g.criterio == "PROBABLE" || g.criterio == "SIMILAR") ? provaveis : grupos).push_back(g);
+    // Com a preferência de lote em todas as categorias, PROBABLE e SIMILAR entram no lote como os IDENTICAL.
+    const bool todas = loteTodasCategorias();
+    for (const auto& g : gruposDetectados_) ((ehPrevisto(g) && !todas) ? provaveis : grupos).push_back(g);
     if (grupos.empty()) {
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("duplicatas.aviso_lote_titulo"),
                                                matriz::i18n::t("duplicatas.aviso_lote_corpo").replace("{n}", juce::String((int) provaveis.size())),
@@ -2977,7 +2998,8 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
                            in.removeFromTop(16), juce::Justification::centredLeft, true);
                 g.setColour(tk.textoPrimario);
                 g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-                g.drawFittedText(matriz::i18n::t("duplicatas.aviso_corpo"), in, juce::Justification::topLeft, 2, 1.0f);
+                g.drawFittedText(matriz::i18n::t(loteTodasCategorias() ? "duplicatas.aviso_corpo_todas" : "duplicatas.aviso_corpo"), in,
+                                 juce::Justification::topLeft, 2, 1.0f);
             }
             break;
     }
@@ -3051,8 +3073,16 @@ void DuplicatesWorkspaceComponent::resized() {
     // AÇÕES — só com resultados.
     for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get(), btnReset_.get()})
         b->setVisible(emResultados);
+    for (auto* b : {btnSelecionarTodos_.get(), btnLimparSelecao_.get()}) b->setVisible(emResultados && loteTodasCategorias());
     if (emResultados) {
         coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_acoes"));
+        if (loteTodasCategorias()) {  // SELECT ALL | CLEAR: só com a preferência de lote em todas as categorias
+            auto linha = corpo.removeFromTop(28);
+            btnSelecionarTodos_->setBounds(linha.removeFromLeft((linha.getWidth() - 4) / 2));
+            linha.removeFromLeft(4);
+            btnLimparSelecao_->setBounds(linha);
+            corpo.removeFromTop(4);
+        }
         for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get()}) {
             b->setBounds(corpo.removeFromTop(28));
             corpo.removeFromTop(4);

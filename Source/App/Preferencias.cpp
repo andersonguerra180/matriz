@@ -142,6 +142,15 @@ void gravarTooltipsHabilitados(bool habilitado) {
     arquivo().saveIfNeeded();
 }
 
+bool lerLoteDuplicatasTodasCategorias() {
+    return arquivo().getBoolValue("duplicatas_lote_todas_categorias", false);
+}
+
+void gravarLoteDuplicatasTodasCategorias(bool habilitado) {
+    arquivo().setValue("duplicatas_lote_todas_categorias", habilitado);
+    arquivo().saveIfNeeded();
+}
+
 float lerEscalaFonte() {
     return static_cast<float>(arquivo().getDoubleValue("escala_fonte", 1.0));
 }

@@ -146,6 +146,12 @@ private:
     // 'duplicata' pra sair da próxima leva de Make Backup.
     void aplicarEscolhaGlobal(int escolha);
     void atualizarBotoesSelecionados();
+public:
+    // Preferences > "lote em todas as categorias" mudou: SELECT ALL / CLEAR aparecem ou somem.
+    void aplicarPreferenciaLote() { resized(); repaint(); }
+private:
+    // Preferences: VALIDATE/DISMISS ALL e SELECT ALL valem também para PROBABLE e SIMILAR (default: não).
+    static bool loteTodasCategorias();
     void atualizarListaEStatusAposResolucao();
 
     // Coluna esquerda em cards (SCAN / FILTROS / AÇÕES), padrão do INTAKE.
@@ -158,6 +164,8 @@ private:
     std::unique_ptr<juce::TextButton> btnDismissAll_;
     std::unique_ptr<juce::TextButton> btnValidateSelected_;
     std::unique_ptr<juce::TextButton> btnDismissSelected_;
+    std::unique_ptr<juce::TextButton> btnSelecionarTodos_;  // só com a preferência de lote em todas as categorias
+    std::unique_ptr<juce::TextButton> btnLimparSelecao_;
     std::unique_ptr<juce::TextButton> btnReset_;
     // Duplicatas já resolvidas ficam escondidas do app inteiro; este botão abre a lista com RESTAURAR.
     std::unique_ptr<juce::TextButton> btnResolvidas_;

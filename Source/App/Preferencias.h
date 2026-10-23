@@ -52,6 +52,11 @@ void gravarRelinkIgnorado(const juce::String& projetoId, const juce::String& amo
 juce::String lerEstadoDispositivoAudio();
 void gravarEstadoDispositivoAudio(const juce::String& xml);
 
+// Duplicates: VALIDATE/DISMISS ALL e SELECT ALL valem para todas as categorias (IDENTICAL, PROBABLE, SIMILAR).
+// Default false: PROBABLE e SIMILAR (só parecidas, não idênticas) ficam para decisão um a um.
+bool lerLoteDuplicatasTodasCategorias();
+void gravarLoteDuplicatasTodasCategorias(bool habilitado);
+
 bool lerTooltipsHabilitados();
 void gravarTooltipsHabilitados(bool habilitado);
 
