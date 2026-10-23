@@ -697,7 +697,8 @@ if(APPLE)
         Source/Ingest/MiniaturaDocumento_mac.mm
         Source/Ui/VideoPlayerBridge.mm
         Source/Ui/DocumentPreviewBridge.mm
-        Source/Ui/PinturaImediata_mac.mm)
+        Source/Ui/PinturaImediata_mac.mm
+        Source/Ui/GeocoderSistema_mac.mm)
 elseif(WIN32)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard_win.cpp
@@ -710,7 +711,8 @@ elseif(WIN32)
         Source/Ui/DocumentPreviewBridge_win.cpp
         Source/Ui/PdfRenderer_win.cpp
         Source/Ui/PdfPageView_win.cpp
-        Source/Ui/PinturaImediata_win.cpp)
+        Source/Ui/PinturaImediata_win.cpp
+        Source/Ui/GeocoderSistema_win.cpp)
 endif()
 
 target_include_directories(matriz PRIVATE Source)
@@ -784,6 +786,7 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ AVFoundation>
+    $<$<PLATFORM_ID:Darwin>:-framework\ CoreLocation>
     $<$<PLATFORM_ID:Darwin>:-framework\ CoreMedia>
     $<$<PLATFORM_ID:Darwin>:-framework\ PDFKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ Quartz>

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "../I18n/Strings.h"
+#include "GeocoderSistema.h"
 
 namespace matriz::ui::geoacoes {
 
@@ -61,8 +62,8 @@ Local localDoNominatim(const juce::var& r, juce::String& rotulo) {
 }
 
 // Consulta o Nominatim (fora da message thread). Resposta de busca = array; de reverse = um objeto.
-std::vector<std::pair<Local, juce::String>> consultarNominatim(const juce::String& url) {
-    std::vector<std::pair<Local, juce::String>> out;
+Achados consultarNominatim(const juce::String& url) {
+    Achados out;
     try {
         juce::URL u(url);
         // A política de uso do Nominatim exige identificar o aplicativo; uma consulta por clique em GET.
@@ -130,34 +131,51 @@ void obterLocal(const Local& preenchido, juce::Component* alvo, std::function<vo
               juce::URL::addEscapeChars(consulta, true) + "&accept-language=" + juce::URL::addEscapeChars(idioma, true);
     }
 
+    // 1º o serviço do sistema (macOS: Apple, grátis e sem chave); sem resultado — ou no Windows, que não tem —, o
+    // Nominatim (OpenStreetMap). Os dois só rodam quando o usuário clica em GET.
     juce::Component::SafePointer<juce::Component> seguro(alvo);
-    juce::Thread::launch([url, consulta, preenchido, modo, seguro, aoConcluir = std::move(aoConcluir)] {
-        auto achados = consultarNominatim(url);
-        juce::MessageManager::callAsync([achados = std::move(achados), consulta, preenchido, modo, seguro, aoConcluir] {
-            if (achados.empty()) {
-                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
-                                                 .withIconType(juce::MessageBoxIconType::InfoIcon)
-                                                 .withTitle(matriz::i18n::t("imp.ficha.geo.get"))
-                                                 .withMessage(matriz::i18n::t("imp.ficha.geo.nada_achado").replace("{q}", consulta))
-                                                 .withButton(matriz::i18n::t("dialogo.ok")),
-                                             nullptr);
-                return;
-            }
-            if (achados.size() == 1 || modo == ModoGet::PorCoordenadas) {
-                if (aoConcluir) aoConcluir(mesclarAchado(preenchido, achados.front().first, modo));
-                return;
-            }
-            if (seguro == nullptr) return;  // a ficha que pediu já fechou
-            juce::PopupMenu menu;
-            menu.addSectionHeader(matriz::i18n::t("imp.ficha.geo.escolher"));
-            for (size_t i = 0; i < achados.size(); ++i) menu.addItem(static_cast<int>(i) + 1, achados[i].second);
-            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(seguro.getComponent()),
-                               [achados, preenchido, modo, aoConcluir](int escolha) {
-                                   if (escolha < 1 || escolha > static_cast<int>(achados.size()) || !aoConcluir) return;
-                                   aoConcluir(mesclarAchado(preenchido, achados[static_cast<size_t>(escolha - 1)].first, modo));
-                               });
+    auto apresentar = [consulta, preenchido, modo, seguro, aoConcluir](Achados achados) {
+        if (achados.empty()) {
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                             .withTitle(matriz::i18n::t("imp.ficha.geo.get"))
+                                             .withMessage(matriz::i18n::t("imp.ficha.geo.nada_achado").replace("{q}", consulta))
+                                             .withButton(matriz::i18n::t("dialogo.ok")),
+                                         nullptr);
+            return;
+        }
+        if (achados.size() == 1 || modo == ModoGet::PorCoordenadas) {
+            if (aoConcluir) aoConcluir(mesclarAchado(preenchido, achados.front().first, modo));
+            return;
+        }
+        if (seguro == nullptr) return;  // a ficha que pediu já fechou
+        juce::PopupMenu menu;
+        menu.addSectionHeader(matriz::i18n::t("imp.ficha.geo.escolher"));
+        for (size_t i = 0; i < achados.size(); ++i) menu.addItem(static_cast<int>(i) + 1, achados[i].second);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(seguro.getComponent()),
+                           [achados, preenchido, modo, aoConcluir](int escolha) {
+                               if (escolha < 1 || escolha > static_cast<int>(achados.size()) || !aoConcluir) return;
+                               aoConcluir(mesclarAchado(preenchido, achados[static_cast<size_t>(escolha - 1)].first, modo));
+                           });
+    };
+    auto noNominatim = [url, apresentar] {
+        juce::Thread::launch([url, apresentar] {
+            auto achados = consultarNominatim(url);
+            juce::MessageManager::callAsync([achados = std::move(achados), apresentar]() mutable { apresentar(std::move(achados)); });
         });
-    });
+    };
+    if (!geocoderDoSistemaDisponivel()) { noNominatim(); return; }
+    auto depoisDoSistema = [apresentar, noNominatim](Achados achados) {
+        if (achados.empty()) noNominatim();
+        else apresentar(std::move(achados));
+    };
+    if (modo == ModoGet::PorCoordenadas) {
+        double lat = 0, lng = 0;
+        coordsValidas(preenchido.coords, lat, lng);
+        reverterNoSistema(lat, lng, depoisDoSistema);
+    } else {
+        buscarNoSistema(consulta, depoisDoSistema);
+    }
 }
 
 juce::String urlDoGoogleMaps(const Local& local) {

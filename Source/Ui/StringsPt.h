@@ -1595,7 +1595,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"nomes.tipo_dc_creator", "Creator"},
         {"nomes.tipo_dc_publisher", "Publisher"},
         {"nomes.tipo_dc_contributor", "Contributor"},
-        {"imp.ficha.geo.get.dica", "Campos vazios: local atual (aproximado, pelo IP). Campos preenchidos: busca as coordenadas do que foi digitado (OpenStreetMap)"},
+        {"imp.ficha.geo.get.dica", "Campos vazios: local atual (aproximado, pelo IP). Campos preenchidos: busca as coordenadas do que foi digitado (Apple Maps no Mac, OpenStreetMap no Windows)"},
         {"imp.ficha.geo.nada_achado", "Nenhum lugar encontrado para \"{q}\"."},
         {"imp.ficha.geo.escolher", "Escolha o lugar"},
         {"nomes.unificar_linha", "{tipo}: {variantes} -> \"{canonico}\" ({n} itens)"},

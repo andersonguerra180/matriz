@@ -322,6 +322,10 @@ ponto com `// WINPORT: <regra>` (`grep -rn "WINPORT:" Source`). Pontos hoje:
   A libmtp vem do Homebrew (x86_64 só); release universal precisa compilar libmtp + libusb para arm64+x86_64.
 - `ArvoreBackupComponent.cpp` `importarSemPastaNaPasta` (branch `feat/no-folder-virtual`): `adicionarItensAPasta` +
   `aplicarAutoOrganizacao` síncronos na message thread — **nada de I/O na message thread** (como MOVE TO FOLDER hoje).
+- GET de GEO LOCATION (`GeoAcoes.cpp:obterLocal`): no Mac usa o geocoder da Apple (`GeocoderSistema_mac.mm`, CLGeocoder,
+  grátis e sem chave) e, sem resultado, o Nominatim; no Windows `GeocoderSistema_win.cpp` não tem serviço do sistema
+  (o MapLocationFinder exige chave do Bing Maps) e o GET usa só o Nominatim, que acha bem menos endereços — **API de
+  macOS sem equivalente Windows gratuito** (decisão do usuário em 2026-10-23: Apple no Mac, OpenStreetMap no Windows).
 - AGENTS.md: já existe na main (desde 738321c); a seção do port chega com a windows-port. Na hora do merge, garantir
   `CLAUDE.md` na main com a linha `@AGENTS.md` (hoje não existe CLAUDE.md).
 

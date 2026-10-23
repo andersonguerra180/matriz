@@ -1583,7 +1583,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"nomes.tipo_dc_creator", "Creator"},
         {"nomes.tipo_dc_publisher", "Publisher"},
         {"nomes.tipo_dc_contributor", "Contributor"},
-        {"imp.ficha.geo.get.dica", "Empty fields: current location (approximate, by IP). Filled fields: finds the coordinates of what was typed (OpenStreetMap)"},
+        {"imp.ficha.geo.get.dica", "Empty fields: current location (approximate, by IP). Filled fields: finds the coordinates of what was typed (Apple Maps on Mac, OpenStreetMap on Windows)"},
         {"imp.ficha.geo.nada_achado", "No place found for \"{q}\"."},
         {"imp.ficha.geo.escolher", "Choose the place"},
         {"nomes.unificar_linha", "{tipo}: {variantes} -> \"{canonico}\" ({n} items)"},
