@@ -1523,17 +1523,18 @@ int rodarTestImportarComContexto() {
         using matriz::ui::geoacoes::mesclarAchado;
         checar(modoDoGet(Local{}) == ModoGet::LocalAtual && modoDoGet(Local{ " ", " ", "", "", "" }) == ModoGet::LocalAtual,
                "GEO GET: campos vazios = local atual (IP)");
-        checar(modoDoGet(Local{ "", "", "Itacaré", "", "" }) == ModoGet::PorEndereco, "GEO GET: cidade digitada = busca pelo endereço");
+        checar(modoDoGet(Local{ "", "", "Itacare", "", "" }) == ModoGet::PorEndereco, "GEO GET: cidade digitada = busca pelo endereço");
         checar(modoDoGet(Local{ "-14.27, -38.99", "", "", "", "Brasil" }) == ModoGet::PorEndereco,
                "GEO GET: coordenada + país digitados = busca pelo endereço (as coordenadas vêm da busca)");
         checar(modoDoGet(Local{ "-14.27, -38.99", "", "", "", "" }) == ModoGet::PorCoordenadas, "GEO GET: só coordenadas = busca o endereço delas");
-        const Local achado{ "-14.276900, -38.996000", "Rua Pedro Longo, 10", "Itacaré", "Bahia", "Brasil" };
+        const auto itacare = juce::String::fromUTF8("Itacar\xc3\xa9");  // literal com acento precisa de fromUTF8 no JUCE
+        const Local achado{ "-14.276900, -38.996000", "Rua Pedro Longo, 10", itacare, "Bahia", "Brasil" };
         const auto porEndereco = mesclarAchado(Local{ "", "", "itacare", "", "" }, achado, ModoGet::PorEndereco);
         checar(porEndereco.coords == achado.coords && porEndereco.cidade == "itacare" && porEndereco.estado == "Bahia" &&
                    porEndereco.pais == "Brasil" && porEndereco.endereco == achado.endereco,
                "GEO GET: a busca traz as coordenadas e só completa os campos vazios (o digitado fica)");
         const auto porCoords = mesclarAchado(Local{ "-14.27, -38.99", "", "", "", "" }, achado, ModoGet::PorCoordenadas);
-        checar(porCoords.coords == "-14.27, -38.99" && porCoords.cidade == "Itacaré", "GEO GET: só coordenadas mantém as digitadas e traz o endereço");
+        checar(porCoords.coords == "-14.27, -38.99" && porCoords.cidade == itacare, "GEO GET: só coordenadas mantém as digitadas e traz o endereço");
     }
 
     std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
