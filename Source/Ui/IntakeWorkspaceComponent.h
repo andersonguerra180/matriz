@@ -7,6 +7,7 @@
 
 #include <JuceHeader.h>
 #include "ViewModeIconButton.h"
+#include "BarraLateral.h"
 #include "OverlayComponent.h"
 #include "PainelReceberCelular.h"
 #include <functional>
@@ -335,6 +336,10 @@ private:
     // um retângulo com título por seção, em vez das linhas divisórias soltas.
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> secaoHeaderBounds_;
     std::vector<juce::Rectangle<int>> secaoCardBounds_;
+    // Barra lateral no desenho do mapa "BARRA LATERAL DO INTAKE" (240 px).
+    barra::Layout barra_;
+    juce::Rectangle<int> trilhoVisao_;   // trilho do seletor lista/grade
+    juce::Rectangle<int> tituloFiltro_;  // "N selected" é pintado à direita do título FILTER
     juce::Image iconeGeo_; // geo.png, fundo branco removido — ao lado do título GEO LOCATION
 };
 

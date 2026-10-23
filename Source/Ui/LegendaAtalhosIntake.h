@@ -13,6 +13,9 @@ class LegendaAtalhosIntake : public juce::Component, public juce::SettableToolti
 public:
     explicit LegendaAtalhosIntake(const juce::String& dica = i18n::t("intake.legenda_r_dica")) { setTooltip(dica); }
 
+    // Barra lateral do INTAKE (mapa): "Shortcut  [R] Reject" à esquerda e o "?" encostado na borda direita.
+    bool interrogacaoNaDireita = false;
+
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
         auto r = getLocalBounds().toFloat();
@@ -43,7 +46,7 @@ public:
         g.drawText(rotulo, juce::roundToInt(x), 0, juce::roundToInt(std::ceil(labelW)), getHeight(), juce::Justification::centredLeft, false);
         x += labelW + 10.0f;
 
-        juce::Rectangle<float> ajuda(x, cy - 8.0f, 16.0f, 16.0f);
+        juce::Rectangle<float> ajuda(interrogacaoNaDireita ? r.getRight() - 20.0f : x, cy - 9.0f, 18.0f, 18.0f);
         g.setColour(tk.textoSecundario.withAlpha(0.6f));
         g.drawEllipse(ajuda.reduced(1.0f), 1.0f);
         g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));

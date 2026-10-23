@@ -272,13 +272,16 @@ public:
         g.setColour(fundo);
         g.fillRoundedRectangle(r, 12.0f);
 
-        auto interno = r.reduced(6.0f);
-        auto texto = interno.removeFromBottom(16.0f);
-        const float lado = juce::jmin(interno.getHeight(), 36.0f);
-        desenharIcone(g, IconeUi::PastaMais, interno.withSizeKeepingCentre(lado, lado), tk.textoSobreAcento);
+        // Mapa "BARRA LATERAL DO INTAKE": botão de 48 px com o ícone ao lado do texto, os dois centralizados.
+        const auto fonte = fonteUi(14.0f, juce::Font::bold).withExtraKerningFactor(0.16f);
+        const float lado = juce::jmin(r.getHeight() - 16.0f, 22.0f);
+        const float wTexto = juce::GlyphArrangement::getStringWidth(fonte, getButtonText());
+        float x = r.getCentreX() - (lado + 12.0f + wTexto) * 0.5f;
+        desenharIcone(g, IconeUi::PastaMais, juce::Rectangle<float>(x, r.getCentreY() - lado * 0.5f, lado, lado), tk.textoSobreAcento);
+        x += lado + 12.0f;
         g.setColour(tk.textoSobreAcento);
-        g.setFont(fonteUi(11.5f, juce::Font::bold).withExtraKerningFactor(0.1f));
-        g.drawText(getButtonText(), texto, juce::Justification::centred, false);
+        g.setFont(fonte);
+        g.drawText(getButtonText(), juce::Rectangle<float>(x, r.getY(), wTexto + 4.0f, r.getHeight()), juce::Justification::centredLeft, false);
     }
 };
 
@@ -339,8 +342,61 @@ public:
     bool desenharCelular = false;
 
     bool principal = false;  // ação principal do painel: pílula grafite, texto branco (no tema claro)
+    // Barra lateral (mapa "BARRA LATERAL DO INTAKE"): chip de cantos 7 px com ponto/quadradinho/pino, nome à esquerda e
+    // contagem à direita; tipo com 0 arquivos fica cinza, sem número; ativo = grafite.
+    bool estiloChip = false;
+    bool semQuadradinho = false;  // ACTIONS da barra (mapa): pílula só com o texto, sem o quadradinho da cor antiga
 
     PillButton(const juce::String& text = {}) : juce::TextButton(text) {}
+
+    void paintChip(juce::Graphics& g, bool destacado, bool pressionado) {
+        const auto& tk = tema();
+        const auto r = getLocalBounds().toFloat().reduced(0.5f);
+        juce::Colour fundo = ativo ? tk.acento : tk.painelAlt;
+        if (pressionado) fundo = fundo.darker(0.08f);
+        else if (destacado) fundo = ativo ? fundo.brighter(0.1f) : fundo.darker(0.03f);
+        g.setColour(fundo);
+        g.fillRoundedRectangle(r, barra::kRaioChip);
+        if (!ativo) {
+            g.setColour(tk.borda.withAlpha(0.6f));
+            g.drawRoundedRectangle(r, barra::kRaioChip, 1.0f);
+        }
+        const auto [nome, n] = barra::separarContagem(getButtonText());
+        const bool vazio = !ativo && corPonto.isOpaque() && n == "0";
+        auto c = getLocalBounds().reduced(barra::kPadChip, 0);
+        if (desenharPin) {
+            const float p = 11.0f, px = static_cast<float>(c.getX()), py = c.getCentreY() - p * 0.6f;
+            juce::Path pino;
+            pino.addEllipse(px, py, p, p * 0.85f);
+            pino.startNewSubPath(px + 1.0f, py + p * 0.45f);
+            pino.lineTo(px + p * 0.5f, py + p + 2.0f);
+            pino.lineTo(px + p - 1.0f, py + p * 0.45f);
+            pino.closeSubPath();
+            g.setColour(corFundoCustom.isOpaque() ? corFundoCustom : tk.acento);
+            g.fillPath(pino);
+            g.setColour(tk.painelAlt);
+            g.fillEllipse(px + p * 0.32f, py + p * 0.2f, p * 0.36f, p * 0.36f);
+            c.removeFromLeft(18);
+        } else if (corFundoCustom.isOpaque()) {
+            g.setColour(isEnabled() ? corFundoCustom : corFundoCustom.withAlpha(0.4f));
+            g.fillRoundedRectangle(static_cast<float>(c.getX()), c.getCentreY() - 4.5f, 9.0f, 9.0f, 2.0f);
+            c.removeFromLeft(16);
+        } else if (corPonto.isOpaque()) {
+            g.setColour(vazio ? corPonto.withAlpha(0.45f) : (ativo ? tk.textoSobreAcento : corPonto));
+            g.fillEllipse(static_cast<float>(c.getX()), c.getCentreY() - 4.0f, 8.0f, 8.0f);
+            c.removeFromLeft(14);
+        }
+        if (n.isNotEmpty() && !vazio) {
+            g.setFont(barra::fonteContagem());
+            g.setColour(ativo ? tk.textoSobreAcento.withAlpha(0.85f) : tk.textoTerciario);
+            const int w = juce::GlyphArrangement::getStringWidthInt(barra::fonteContagem(), n) + 2;
+            g.drawText(n, c.removeFromRight(w), juce::Justification::centredRight, false);
+            c.removeFromRight(6);
+        }
+        g.setFont(barra::fonteChip());
+        g.setColour(ativo ? tk.textoSobreAcento : ((vazio || !isEnabled()) ? tk.textoDesativado : tk.textoPrimario));
+        g.drawText(nome, c, juce::Justification::centredLeft, true);
+    }
 
     // Tema claro (estilo Mini): pílula neutra; a cor do botão antigo vira um quadradinho antes do texto.
     // Grafite só para a ação principal e para o filtro ativo; vermelho só para quem rejeita/apaga.
@@ -369,7 +425,7 @@ public:
         }
 
         auto conteudo = getLocalBounds().reduced(10, 0);
-        const bool quadradinho = temCor && !vermelho && !grafite;
+        const bool quadradinho = temCor && !vermelho && !grafite && !semQuadradinho;
         if (desenharPin) {
             const float pSize = 12.0f;
             const float px = static_cast<float>(conteudo.getX() + 2);
@@ -408,6 +464,10 @@ public:
 
     void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
         const auto& tk = tema();
+        if (estiloChip) {
+            paintChip(g, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown);
+            return;
+        }
         if (tk.fundo.getBrightness() > 0.5f) {
             paintClaro(g, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown);
             return;
@@ -2082,12 +2142,14 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnVisaoLista_->setAtivo(true);
     btnVisaoLista_->setTooltip(i18n::t("intake.tooltip_lista"));
     btnVisaoLista_->onClick = [this] { definirModoVisao(ModoVisao::Lista); };
+    btnVisaoLista_->setSegmentado(true);
     addAndMakeVisible(*btnVisaoLista_);
 
     btnVisaoIcones_ = std::make_unique<ViewModeIconButton>(ViewModeIconButton::IconType::Grid);
     btnVisaoIcones_->setAtivo(false);
     btnVisaoIcones_->setTooltip(i18n::t("intake.tooltip_icones"));
     btnVisaoIcones_->onClick = [this] { definirModoVisao(ModoVisao::Icones); };
+    btnVisaoIcones_->setSegmentado(true);
     addAndMakeVisible(*btnVisaoIcones_);
 
     painelMetadados_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
@@ -2112,7 +2174,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     lblTamanho_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     lblTamanho_->setColour(juce::Label::textColourId, tema().textoTerciario);
     lblTamanho_->setJustificationType(juce::Justification::centred);
-    addAndMakeVisible(*lblTamanho_);
+    addChildComponent(*lblTamanho_);  // o mapa da barra não tem o rótulo SIZE
 
     // IMPORT: um botão só. Arquivos/pastas, Google Drive, celular, Lightroom, Bridge e o resto vivem na janela de cards.
     auto btnImportar = std::make_unique<ImportarIconButton>(i18n::t("imp.botao"));
@@ -2138,6 +2200,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
         auto pill = std::make_unique<PillButton>(text);
         pill->tamanhoFonte = 13.0f;
         pill->corPonto = dotCol;
+        pill->estiloChip = true;
         pill->onClick = [this, cat] {
             filtroCategoriaAtual_ = cat;
             atualizarFiltragem();
@@ -2181,14 +2244,14 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     setupPill(btnFiltroImage_, "Images (0)", "Image", juce::Colour(0xfff4a261));
     setupPill(btnFiltroDoc_, "Documents (0)", "Document", juce::Colour(0xff2b9348));
     setupPill(btnFiltroOther_, "Other (0)", "Other", juce::Colour(0xff7d766c));
-    setupPill(btnFiltroPhoneDump_, "Phone Dump (0)", "PhoneDump", juce::Colour(0xff06b6d4));
+    setupPill(btnFiltroPhoneDump_, i18n::t("intake.filtro_phone_dump").replace("{n}", "0"), "PhoneDump", juce::Colour(0xff06b6d4));
 
     // 3. LINHA 3 (SelectionActionBar)
     // Cluster A (Left)
     lblSubtitulo_ = std::make_unique<juce::Label>("", "");
     lblSubtitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
-    addAndMakeVisible(*lblSubtitulo_);
+    addChildComponent(*lblSubtitulo_);  // "N selected" é pintado na linha do título FILTER (paint)
 
     auto btnSelTodos = std::make_unique<PillButton>(i18n::t("intake.selecionar_todos"));
     btnSelTodos->tamanhoFonte = 12.5f;
@@ -2209,6 +2272,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     auto criarBotaoLote = [this](const juce::String& texto, juce::Colour cor, std::function<void()> aoClicar) {
         auto btn = std::make_unique<PillButton>(texto);
         btn->tamanhoFonte = 12.5f;
+        btn->estiloChip = true;  // quadradinho da cor + nome, em duas colunas
         btn->corFundoCustom = cor;
         btn->corTextoCustom = juce::Colours::white;
         btn->corBordaCustom = cor.darker(0.2f);
@@ -2255,9 +2319,10 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnEventDateLote_);
 
     // GEO LOCATION no card Batch Assignment abaixo de Event Date (item 9A)
-    auto btnGeo = std::make_unique<PillButton>("GEO LOCATION");
+    auto btnGeo = std::make_unique<PillButton>(i18n::t("intake.btn_geo_location_lote"));
     btnGeo->tamanhoFonte = 12.0f;
     btnGeo->desenharPin = true;
+    btnGeo->estiloChip = true;
     btnGeo->corFundoCustom = juce::Colour(0xff0284c7); // azul celeste
     btnGeo->corTextoCustom = juce::Colours::white;
     btnGeo->corBordaCustom = juce::Colour(0xff0369a1);
@@ -2269,7 +2334,8 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 
     // Cluster C (Right)
     auto btnConfSel = std::make_unique<PillButton>(i18n::t("intake.btn_enviar_selecionados"));
-    btnConfSel->tamanhoFonte = 12.0f;
+    btnConfSel->tamanhoFonte = 13.0f;
+    btnConfSel->semQuadradinho = true;
     btnConfSel->corFundoCustom = juce::Colour(0xff16a34a);
     btnConfSel->corTextoCustom = juce::Colours::white;
     btnConfSel->corBordaCustom = juce::Colour(0xff15803d);
@@ -2280,7 +2346,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnConfirmarSelecao_);
 
     auto btnConfTodos = std::make_unique<PillButton>(i18n::t("intake.btn_enviar_todos"));
-    btnConfTodos->tamanhoFonte = 12.0f;
+    btnConfTodos->tamanhoFonte = 13.0f;
     btnConfTodos->principal = true;  // "Approve all": a ação principal do painel (grafite)
     btnConfTodos->corFundoCustom = juce::Colour(0xff16a34a);
     btnConfTodos->corTextoCustom = juce::Colours::white;
@@ -2298,7 +2364,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*divisor2_);
 
     auto btnRemover = std::make_unique<PillButton>(i18n::t("intake.btn_rejeitar_selecionados"));
-    btnRemover->tamanhoFonte = 12.0f;
+    btnRemover->tamanhoFonte = 13.0f;
     btnRemover->corFundoCustom = tk.perigo;
     btnRemover->corTextoCustom = juce::Colours::white;
     btnRemover->corBordaCustom = tk.perigo.darker(0.2f);
@@ -2308,14 +2374,19 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnRemoverSelecao_ = std::move(btnRemover);
     addAndMakeVisible(*btnRemoverSelecao_);
 
-    legendaAtalhos_ = std::make_unique<LegendaAtalhosIntake>();
+    {
+        // A frase longa sobre o REJECT MARKED vai para o "?" (aparece ao passar o mouse), como no mapa.
+        auto legenda = std::make_unique<LegendaAtalhosIntake>(i18n::t("intake.legenda_r_dica") + "\n" + i18n::t("intake.nota_reject"));
+        legenda->interrogacaoNaDireita = true;
+        legendaAtalhos_ = std::move(legenda);
+    }
     addAndMakeVisible(*legendaAtalhos_);
     lblNotaReject_ = std::make_unique<juce::Label>("", i18n::t("intake.nota_reject"));
     lblNotaReject_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     lblNotaReject_->setColour(juce::Label::textColourId, tk.textoSecundario);
     lblNotaReject_->setMinimumHorizontalScale(1.0f);  // quebra em 2 linhas, nunca "..."
     lblNotaReject_->setInterceptsMouseClicks(false, false);
-    addAndMakeVisible(*lblNotaReject_);
+    addChildComponent(*lblNotaReject_);  // o texto vive no tooltip do "?" da legenda
     setWantsKeyboardFocus(true);
     atualizarBotaoRejeitar();
 
@@ -2701,7 +2772,7 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     if (btnFiltroImage_) btnFiltroImage_->setButtonText(i18n::t("intake.filtro_image").replace("{n}", juce::String(contagemImage_)));
     if (btnFiltroDoc_) btnFiltroDoc_->setButtonText(i18n::t("intake.filtro_doc").replace("{n}", juce::String(contagemDoc_)));
     if (btnFiltroOther_) btnFiltroOther_->setButtonText(i18n::t("intake.filtro_other").replace("{n}", juce::String(contagemOther_)));
-    if (btnFiltroPhoneDump_) btnFiltroPhoneDump_->setButtonText("Phone Dump (" + juce::String(contagemPhoneDump_) + ")");
+    if (btnFiltroPhoneDump_) btnFiltroPhoneDump_->setButtonText(i18n::t("intake.filtro_phone_dump").replace("{n}", juce::String(contagemPhoneDump_)));
 
     if (lblContadorTotal_) {
         lblContadorTotal_->setText(i18n::t("intake.ativos_contador").replace("{n}", juce::String(todosItens_.size())), juce::dontSendNotification);
@@ -2709,6 +2780,7 @@ void IntakeWorkspaceComponent::atualizarContagens() {
 
     if (lblSubtitulo_) {
         lblSubtitulo_->setText(i18n::t("intake.selecionados").replace("{n}", juce::String(totalSelecionados)), juce::dontSendNotification);
+        repaint(tituloFiltro_);
     }
 
     if (btnConfirmarSelecao_) {
@@ -4067,34 +4139,13 @@ void IntakeWorkspaceComponent::paint(juce::Graphics& g) {
     // para a linha das tabs, e a linha que sobrou foi eliminada — o
     // conteúdo começa direto no topo do workspace.
 
-    // Left Sidebar background (230px wide, full height)
-    g.setColour(tk.fundo);
-    g.fillRect(0, 0, 230, getHeight());
-
-    // Divider
-    g.setColour(tk.borda);
-    g.fillRect(229, 0, 1, getHeight());
-
-    // Cards da coluna esquerda (IMPORT / FILTER / BATCH ASSIGNMENT /
-    // ACTIONS) — mesmo tratamento visual da aba METADATA.
-    for (const auto& cardBounds : secaoCardBounds_) {
-        g.setColour(tk.painelAlt.withAlpha(0.25f));
-        g.fillRoundedRectangle(cardBounds.toFloat(), tk.raioPequeno);
-        g.setColour(tk.borda.withAlpha(0.7f));
-        g.drawRoundedRectangle(cardBounds.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
-    }
-
-    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
-    for (const auto& [titulo, bounds] : secaoHeaderBounds_) {
-        auto textoBounds = bounds;
-        if (titulo == "GEO LOCATION" && iconeGeo_.isValid()) {
-            const int iconeAltura = juce::jmin(bounds.getHeight(), 14);
-            auto iconeBounds = textoBounds.removeFromLeft(iconeAltura).withSizeKeepingCentre(iconeAltura, iconeAltura);
-            g.drawImage(iconeGeo_, iconeBounds.toFloat(), juce::RectanglePlacement::centred);
-            textoBounds.removeFromLeft(4);
-        }
-        g.setColour(tk.textoPrimario);
-        g.drawText(titulo, textoBounds, juce::Justification::centredLeft);
+    // Barra lateral no desenho do mapa "BARRA LATERAL DO INTAKE": cards, títulos, trilho lista/grade e "N selected".
+    barra_.paint(g);
+    if (!trilhoVisao_.isEmpty()) barra::pintarTrilhoSegmentado(g, trilhoVisao_);
+    if (!tituloFiltro_.isEmpty() && lblSubtitulo_) {
+        g.setColour(tk.textoTerciario);
+        g.setFont(barra::fonteContagem());
+        g.drawText(lblSubtitulo_->getText(), tituloFiltro_, juce::Justification::centredRight, true);
     }
 }
 
@@ -4126,132 +4177,80 @@ void IntakeWorkspaceComponent::resized() {
     // PROJECT à direita) são posicionados pela barra de navegação, que os
     // hospeda na mesma linha das tabs — ver componentesBarraSuperior().
 
-    // Left Sidebar (230px wide)
-    auto sidebar = area.removeFromLeft(230).reduced(10, 8);
-
-    // O seletor de modo de visualização (List / Miniatures) é posicionado
-    // dentro do card FILTER, logo abaixo — não há mais um bloco solto aqui.
-
-    // Cards da coluna esquerda (mesmo tratamento da aba METADATA, item 4 do
-    // segundo lote de correções): cada cluster lógico vira um card com
-    // título e borda próprios, no lugar das linhas divisórias soltas.
+    // Barra lateral no desenho do mapa "BARRA LATERAL DO INTAKE" (240 px): mesmo padrão da barra do METADATA.
+    using namespace barra;
+    barra_.comecar(area.removeFromLeft(kLargura));
+    auto& corpo = barra_.corpo();
     if (divisor1_) divisor1_->setVisible(false);
     if (divisor2_) divisor2_->setVisible(false);
-
-    secaoHeaderBounds_.clear();
-    secaoCardBounds_.clear();
-    const int kCardPad = 6;
-    const int kHeaderH = 18;
-    int cardTop = 0;
-    auto iniciarCard = [&] {
-        sidebar.removeFromTop(kCardPad);
-        cardTop = sidebar.getY();
-    };
-    auto finalizarCard = [&] {
-        sidebar.removeFromTop(kCardPad);
-        secaoCardBounds_.push_back(juce::Rectangle<int>(sidebar.getX() - 4, cardTop - kCardPad,
-                                                          sidebar.getWidth() + 8, sidebar.getY() - cardTop + kCardPad));
+    auto linhaDupla = [&](juce::Component* a, juce::Component* b, int altura, float fracaoA = 0.5f) {
+        auto linha = corpo.removeFromTop(altura);
+        const int wa = juce::roundToInt((linha.getWidth() - kGap) * fracaoA);
+        if (a) a->setBounds(linha.removeFromLeft(wa));
+        linha.removeFromLeft(kGap);
+        if (b) b->setBounds(linha);
     };
 
-    // 0. IMPORT — um único botão que abre a janela de importação
+    // 1. IMPORT: o botão principal (grafite), com o ícone ao lado do texto, em 48 px.
     if (btnIngerir_) {
         if (btnIngerir_->getParentComponent() != this) addAndMakeVisible(*btnIngerir_);
-        iniciarCard();
-        secaoHeaderBounds_.push_back({i18n::t("intake.secao_import"), sidebar.removeFromTop(kHeaderH)});
-        sidebar.removeFromTop(4);
-        btnIngerir_->setBounds(sidebar.removeFromTop(64));
-        finalizarCard();
-        sidebar.removeFromTop(8);
+        btnIngerir_->setBounds(corpo.removeFromTop(48));
+        corpo.removeFromTop(kEntreCards);
     }
 
-    // 1. FILTER (view mode + category pills)
-    iniciarCard();
-    secaoHeaderBounds_.push_back({i18n::t("intake.secao_filter"), sidebar.removeFromTop(kHeaderH)});
-    sidebar.removeFromTop(4);
-    if (btnVisaoLista_ && btnVisaoIcones_) {
-        auto viewRow = sidebar.removeFromTop(26);
-        int half = (viewRow.getWidth() - 6) / 2;
-        btnVisaoLista_->setBounds(viewRow.removeFromLeft(half));
-        viewRow.removeFromLeft(6);
-        btnVisaoIcones_->setBounds(viewRow);
-        sidebar.removeFromTop(3);
-    }
-    if (sliderTamanho_) {
-        auto sliderRow = sidebar.removeFromTop(18).reduced(4, 0);
-        if (lblTamanho_) lblTamanho_->setBounds(sliderRow.removeFromLeft(30));
-        sliderTamanho_->setBounds(sliderRow);
-        sidebar.removeFromTop(5);
-    }
-    // Select All / Clear Selection (antes num card SELECTION próprio) + a contagem de selecionados.
+    // 2. VIEW numa linha: lista/grade e o tamanho das miniaturas lado a lado.
     {
-        auto selRow = sidebar.removeFromTop(24);
-        int half = (selRow.getWidth() - 6) / 2;
-        btnSelecionarTodos_->setBounds(selRow.removeFromLeft(half));
-        selRow.removeFromLeft(6);
-        btnLimparSelecao_->setBounds(selRow);
-        sidebar.removeFromTop(2);
-        lblSubtitulo_->setBounds(sidebar.removeFromTop(16));
-        sidebar.removeFromTop(6);
+        auto linha = barra_.iniciarCardEmLinha(i18n::t("catwork.secao_view"), 28);
+        trilhoVisao_ = linha.removeFromLeft(60);
+        auto seg = trilhoVisao_;
+        if (btnVisaoLista_) btnVisaoLista_->setBounds(seg.removeFromLeft(30));
+        if (btnVisaoIcones_) btnVisaoIcones_->setBounds(seg);
+        linha.removeFromLeft(10);
+        if (sliderTamanho_) sliderTamanho_->setBounds(linha);
+        barra_.finalizarCard();
     }
-    btnFiltroAll_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(4);
-    btnFiltroAudio_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(4);
-    btnFiltroVideo_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(4);
-    btnFiltroImage_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(4);
-    btnFiltroDoc_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(4);
-    btnFiltroOther_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(4);
-    if (btnFiltroPhoneDump_) {
-        btnFiltroPhoneDump_->setBounds(sidebar.removeFromTop(24));
-    }
-    sidebar.removeFromTop(6);
-    if (comboAno_) comboAno_->setBounds(sidebar.removeFromTop(26));
+
+    // 3. FILTER: "N selected" na linha do título; Select all | Clear; All na linha inteira e os tipos em duas colunas;
+    //    All years, e All months | All days lado a lado (desativados até escolher o ano).
+    tituloFiltro_ = barra_.iniciarCard(i18n::t("intake.secao_filter"));
+    linhaDupla(btnSelecionarTodos_.get(), btnLimparSelecao_.get(), kChipH);
+    corpo.removeFromTop(6);
+    btnFiltroAll_->setBounds(corpo.removeFromTop(kChipH));
+    corpo.removeFromTop(kGap);
+    linhaDupla(btnFiltroAudio_.get(), btnFiltroVideo_.get(), kChipH);
+    corpo.removeFromTop(kGap);
+    linhaDupla(btnFiltroImage_.get(), btnFiltroDoc_.get(), kChipH);
+    corpo.removeFromTop(kGap);
+    linhaDupla(btnFiltroOther_.get(), btnFiltroPhoneDump_.get(), kChipH);
+    corpo.removeFromTop(8);
+    if (comboAno_) comboAno_->setBounds(corpo.removeFromTop(28));
     if (comboMes_ && comboDia_) {
-        sidebar.removeFromTop(4);
-        auto linhaData = sidebar.removeFromTop(26);
-        const int meio = (linhaData.getWidth() - 6) * 3 / 5;
-        comboMes_->setBounds(linhaData.removeFromLeft(meio));
-        linhaData.removeFromLeft(6);
-        comboDia_->setBounds(linhaData);
+        corpo.removeFromTop(6);
+        linhaDupla(comboMes_.get(), comboDia_.get(), 28);
     }
-    finalizarCard();
-    sidebar.removeFromTop(8);
+    barra_.finalizarCard();
 
-    // 3. BATCH ASSIGNMENT — botões coloridos de metadados, incluindo GEO LOCATION (item 9A)
-    iniciarCard();
-    secaoHeaderBounds_.push_back({i18n::t("intake.secao_batch"), sidebar.removeFromTop(kHeaderH)});
-    sidebar.removeFromTop(4);
-    btnSourceMediumLote_->setBounds(sidebar.removeFromTop(26));
-    sidebar.removeFromTop(4);
-    btnCreatorLote_->setBounds(sidebar.removeFromTop(26));
-    sidebar.removeFromTop(4);
-    btnContentLote_->setBounds(sidebar.removeFromTop(26));
-    sidebar.removeFromTop(4);
-    btnSubjectLote_->setBounds(sidebar.removeFromTop(26));
-    sidebar.removeFromTop(4);
-    btnEventDateLote_->setBounds(sidebar.removeFromTop(26));
-    sidebar.removeFromTop(4);
-    btnGeolocationLote_->setBounds(sidebar.removeFromTop(26));
-    finalizarCard();
-    sidebar.removeFromTop(8);
+    // 4. BATCH ASSIGNMENT em duas colunas, com o quadradinho de cor; Source medium e Geo location na linha inteira.
+    barra_.iniciarCard(i18n::t("intake.secao_batch"));
+    btnSourceMediumLote_->setBounds(corpo.removeFromTop(kChipH));
+    corpo.removeFromTop(kGap);
+    linhaDupla(btnCreatorLote_.get(), btnContentLote_.get(), kChipH);
+    corpo.removeFromTop(kGap);
+    linhaDupla(btnSubjectLote_.get(), btnEventDateLote_.get(), kChipH);
+    corpo.removeFromTop(kGap);
+    btnGeolocationLote_->setBounds(corpo.removeFromTop(kChipH));
+    barra_.finalizarCard();
 
-    // 4. ACTIONS (Send to Grid / Reject)
-    iniciarCard();
-    secaoHeaderBounds_.push_back({i18n::t("intake.secao_actions"), sidebar.removeFromTop(kHeaderH)});
-    sidebar.removeFromTop(4);
-    btnConfirmarSelecao_->setBounds(sidebar.removeFromTop(28));
-    sidebar.removeFromTop(4);
-    btnConfirmarTodos_->setBounds(sidebar.removeFromTop(28));
-    sidebar.removeFromTop(4);
-    btnRemoverSelecao_->setBounds(sidebar.removeFromTop(28));
-    sidebar.removeFromTop(6);
-    if (legendaAtalhos_) legendaAtalhos_->setBounds(sidebar.removeFromTop(22));
-    if (lblNotaReject_) lblNotaReject_->setBounds(sidebar.removeFromTop(28));
-    finalizarCard();
+    // 5. ACTIONS: Approve selected | Approve all lado a lado, Reject marked embaixo; atalho R com o "?" (a frase longa
+    //    sobre o REJECT MARKED está no tooltip dele).
+    barra_.iniciarCard(i18n::t("intake.secao_actions"));
+    linhaDupla(btnConfirmarSelecao_.get(), btnConfirmarTodos_.get(), 28, 0.56f);
+    corpo.removeFromTop(6);
+    btnRemoverSelecao_->setBounds(corpo.removeFromTop(28));
+    corpo.removeFromTop(6);
+    if (legendaAtalhos_) legendaAtalhos_->setBounds(corpo.removeFromTop(24));
+    if (lblNotaReject_) lblNotaReject_->setBounds({});
+    barra_.finalizarCard();
 
     // Coluna da direita: metadados do arquivo selecionado (somente leitura), estreita (~280 px). Some em janelas estreitas.
     if (painelMetadados_) {
