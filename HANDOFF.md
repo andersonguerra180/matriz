@@ -4,6 +4,24 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## `_no folder` — branch `feat/no-folder-virtual`, 2026-10-23
+
+- Worktree `../BKR Matriz-wt-nofolder`, criada do HEAD de `feat/phone-dump-usb` (`6a4a4c5`) para não brigar com as mudanças
+  dela em `JanelaPastaFlutuante.cpp`; depois do merge da phone-dump, rebasear sobre a `main`. Um commit por item:
+  1. Card fixo `_no folder` logo abaixo do `_trash` no Folder Map; clique abre a `JanelaPastaFlutuante` no modo
+     `kPastaSemPasta` (ids de `itensSemPasta` num ThreadPool; MOVE TO FOLDER no botão direito; sem EXTRACT).
+  2. Card NO FOLDER do Analytics: **causa** da contagem que abria grade vazia = a aba METADATA esconde CONTENT = Hidden e não
+     carrega o INTAKE, mas `contarItensSemPasta` conta os dois (no acervo Fotos/Project os 376 sem pasta são todos Hidden).
+     O clique agora leva à STRUCTURE › `_no folder` com tudo selecionado; a janela diz quantos são Hidden / INTAKE.
+  3. Pasta com auto-organize: "Import files from _no folder..." (fora do INTAKE) → `adicionarItensAPasta` + `aplicarAutoOrganizacao`.
+- Teste: `"build/matriz_artefacts/Debug/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-sem-pasta` — 19 OK em 2026-10-23.
+  Não foi clicado no app por mim (sessão sem permissão de Acessibilidade/Gravação de Tela); a suíte ampla e ASan/TSan não rodaram.
+- Não mudou: o card SEM PASTA da coluna esquerda do Folder Map continua mandando para a aba METADATA (mesma limitação do
+  Hidden); `_SEM_PASTA` físico do MAIN e `kPastaNoFolderExport` intocados.
+- WINPORT (nada de I/O na message thread): `ArvoreBackupComponent::importarSemPastaNaPasta` grava síncrono na message thread
+  (mesmas funções do MOVE TO FOLDER / Reorganize now); a contagem do card `_no folder` reaproveita o COUNT já feito no paint
+  (1x/s) pelo card SEM PASTA.
+
 ## Alt-codex — estado atual, 2026-10-22
 
 - **Integrada na `main` em `74c8e26`** (`Merge alt-codex: desempenho,
@@ -279,6 +297,8 @@ ponto com `// WINPORT: <regra>` (`grep -rn "WINPORT:" Source`). Pontos hoje:
   IOKit só no macOS (`JUCE_MAC && MATRIZ_COM_LIBMTP`); no Windows `SessaoAndroidUsb::suportado()` = false e o card
   ANDROID USB não aparece — **API de macOS sem equivalente Windows** (WPD/IPortableDevice + WM_DEVICECHANGE).
   A libmtp vem do Homebrew (x86_64 só); release universal precisa compilar libmtp + libusb para arm64+x86_64.
+- `ArvoreBackupComponent.cpp` `importarSemPastaNaPasta` (branch `feat/no-folder-virtual`): `adicionarItensAPasta` +
+  `aplicarAutoOrganizacao` síncronos na message thread — **nada de I/O na message thread** (como MOVE TO FOLDER hoje).
 - AGENTS.md: já existe na main (desde 738321c); a seção do port chega com a windows-port. Na hora do merge, garantir
   `CLAUDE.md` na main com a linha `@AGENTS.md` (hoje não existe CLAUDE.md).
 
