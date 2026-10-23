@@ -2529,6 +2529,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"cel.usb.marcados", "{n} selecionados"},
         {"cel.usb.comPastas", "pastas incluem tudo dentro delas"},
         {"cel.usb.preparando", "Listando as pastas selecionadas…"},
+        {"cel.usb.preparandoN", "Listando as pastas selecionadas… {n} arquivos encontrados até agora\nLendo: {pasta}"},
         {"cel.usb.noProjeto", "NO PROJETO"},
         {"cel.usb.nadaNovo", "Tudo o que foi selecionado já está no projeto."},
         {"cel.usb.cancelado", "Interrompido."},

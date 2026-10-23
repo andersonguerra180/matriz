@@ -81,7 +81,10 @@ public:
                 std::function<void(bool ok, std::vector<EntradaAndroid>, juce::String erro)> aoTerminar);
 
     // Expande as pastas marcadas (recursivo) em arquivos, com o caminho relativo a partir da pasta marcada.
+    // Pode levar minutos (a libmtp faz uma consulta USB por arquivo): `aoProgresso` diz quantos arquivos já achou e
+    // qual pasta está lendo.
     void expandir(std::vector<EntradaAndroid> marcados,
+                  std::function<void(int arquivos, juce::String pasta)> aoProgresso,
                   std::function<void(bool ok, std::vector<ItemCopiaAndroid>, juce::String erro)> aoTerminar);
 
     // Copia para `destino` (criada se faltar). Arquivo que já existe com o mesmo tamanho é pulado.

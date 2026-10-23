@@ -213,7 +213,13 @@ void PainelAndroidUsb::importar() {
     atualizarRodape();
 
     juce::Component::SafePointer<PainelAndroidUsb> seguro(this);
-    sessao_->expandir(std::move(marcados), [seguro](bool ok, std::vector<ItemCopiaAndroid> itens, juce::String erro) {
+    sessao_->expandir(std::move(marcados),
+        [seguro](int arquivos, juce::String pasta) {
+            if (seguro == nullptr || seguro->estado_ != Estado::Preparando) return;
+            seguro->lblRodape_.setText(t("cel.usb.preparandoN").replace("{n}", juce::String(arquivos)).replace("{pasta}", pasta),
+                                       juce::dontSendNotification);
+        },
+        [seguro](bool ok, std::vector<ItemCopiaAndroid> itens, juce::String erro) {
         if (seguro == nullptr) return;
         auto& s = *seguro;
         if (!ok) {

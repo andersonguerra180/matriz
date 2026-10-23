@@ -2506,6 +2506,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"cel.usb.marcados", "{n} selected"},
         {"cel.usb.comPastas", "folders include everything inside"},
         {"cel.usb.preparando", "Listing the selected folders…"},
+        {"cel.usb.preparandoN", "Listing the selected folders… {n} files found so far\nReading: {pasta}"},
         {"cel.usb.noProjeto", "IN PROJECT"},
         {"cel.usb.nadaNovo", "Everything selected is already in the project."},
         {"cel.usb.cancelado", "Stopped."},

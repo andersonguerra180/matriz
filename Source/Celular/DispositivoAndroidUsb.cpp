@@ -283,13 +283,15 @@ void SessaoAndroidUsb::listar(std::uint32_t memoria, std::uint32_t pasta,
 }
 
 void SessaoAndroidUsb::expandir(std::vector<EntradaAndroid> marcados,
+                                std::function<void(int, juce::String)> aoProgresso,
                                 std::function<void(bool, std::vector<ItemCopiaAndroid>, juce::String)> aoTerminar) {
     Nucleo* n = nucleo_.get();
     n->cancelarCopia = false;
-    n->enfileirar([n, marcados = std::move(marcados), aoTerminar] {
+    n->enfileirar([n, marcados = std::move(marcados), aoProgresso, aoTerminar] {
         std::vector<ItemCopiaAndroid> saida;
         const char* chaveErro = nullptr;
 #if MATRIZ_ANDROID_USB
+        juce::uint32 ultimoAviso = 0;
         std::function<bool(const EntradaAndroid&, const juce::String&, int)> descer;
         descer = [&](const EntradaAndroid& e, const juce::String& prefixo, int nivel) -> bool {
             if (n->cancelarCopia.load()) return false;
@@ -299,6 +301,12 @@ void SessaoAndroidUsb::expandir(std::vector<EntradaAndroid> marcados,
                 return true;
             }
             if (nivel > 64) return true;
+            const auto agora = juce::Time::getMillisecondCounter();
+            if (aoProgresso && (ultimoAviso == 0 || agora - ultimoAviso >= 250)) {
+                ultimoAviso = agora;
+                const int achados = static_cast<int>(saida.size());
+                naMessageThread([aoProgresso, achados, rel] { aoProgresso(achados, rel); });
+            }
             std::vector<EntradaAndroid> filhos;
             if (!listarPasta(n->aparelho, e.memoria, e.id, filhos)) return false;
             for (const auto& f : filhos)
@@ -310,7 +318,7 @@ void SessaoAndroidUsb::expandir(std::vector<EntradaAndroid> marcados,
             for (const auto& m : marcados)
                 if (!descer(m, {}, 0)) { chaveErro = n->cancelarCopia.load() ? "cel.usb.cancelado" : "cel.usb.err.listar"; break; }
 #else
-        (void) n; (void) marcados;
+        (void) n; (void) marcados; (void) aoProgresso;
         chaveErro = "cel.usb.err.plataforma";
 #endif
         const bool ok = chaveErro == nullptr;
