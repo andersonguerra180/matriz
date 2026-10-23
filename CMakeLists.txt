@@ -713,24 +713,39 @@ endif()
 
 target_include_directories(matriz PRIVATE Source)
 
-# PHONE DUMP > ANDROID USB: libmtp (LGPL 2.1), ligada dinamicamente e copiada para Contents/Frameworks junto com a
-# libusb, como no Android File Transfer. Sem a libmtp o módulo compila desligado (SessaoAndroidUsb::suportado() = false).
+# PHONE DUMP > ANDROID USB: libmtp 1.1.23 (LGPL 2.1) compilada aqui como biblioteca compartilhada (libmatriz_mtp.dylib,
+# copiada para Contents/Frameworks com a libusb, como no Android File Transfer), com a extensão matriz/matriz_mtp.c
+# (listagem de pasta numa transação só). Sem a libusb o módulo compila desligado (SessaoAndroidUsb::suportado() = false).
 # WINPORT: no Windows o equivalente é WPD (IPortableDevice); ainda não implementado.
 if(APPLE)
-    find_path(MATRIZ_LIBMTP_INCLUDE libmtp.h HINTS /opt/homebrew/opt/libmtp/include /usr/local/opt/libmtp/include)
-    find_library(MATRIZ_LIBMTP_LIB NAMES mtp HINTS /opt/homebrew/opt/libmtp/lib /usr/local/opt/libmtp/lib)
+    find_path(MATRIZ_LIBUSB_INCLUDE libusb.h PATH_SUFFIXES libusb-1.0 HINTS /opt/homebrew/opt/libusb/include /usr/local/opt/libusb/include)
+    find_library(MATRIZ_LIBUSB_LIB NAMES usb-1.0 HINTS /opt/homebrew/opt/libusb/lib /usr/local/opt/libusb/lib)
 endif()
-if(APPLE AND MATRIZ_LIBMTP_INCLUDE AND MATRIZ_LIBMTP_LIB)
-    target_include_directories(matriz PRIVATE ${MATRIZ_LIBMTP_INCLUDE})
-    target_link_libraries(matriz PRIVATE ${MATRIZ_LIBMTP_LIB})
+if(APPLE AND MATRIZ_LIBUSB_INCLUDE AND MATRIZ_LIBUSB_LIB)
+    set(MATRIZ_LIBMTP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/libmtp-1.1.23")
+    add_library(matriz_mtp SHARED
+        "${MATRIZ_LIBMTP_DIR}/src/libmtp.c"
+        "${MATRIZ_LIBMTP_DIR}/src/unicode.c"
+        "${MATRIZ_LIBMTP_DIR}/src/util.c"
+        "${MATRIZ_LIBMTP_DIR}/src/playlist-spl.c"
+        "${MATRIZ_LIBMTP_DIR}/src/ptp.c"
+        "${MATRIZ_LIBMTP_DIR}/src/libusb1-glue.c"
+        "${MATRIZ_LIBMTP_DIR}/matriz/matriz_mtp.c")
+    target_include_directories(matriz_mtp PUBLIC "${MATRIZ_LIBMTP_DIR}/src" "${MATRIZ_LIBMTP_DIR}/matriz"
+                                          PRIVATE "${MATRIZ_LIBUSB_INCLUDE}")
+    target_compile_definitions(matriz_mtp PRIVATE HAVE_CONFIG_H)
+    target_compile_options(matriz_mtp PRIVATE -w)
+    target_link_libraries(matriz_mtp PRIVATE "${MATRIZ_LIBUSB_LIB}" iconv "-framework IOKit" "-framework CoreFoundation")
+    set_target_properties(matriz_mtp PROPERTIES INSTALL_NAME_DIR "@executable_path/../Frameworks" BUILD_WITH_INSTALL_NAME_DIR ON)
+    target_link_libraries(matriz PRIVATE matriz_mtp)
     target_compile_definitions(matriz PRIVATE MATRIZ_COM_LIBMTP=1)
     add_custom_command(TARGET matriz POST_BUILD
-        COMMAND /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/embutir_libmtp.sh" "$<TARGET_BUNDLE_DIR:matriz>" "${MATRIZ_LIBMTP_LIB}"
-        COMMENT "Embedding libmtp + libusb into the app bundle")
-    message(STATUS "MATRIZ: libmtp ${MATRIZ_LIBMTP_LIB} - PHONE DUMP > ANDROID USB ligado")
+        COMMAND /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/embutir_libmtp.sh" "$<TARGET_BUNDLE_DIR:matriz>" "$<TARGET_FILE:matriz_mtp>"
+        COMMENT "Embedding libmatriz_mtp + libusb into the app bundle")
+    message(STATUS "MATRIZ: libusb ${MATRIZ_LIBUSB_LIB} - PHONE DUMP > ANDROID USB ligado (libmtp embutida)")
 else()
     target_compile_definitions(matriz PRIVATE MATRIZ_COM_LIBMTP=0)
-    message(STATUS "MATRIZ: libmtp nao encontrada - PHONE DUMP > ANDROID USB desligado")
+    message(STATUS "MATRIZ: libusb nao encontrada - PHONE DUMP > ANDROID USB desligado")
 endif()
 
 target_compile_definitions(matriz PRIVATE
