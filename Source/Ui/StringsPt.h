@@ -1061,6 +1061,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"duplicatas.btn_limpar_selecao", "LIMPAR"},
         {"duplicatas.aviso_corpo_todas", "Lote em todas as categorias está LIGADO (Preferências): VALIDAR TODOS e SELECIONAR TODOS incluem esses pares. Compare os dois lados antes de decidir em lote."},
         {"preferencias.duplicatas_lote_todas", "Duplicatas: permitir seleção e resolução em lote em todas as categorias (Idênticas, Prováveis, Similares)"},
+        {"menu.duplicatas_lote_todas", "Duplicatas: Seleção e Resolução em Lote em Todas as Categorias"},
         {"preferencias.duplicatas_lote_todas_dica", "Desligado (padrão): pares PROBABLE e SIMILAR são só parecidos e são decididos um a um. Ligado: VALIDAR TODOS, IGNORAR TODOS e SELECIONAR TODOS também os incluem."},
         {"duplicatas.aviso_lote_titulo", "Nada a validar em lote"},
         {"duplicatas.aviso_lote_corpo", "Os {n} par(es) restantes são apenas parecidos (pHash), não arquivos idênticos. Por segurança nunca são decididos em lote.\n\nUse VALIDAR COMO DUPLICATA em cada card âmbar e compare os dois lados antes."},

@@ -1046,6 +1046,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.btn_limpar_selecao", "CLEAR"},
         {"duplicatas.aviso_corpo_todas", "Batch on every category is ON (Preferences): VALIDATE ALL and SELECT ALL include them. Compare both sides before deciding in batch."},
         {"preferencias.duplicatas_lote_todas", "Duplicates: allow batch select and resolve in every category (Identical, Probable, Similar)"},
+        {"menu.duplicatas_lote_todas", "Duplicates: Batch Select & Resolve in All Categories"},
         {"preferencias.duplicatas_lote_todas_dica", "Off (default): PROBABLE and SIMILAR pairs are only look-alikes and are decided one by one. On: VALIDATE ALL, DISMISS ALL and SELECT ALL also include them."},
         {"duplicatas.aviso_lote_titulo", "Nothing to validate in batch"},
         {"duplicatas.aviso_lote_corpo", "The {n} remaining pair(s) are only visually similar (pHash), not identical files. For safety they are never decided in batch.\n\nUse VALIDATE AS DUPLICATE on each amber card and compare both sides first."},

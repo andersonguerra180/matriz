@@ -58,6 +58,7 @@ enum ComandoMenu {
     kCmdThemeDark,
     kCmdThemeLight,
     kCmdAudioDevice,
+    kCmdLoteDuplicatasTodas,
     kCmdHelp,
     kCmdAbout,
     kCmdUndo,
@@ -272,6 +273,10 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
 
         menu.addSeparator();
         menu.addItem(kCmdAudioDevice, isPt ? juce::String::fromUTF8("Dispositivo de Áudio...") : "Audio Device...");
+        // Duplicates: VALIDATE/DISMISS ALL e SELECT ALL também para PROBABLE e SIMILAR (marcado = ligado).
+        menu.addSeparator();
+        menu.addItem(kCmdLoteDuplicatasTodas, matriz::i18n::t("menu.duplicatas_lote_todas"), true,
+                     matriz::app::lerLoteDuplicatasTodasCategorias());
     } else if (topLevelMenuIndex == kMenuAjuda) {
         menu.addItem(kCmdHelp, isPt ? juce::String::fromUTF8("Guia do Usuário e Ajuda...") : "User Guide & Help...");
         menu.addSeparator();
@@ -338,6 +343,11 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
             menuItemsChanged();
             break;
         case kCmdAudioDevice: mostrarAudioDeviceDialogo(); break;
+        case kCmdLoteDuplicatasTodas:
+            matriz::app::gravarLoteDuplicatasTodasCategorias(!matriz::app::lerLoteDuplicatasTodasCategorias());
+            if (conteudo_) conteudo_->aplicarPreferenciaLoteDuplicatas();
+            menuItemsChanged();
+            break;
         case kCmdHelp: HelpDialog::exibirModal(); break;
         case kCmdAbout: mostrarAboutDialogo(); break;
         default: {
