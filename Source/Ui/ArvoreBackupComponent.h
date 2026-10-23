@@ -24,6 +24,7 @@ class ArvoreBackupComponent : public juce::Component,
                                public juce::FileDragAndDropTarget {
 public:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
+    friend int rodarSemPastaSelfTest();  // --selftest-sem-pasta (SemPastaSelfTest.cpp)
     explicit ArvoreBackupComponent(ProjetoAberto& projeto);
     ~ArvoreBackupComponent() override;
 

@@ -542,6 +542,7 @@ target_sources(matriz PRIVATE
     Source/Ui/BounceSelfTest.cpp
     Source/Ui/VerifySourceSelfTest.cpp
     Source/Ui/RebuildSelfTest.cpp
+    Source/Ui/SemPastaSelfTest.cpp
     Source/Ui/ManifestoSelfTest.cpp
     Source/Ui/LogosTipoArquivo.cpp
     Source/Ui/FichasEmbutidas.cpp

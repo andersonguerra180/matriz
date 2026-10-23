@@ -18,6 +18,7 @@ class ProjetoAberto;
 // duas). Os números são calculados em BACKGROUND (conexão de leitura); só o desenho roda na message thread.
 // BACKUP HEALTH, NEEDS ATTENTION e NO FOLDER são clicáveis. NO FOLDER segue o mapa selecionado no dropdown do Folder Map.
 class CartoesAnalyticsComponent : public juce::Component, private EventBusListener, private juce::Timer {
+    friend int rodarSemPastaSelfTest();  // --selftest-sem-pasta (SemPastaSelfTest.cpp)
 public:
     explicit CartoesAnalyticsComponent(ProjetoAberto& projeto);
     ~CartoesAnalyticsComponent() override;
