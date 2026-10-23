@@ -4,6 +4,27 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Janela de conflitos de merge (branch `feat/merge-conflicts-window`, 2026-10-23)
+
+- Branch a partir da `main` (`6be8826`), worktree `BKR Matriz-wt-mergeconf`. Commits: modelo `581cfac`,
+  janela `eeafbbc`, ligações `5c0e4e4`, fix do Undo `cb249d6`.
+- "Review merge conflicts..." / "Batch Merge Conflicts..." (AcoesItem) e o REVIEW NOW do aviso pós-Duplicates
+  abrem `RevisaoConflitosMergeComponent`: desenho da aba Duplicates (ColunaCardsLayout + card com sub-card,
+  faixa na cor do campo, miniatura), um card por item × campo, filtros (campo, mídia, pasta, nº de valores,
+  origem) e ações em lote nos selecionados visíveis. `ConflitosMergeDialog` ficou só na escolha manual de um par
+  na aba Duplicates (antes de juntar).
+- Decisões: leitura (`gruposDeConflitoPendentes`) e gravação (`resolverGrupo`) no `poolMerge_`; uma aplicação =
+  uma transação via `resolverDuplicatasEmSegundoPlano` (Undo por retrato). `resolverGrupo` marca como revisados
+  SÓ os conflitos do grupo (o `revisarConflitos` antigo marca todos do item). Lista virtual (só cards da tela) e
+  miniaturas num pool da janela, só do que está visível. O retrato do Undo agora guarda e restaura
+  valor_anterior/valor_novo/confianca_origem das linhas de merge que já existiam (antes o Cmd+Z da revisão
+  deixava o conflito marcado como revisado).
+- Verificado: build Debug ok; `--selftest-lote` com os 9 checks novos OK e as mesmas 12 falhas do baseline
+  (pHash, dropdown EXPORT, nomes canônicos, consolidação, `ConflitosMergeDialog` modal). Não verificado: uso
+  real no app com acervo grande, tema claro, ASan/TSan, CI Windows.
+- Pendente (fora do escopo): montar o menu de contexto ainda chama `temConflitoMergePendente` item a item na
+  message thread (AcoesItem.cpp, antes de abrir).
+
 ## Alt-codex — estado atual, 2026-10-22
 
 - **Integrada na `main` em `74c8e26`** (`Merge alt-codex: desempenho,
