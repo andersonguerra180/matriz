@@ -294,11 +294,16 @@ struct FiltroOpcoesLf : public MatrizLookAndFeel {
         const auto& tk = tema();
         const auto r = b.getLocalBounds().toFloat().reduced(0.5f);
         const int n = b.getProperties()["n"];
-        g.setColour(n > 0 ? tk.botaoSecundario : tk.painelAlt);
-        if (apertado || sobre) g.setColour(tk.botaoSecundario.darker(0.05f));
+        // Sem opção ligada: bege; com 1 ou mais: grafite (mapa).
+        juce::Colour fundo = n > 0 ? tk.acento : tk.botaoSecundario;
+        if (apertado) fundo = fundo.darker(0.1f);
+        else if (sobre) fundo = n > 0 ? tk.acentoHover : fundo.darker(0.04f);
+        g.setColour(fundo);
         g.fillRoundedRectangle(r, r.getHeight() * 0.5f);
-        g.setColour(tk.borda.withAlpha(0.6f));
-        g.drawRoundedRectangle(r, r.getHeight() * 0.5f, 1.0f);
+        if (n == 0) {
+            g.setColour(tk.borda.withAlpha(0.6f));
+            g.drawRoundedRectangle(r, r.getHeight() * 0.5f, 1.0f);
+        }
     }
     void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override {
         const auto& tk = tema();
@@ -309,7 +314,7 @@ struct FiltroOpcoesLf : public MatrizLookAndFeel {
         auto r = b.getLocalBounds().toFloat();
         float x = r.getCentreX() - (wIcone + wNum) * 0.5f;
         const float cy = r.getCentreY();
-        g.setColour(tk.textoPrimario);
+        g.setColour(n > 0 ? tk.textoSobreAcento : tk.textoPrimario);
         g.fillRoundedRectangle(x, cy - 4.5f, 13.0f, 1.6f, 0.8f);
         g.fillRoundedRectangle(x + 2.5f, cy - 0.8f, 8.0f, 1.6f, 0.8f);
         g.fillRoundedRectangle(x + 4.5f, cy + 2.9f, 4.0f, 1.6f, 0.8f);

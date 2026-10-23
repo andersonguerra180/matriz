@@ -1,4 +1,5 @@
 #include "CatalogWorkspaceComponent.h"
+#include "PainelOpcoesFiltro.h"
 #include "ContainerVisual.h"
 #include "TiposContainer.h"
 #include "OriginalSourceMedium.h"
@@ -763,28 +764,25 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         }
     };
 
+    // Painel do mapa (HIDE / SHOW ONLY / SELECTION, interruptores, Clear all): cada troca já aplica e o painel fica aberto.
     btnFiltroOpcoes_->onClick = [this, aplicarOpcao] {
-        struct Opcao { int id; const char* rotulo; bool ligado; };
-        const Opcao opcoes[] = {
-            {1, "HIDE EDITED", ocultarEditados_},
-            {2, "SHOW REJECTED", mostrarApenasRejeitados_},
-            {3, "HIDE UNSELECTED", ocultarNaoSelecionados_},
-            {4, "SHOW RECENTLY INGESTED", mostrarApenasRecentes_},
-            {5, "INCLUDE HIDDEN", incluirOcultosNaSelecao_},
-            {6, "SHOW BOUNCE LIST", mostrarApenasBounce_},
-            {7, "HIDE FILES WITH GEO LOCATION", ocultarComGeo_},
+        using O = PainelOpcoesFiltro::Opcao;
+        const auto t = [](const char* k) { return matriz::i18n::t(k); };
+        std::vector<O> opcoes = {
+            {1, t("filtro_opcoes.secao_ocultar"), t("filtro_opcoes.ocultar_editados"), t("filtro_opcoes.ocultar_editados_dica"), ocultarEditados_},
+            {3, t("filtro_opcoes.secao_ocultar"), t("filtro_opcoes.ocultar_nao_sel"), t("filtro_opcoes.ocultar_nao_sel_dica"), ocultarNaoSelecionados_},
+            {7, t("filtro_opcoes.secao_ocultar"), t("filtro_opcoes.ocultar_geo"), t("filtro_opcoes.ocultar_geo_dica"), ocultarComGeo_},
+            {2, t("filtro_opcoes.secao_so"), t("filtro_opcoes.rejeitados"), t("filtro_opcoes.rejeitados_dica"), mostrarApenasRejeitados_},
+            {4, t("filtro_opcoes.secao_so"), t("filtro_opcoes.recentes"), t("filtro_opcoes.recentes_dica"), mostrarApenasRecentes_},
+            {6, t("filtro_opcoes.secao_so"), t("filtro_opcoes.bounce"), t("filtro_opcoes.bounce_dica"), mostrarApenasBounce_},
+            {5, t("filtro_opcoes.secao_selecao"), t("filtro_opcoes.incluir_ocultos"), t("filtro_opcoes.incluir_ocultos_dica"), incluirOcultosNaSelecao_},
         };
-        juce::PopupMenu menu;
-        for (const auto& o : opcoes) menu.addItem(o.id, o.rotulo, true, o.ligado);
         juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
-        const bool estados[8] = {false, ocultarEditados_, mostrarApenasRejeitados_, ocultarNaoSelecionados_,
-                                 mostrarApenasRecentes_, incluirOcultosNaSelecao_, mostrarApenasBounce_, ocultarComGeo_};
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFiltroOpcoes_.get()),
-                           [safeThis, aplicarOpcao, estados](int resultado) {
-                               if (safeThis == nullptr || resultado < 1 || resultado > 7) return;
-                               aplicarOpcao(resultado, !estados[resultado]);
-                               safeThis->sincronizarFiltroOpcoesDropdown();
-                           });
+        PainelOpcoesFiltro::abrir(*btnFiltroOpcoes_, std::move(opcoes), [safeThis, aplicarOpcao](int id, bool ligado) {
+            if (safeThis == nullptr) return;
+            aplicarOpcao(id, ligado);
+            safeThis->sincronizarFiltroOpcoesDropdown();
+        });
     };
     addAndMakeVisible(*btnFiltroOpcoes_);
     sincronizarFiltroOpcoesDropdown();
