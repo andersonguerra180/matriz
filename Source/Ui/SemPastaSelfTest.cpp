@@ -11,6 +11,7 @@
 #include "ArvoreBackupComponent.h"
 #include "CartoesAnalyticsComponent.h"
 #include "JanelaPastaFlutuante.h"
+#include "LegendaAtalhosIntake.h"
 #include "MosaicoComponent.h"
 #include "ProjetoAberto.h"
 
@@ -186,6 +187,9 @@ int rodarSemPastaSelfTest() {
             auto* rejeitar = acharFilho<juce::TextButton>(janela, [](juce::TextButton& b) {
                 return b.getButtonText() == i18n::t("janela_pasta.rejeitar_marcados"); });
             checar(rejeitar != nullptr && rejeitar->isVisible(), "the _no folder mosaic has REJECT MARKED");
+            auto* legenda = acharFilho<LegendaAtalhosIntake>(janela);
+            checar(legenda != nullptr && legenda->isVisible() && !legenda->getBounds().isEmpty(),
+                   "the R shortcut legend (as in INTAKE) is shown in the _no folder mosaic");
             if (rejeitar != nullptr && rejeitar->onClick) rejeitar->onClick();
             const auto lixeira = pa.itensNaPastaTrash(mapa);
             checar(std::find(lixeira.begin(), lixeira.end(), solto) != lixeira.end() &&

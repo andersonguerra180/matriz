@@ -8,6 +8,7 @@
 #include "PainelMetadadosArquivo.h"
 #include "FiltrosComponent.h"
 #include "FloatingPreviewWindow.h"
+#include "LegendaAtalhosIntake.h"
 #include "Moldura.h"
 #include "MosaicoComponent.h"
 #include "ContainerVisual.h"
@@ -92,7 +93,11 @@ public:
         btnRejeitar_.setButtonText(i18n::t("janela_pasta.rejeitar_marcados"));
         btnRejeitar_.setTooltip(i18n::t("janela_pasta.rejeitar_marcados_dica"));
         btnRejeitar_.onClick = [this] { rejeitarMarcados(); };
-        if (semPasta_) addAndMakeVisible(btnRejeitar_);
+        if (semPasta_) {
+            addAndMakeVisible(btnRejeitar_);
+            legendaR_ = std::make_unique<LegendaAtalhosIntake>(i18n::t("janela_pasta.rejeitar_marcados_dica"));  // "Shortcuts [R] Reject (?)", como no INTAKE
+            addAndMakeVisible(*legendaR_);
+        }
 
         btnVoltar_.setButtonText(i18n::t("janela_pasta.voltar"));
         btnVoltar_.onClick = [this] { voltarUmaPasta(); };
@@ -180,6 +185,10 @@ public:
         painel_->setBounds(area.removeFromRight(kLarguraFicha));
         area.removeFromRight(1);
         auto topo = area.removeFromTop(30).reduced(12, 4);
+        if (legendaR_ != nullptr) {
+            legendaR_->setBounds(topo.removeFromRight(180));
+            topo.removeFromRight(8);
+        }
         lblContagem_.setBounds(topo);
         if (overlay_ != nullptr) overlay_->setBounds(getLocalBounds());
         viewportGrade_.setBounds(area);
@@ -498,6 +507,7 @@ private:
     std::unique_ptr<PainelOverlay> overlay_;
     juce::Viewport viewportGrade_, viewportFiltros_;
     juce::TextButton btnVoltar_, btnGrade_, btnLista_, btnRejeitar_;
+    std::unique_ptr<LegendaAtalhosIntake> legendaR_;  // só no `_no folder`
     std::string nestId_;  // não vazio = janela de um CONTAINER (só os membros dele)
     bool semPasta_ = false;        // pasta virtual `_no folder` (pastaId == kPastaSemPasta)
     bool selecionarTudo_ = false;  // seleciona tudo quando a grade terminar de carregar
