@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
 
@@ -120,8 +121,12 @@ int rodarSemPastaSelfTest() {
                    "_no folder sits right below _trash, same width");
             checar(arvore.contagemSemPastaAtual() == 3, "the card shows the same count as NO FOLDER (3)");
             arvore.mouseDown(clique(arvore, card.getCentre()));
+            checar(pastaPedida.empty() && arvore.semPastaVirtualSelecionada_, "a single click selects _no folder like a folder (does not open)");
+            arvore.mouseDoubleClick(clique(arvore, card.getCentre()));
             checar(pastaPedida == JanelaPastaFlutuante::kPastaSemPasta && nomePedido == JanelaPastaFlutuante::kNomeSemPasta,
-                   "clicking the card asks the host to open the _no folder window");
+                   "double-clicking _no folder opens its mosaic");
+            arvore.mouseDown(clique(arvore, arvore.areaCanvas().getBottomRight() - juce::Point<int>(30, 30)));
+            checar(!arvore.semPastaVirtualSelecionada_, "clicking elsewhere deselects _no folder");
             pastaPedida.clear();
             bool foiParaGrade = false;
             arvore.aoMostrarConteudoNaGrade = [&](const std::set<std::string>&) { foiParaGrade = true; };
@@ -172,8 +177,19 @@ int rodarSemPastaSelfTest() {
             const auto* rotulo = acharFilho<juce::Label>(janela, [](juce::Label& l) { return l.getText().contains("INTAKE"); });
             checar(rotulo != nullptr && rotulo->getText().contains("1 with CONTENT = Hidden") && rotulo->getText().contains("1 still in INTAKE"),
                    "the count line says where the rest are: " + (rotulo != nullptr ? rotulo->getText() : juce::String("(no label)")));
+            // R + REJECT MARKED: só o marcado com R vai para o _trash (e perde a marca).
+            pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, {solto}, true);
+            auto* rejeitar = acharFilho<juce::TextButton>(janela, [](juce::TextButton& b) {
+                return b.getButtonText() == i18n::t("janela_pasta.rejeitar_marcados"); });
+            checar(rejeitar != nullptr && rejeitar->isVisible(), "the _no folder mosaic has REJECT MARKED");
+            if (rejeitar != nullptr && rejeitar->onClick) rejeitar->onClick();
+            const auto lixeira = pa.itensNaPastaTrash(mapa);
+            checar(std::find(lixeira.begin(), lixeira.end(), solto) != lixeira.end() &&
+                       std::find(lixeira.begin(), lixeira.end(), oculto) == lixeira.end(),
+                   "REJECT MARKED sends only the R-marked file to _trash");
+            checar(pa.itensSemPasta(mapa).count(solto) == 0 && !pa.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, solto) && mudou,
+                   "it leaves _no folder, loses the R mark and the Folder Map is told to reload");
             janela.setVisible(false);
-            juce::ignoreUnused(mudou);
         }
 
         // ---- 2. card NO FOLDER do Analytics
@@ -181,7 +197,7 @@ int rodarSemPastaSelfTest() {
             CartoesAnalyticsComponent cartoes(pa);
             cartoes.setBounds(0, 0, 1400, 100);
             cartoes.dados_ = CartoesAnalyticsComponent::calcular(pa, mapa, false, "Folder Map 1");
-            checar(cartoes.dados_.semPasta == 3, "NO FOLDER card counts 3");
+            checar(cartoes.dados_.semPasta == 2, "NO FOLDER card counts 2 (one went to _trash)");
             int cliques = 0;
             cartoes.aoAbrirSemPasta = [&] { ++cliques; };
             cartoes.mouseDown(clique(cartoes, cartoes.retanguloCard(5, cartoes.getWidth()).getCentre()));

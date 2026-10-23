@@ -88,6 +88,12 @@ public:
         btnGrade_.onClick = [this] { definirVisao(MosaicoComponent::ModoVisao::Grade); };
         btnLista_.onClick = [this] { definirVisao(MosaicoComponent::ModoVisao::Lista); };
 
+        // `_no folder`: R (no mosaico) marca; REJECT MARKED manda os marcados com R para o _trash do mapa.
+        btnRejeitar_.setButtonText(i18n::t("janela_pasta.rejeitar_marcados"));
+        btnRejeitar_.setTooltip(i18n::t("janela_pasta.rejeitar_marcados_dica"));
+        btnRejeitar_.onClick = [this] { rejeitarMarcados(); };
+        if (semPasta_) addAndMakeVisible(btnRejeitar_);
+
         btnVoltar_.setButtonText(i18n::t("janela_pasta.voltar"));
         btnVoltar_.onClick = [this] { voltarUmaPasta(); };
         addChildComponent(btnVoltar_);
@@ -157,6 +163,10 @@ public:
         btnLista_.setBounds(cab.removeFromRight(70));
         btnGrade_.setBounds(cab.removeFromRight(70));
         cab.removeFromRight(12);
+        if (btnRejeitar_.isVisible()) {
+            btnRejeitar_.setBounds(cab.removeFromRight(200));
+            cab.removeFromRight(12);
+        }
         lblTitulo_.setBounds(cab);
 
         auto esquerda = area.removeFromLeft(kLarguraFiltros);
@@ -264,6 +274,36 @@ private:
                 seguro->carregarGrade();
             });
         });
+    }
+
+    // REJECT MARKED (`_no folder`): os arquivos desta pasta marcados com R vão para o _trash do mapa (de lá, RESTORE os traz de
+    // volta) e perdem a marca R. As marcas são lidas da memória (sem banco).
+    void rejeitarMarcados() {
+        std::vector<std::string> alvo;
+        for (const auto& id : ids_)
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, id)) alvo.push_back(id);
+        if (alvo.empty()) {
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                             .withTitle(i18n::t("janela_pasta.rejeitar_marcados"))
+                                             .withMessage(i18n::t("janela_pasta.rejeitar_nenhum"))
+                                             .withButton(i18n::t("dialogo.ok")),
+                                         juce::ModalCallbackFunction::create([](int) {}));
+            return;
+        }
+        if (projeto_.somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }
+        std::string mapa = projeto_.mapaSelecionadoNoFolderMap();
+        if (mapa.empty()) mapa = projeto_.mapaAtivoPadrao();
+        // WINPORT: Nada de I/O na message thread — a mesma gravação síncrona do "Move to Trash" dos arquivos soltos no Folder Map.
+        try {
+            projeto_.moverItensParaTrash(alvo, mapa);
+        } catch (...) {
+            ProjetoAberto::avisarMapaTravado(i18n::t("janela_pasta.rejeitar_falha"));
+            return;
+        }
+        projeto_.definirMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, alvo, false);
+        recarregarItens();
+        if (aoMudouDados_) aoMudouDados_();
     }
 
     // O snapshot da grade roda em background (como no resto do app); os filtros recontam quando ele termina.
@@ -456,7 +496,7 @@ private:
     std::unique_ptr<PainelMetadadosArquivo> painel_;
     std::unique_ptr<PainelOverlay> overlay_;
     juce::Viewport viewportGrade_, viewportFiltros_;
-    juce::TextButton btnVoltar_, btnGrade_, btnLista_;
+    juce::TextButton btnVoltar_, btnGrade_, btnLista_, btnRejeitar_;
     std::string nestId_;  // não vazio = janela de um CONTAINER (só os membros dele)
     bool semPasta_ = false;        // pasta virtual `_no folder` (pastaId == kPastaSemPasta)
     bool selecionarTudo_ = false;  // seleciona tudo quando a grade terminar de carregar

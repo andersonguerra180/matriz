@@ -8,13 +8,14 @@ não devem ser revertidas.
 
 - Worktree `../BKR Matriz-wt-nofolder`, criada do HEAD de `feat/phone-dump-usb` (`6a4a4c5`) para não brigar com as mudanças
   dela em `JanelaPastaFlutuante.cpp`; depois do merge da phone-dump, rebasear sobre a `main`. Um commit por item:
-  1. Card fixo `_no folder` logo abaixo do `_trash` no Folder Map; clique abre a `JanelaPastaFlutuante` no modo
-     `kPastaSemPasta` (ids de `itensSemPasta` num ThreadPool; MOVE TO FOLDER no botão direito; sem EXTRACT).
+  1. Pasta fixa `_no folder` no canvas, logo abaixo do `_trash`: clique seleciona, duplo clique abre a `JanelaPastaFlutuante`
+     no modo `kPastaSemPasta` (ids de `itensSemPasta` num ThreadPool; MOVE TO FOLDER no botão direito; sem EXTRACT;
+     R marca e REJECT MARKED -> `_trash` via `moverItensParaTrash`, tirando a marca R — WINPORT: gravação síncrona).
   2. Card NO FOLDER do Analytics: **causa** da contagem que abria grade vazia = a aba METADATA esconde CONTENT = Hidden e não
      carrega o INTAKE, mas `contarItensSemPasta` conta os dois (no acervo Fotos/Project os 376 sem pasta são todos Hidden).
      O clique agora leva à STRUCTURE › `_no folder` com tudo selecionado; a janela diz quantos são Hidden / INTAKE.
   3. Pasta com auto-organize: "Import files from _no folder..." (fora do INTAKE) → `adicionarItensAPasta` + `aplicarAutoOrganizacao`.
-- Teste: `"build/matriz_artefacts/Debug/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-sem-pasta` — 20 OK em 2026-10-23.
+- Teste: `"build/matriz_artefacts/Debug/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-sem-pasta` — 25 OK em 2026-10-23.
   Não foi clicado no app por mim (sessão sem permissão de Acessibilidade/Gravação de Tela); a suíte ampla e ASan/TSan não rodaram.
 - O card SEM PASTA da coluna esquerda do Folder Map também abre o `_no folder` (antes ia para a aba METADATA, com a mesma
   limitação do Hidden); soltar arquivos nele continua tirando-os das pastas. `_SEM_PASTA` físico do MAIN e
