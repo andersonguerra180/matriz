@@ -2417,6 +2417,8 @@ void IntakeWorkspaceComponent::atualizarVisibilidadeEmptyState() {
         emptyState_->setVisible(vazio);
         if (vazio) emptyState_->toFront(false);
     }
+    // A área de drop nunca fica por cima de uma janela aberta (ela engole os cliques e a janela parece travada).
+    if (overlayAtual_ && overlayAtual_->isVisible()) overlayAtual_->toFront(true);
     if (vazio) {
         if (tabela_) tabela_->setVisible(false);
         if (gridViewport_) gridViewport_->setVisible(false);

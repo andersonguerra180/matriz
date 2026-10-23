@@ -790,7 +790,8 @@ void MainComponent::aoUsbPlugado() {
     juce::Component::SafePointer<MainComponent> seguro(this);
     sondaUsb_->detectar([seguro](bool achou) {
         if (!achou || seguro == nullptr || !seguro->projetoAberto_ || seguro->overlay_.estaAberto()) return;
-        seguro->mostrarIntake();
+        // Já no Intake: não recarrega (o usuário pode estar no meio de uma janela); só abre o navegador se nada estiver aberto.
+        if (!seguro->intakeWorkspace_ || !seguro->intakeWorkspace_->isVisible()) seguro->mostrarIntake();
         if (seguro->intakeWorkspace_) seguro->intakeWorkspace_->abrirAndroidUsbAoPlugar();
     });
 }
