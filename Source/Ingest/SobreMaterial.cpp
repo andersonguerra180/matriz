@@ -151,9 +151,9 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
             if (campo == "source_media") {  // mídia de origem: coluna do próprio item (JSON)
                 db.run("UPDATE item SET source_media = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
                        {Value::of(valor), Value::of(agora), Value::of(itemId)});
-            } else if (campo == "lista") {  // LIST: coluna do próprio item
+            } else if (campo == "lista") {  // LIST: coluna do próprio item, na grafia que o projeto já usa
                 db.run("UPDATE item SET lista = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
-                       {Value::of(valor), Value::of(agora), Value::of(itemId)});
+                       {Value::of(matriz::model::nomes::valorCanonicoDaColuna(db, "lista", valor)), Value::of(agora), Value::of(itemId)});
             } else if (campo == "ano") {    // ano: só preenche se o arquivo ainda não tem (a data do arquivo prevalece)
                 db.run("UPDATE item SET ano = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ? AND (ano IS NULL OR ano = 0)",
                        {Value::of(juce::String(valor).getIntValue()), Value::of(agora), Value::of(itemId)});

@@ -11,9 +11,10 @@
 
 // Nomes case-insensitive (pacote de collection, Fase 1).
 //
-// Tags, pessoas e subjects: o mesmo nome ignorando maiúsculas/minúsculas e
-// espaços nas pontas é o MESMO registro. Acentos continuam distinguindo
-// ("São" ≠ "Sao"). O texto que fica é o da primeira ocorrência gravada no
+// Tags, pessoas, subjects e os campos de um nome só (LIST, CREATOR,
+// PUBLISHER, CONTRIBUTOR): o mesmo nome ignorando maiúsculas/minúsculas,
+// acentos e espaços nas pontas é o MESMO registro ("Véritas" = "Veritas").
+// O texto que fica é o da primeira ocorrência gravada no
 // projeto — toda gravação passa por aqui e troca o que o operador digitou
 // pela grafia que já existe, então filtros, contagens e autocomplete veem
 // uma entrada só sem precisar mudar a leitura.
@@ -36,7 +37,7 @@
 
 namespace matriz::model::nomes {
 
-// trim + minúsculas. Acentos preservados.
+// trim + minúsculas + sem acentos.
 std::string chave(const std::string& nome);
 
 // "Show, Backstage; Tour" → {"Show", "Backstage", "Tour"} (aparados, sem vazios;
@@ -57,6 +58,14 @@ std::string subjectCanonico(matriz::db::Database& registro, const std::string& n
 // Lista inteira de dc_subject pronta pra gravar.
 std::string subjectsCanonicos(matriz::db::Database& registro, const std::string& valor);
 
+// LIST, CREATOR, PUBLISHER e CONTRIBUTOR: um nome por item, na coluna do
+// próprio item (lista, dc_creator, dc_publisher, dc_contributor).
+const std::vector<std::string>& colunasDeNome();
+bool ehColunaDeNome(const std::string& coluna);
+// A grafia já gravada nessa coluna (a do item mais antigo), ou o próprio
+// nome aparado. Coluna fora de colunasDeNome() devolve `nome` intacto.
+std::string valorCanonicoDaColuna(matriz::db::Database& registro, const std::string& coluna, const std::string& nome);
+
 // Vocabulário carregado uma vez — pra lotes (pacote, merge, migração).
 // canonico() registra nomes novos, então o 2º "show" de um mesmo lote vira
 // o "Show" do 1º.
@@ -74,7 +83,8 @@ private:
 // --- Migração de projetos existentes ---------------------------------------
 
 struct GrupoUnificacao {
-    enum class Tipo { Tags, Subjects } tipo = Tipo::Tags;
+    enum class Tipo { Tags, Subjects, Coluna } tipo = Tipo::Tags;
+    std::string coluna;                  // Tipo::Coluna: lista, dc_creator, dc_publisher ou dc_contributor
     std::string canonico;
     std::vector<std::string> variantes;  // grafias que viram `canonico` (sem ela)
     int itens = 0;                       // itens com alguma das variantes

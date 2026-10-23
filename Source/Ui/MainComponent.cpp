@@ -2683,8 +2683,9 @@ void MainComponent::perguntarUnificacaoDeNomes(const std::vector<matriz::model::
         todas.add("\"" + juce::String::fromUTF8(g.canonico.c_str()) + "\"");
         for (const auto& v : g.variantes) todas.add("\"" + juce::String::fromUTF8(v.c_str()) + "\"");
         linhas.add(matriz::i18n::t("nomes.unificar_linha")
-                       .replace("{tipo}", matriz::i18n::t(g.tipo == GrupoUnificacao::Tipo::Tags ? "nomes.tipo_tag"
-                                                                                               : "nomes.tipo_subject"))
+                       .replace("{tipo}", matriz::i18n::t(g.tipo == GrupoUnificacao::Tipo::Tags       ? "nomes.tipo_tag"
+                                                          : g.tipo == GrupoUnificacao::Tipo::Subjects ? "nomes.tipo_subject"
+                                                                                                      : "nomes.tipo_" + g.coluna))
                        .replace("{variantes}", todas.joinIntoString(" + "))
                        .replace("{canonico}", juce::String::fromUTF8(g.canonico.c_str()))
                        .replace("{n}", juce::String(g.itens)));

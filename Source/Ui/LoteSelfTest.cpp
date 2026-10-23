@@ -166,8 +166,8 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
         pa.adicionarTag(i2, "Epoca");
         auto t2 = tagsDoItem(reg, i2);
         checar(std::count(t2.begin(), t2.end(), std::string("\xc3\x89poca")) == 1 &&
-                   std::count(t2.begin(), t2.end(), std::string("Epoca")) == 1 && t2.size() == 4,
-               juce::String::fromUTF8("\"\xc3\x89POCA\" becomes \"\xc3\x89poca\"; \"Epoca\" (no accent) stays a different tag"));
+                   std::count(t2.begin(), t2.end(), std::string("Epoca")) == 0 && t2.size() == 3,
+               juce::String::fromUTF8("\"\xc3\x89POCA\" and \"Epoca\" (no accent) both become \"\xc3\x89poca\""));
 
         pa.adicionarPessoa("Jo\xc3\xa3o Silva");
         pa.adicionarPessoa("jo\xc3\xa3o silva");
@@ -184,6 +184,14 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
         pa.salvarMetadadoEmLote({i1, i2}, {{"dc_subject", "SHOW"}});
         checar(colunaDoItem(reg, "dc_subject", i1) == "Show" && colunaDoItem(reg, "dc_subject", i2) == "Show",
                "batch SUBJECT \"SHOW\" is recorded as \"Show\"");
+        // LIST/CREATOR: um nome por item, sem distinção de caixa e acento ("Véritas" = "Veritas").
+        pa.salvarMetadado(i1, "lista", "Veritas");
+        pa.salvarMetadado(i2, "lista", "V\xc3\xa9ritas");
+        checar(colunaDoItem(reg, "lista", i2) == "Veritas", juce::String::fromUTF8("LIST \"V\xc3\xa9ritas\" takes the existing \"Veritas\""));
+        pa.salvarMetadadoEmLote({i1, i2}, {{"dc_creator", "  jos\xc3\xa9  "}});
+        pa.salvarMetadado(i1, "dc_creator", "JOSE");
+        checar(colunaDoItem(reg, "dc_creator", i1) == "jos\xc3\xa9" && colunaDoItem(reg, "dc_creator", i2) == "jos\xc3\xa9",
+               juce::String::fromUTF8("CREATOR \"JOSE\" takes the existing \"jos\xc3\xa9\" (batch and single)"));
         checar(nomes::levantarUnificacao(reg).empty(), "data written through the app never needs unifying");
     } catch (const std::exception& e) {
         checar(false, juce::String("names selftest (writes): ") + e.what());
@@ -215,6 +223,11 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
             tag(c, "Maria");
             reg.run("INSERT INTO collection_person (id, nome, criado_em) VALUES (?, 'maria', ?)",
                     {Value::of(matriz::model::novoUuid()), Value::of(matriz::model::agoraIso8601())});
+            reg.run("UPDATE item SET lista = 'Veritas' WHERE id IN (?, ?)", {Value::of(a), Value::of(b)});
+            reg.run("UPDATE item SET lista = ? WHERE id = ?", {Value::of(std::string("V\xc3\xa9ritas")), Value::of(c)});
+            reg.run("INSERT INTO item_campo (id, item_id, campo_id, valor, fonte, atualizado_em) VALUES (?, ?, 'lista', ?, 'humano', ?)",
+                    {Value::of(matriz::model::novoUuid()), Value::of(c), Value::of(std::string("V\xc3\xa9ritas")),
+                     Value::of(matriz::model::agoraIso8601())});
             reg.run("UPDATE item SET dc_subject = 'Show, Tour' WHERE id = ?", {Value::of(a)});
             reg.run("UPDATE item SET dc_subject = 'show; tour' WHERE id = ?", {Value::of(b)});
             reg.run("INSERT INTO item_campo (id, item_id, campo_id, valor, fonte, atualizado_em) "
@@ -229,6 +242,11 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
                 g.itens == 2)
                 achouShow = true;
         checar(achouShow, "the preview lists \"Show\" + \"show\" + \" SHOW \" -> \"Show\" (2 items)");
+        bool achouLista = false;
+        for (auto& g : grupos)
+            if (g.tipo == nomes::GrupoUnificacao::Tipo::Coluna && g.coluna == "lista" && g.canonico == "Veritas" && g.itens == 1)
+                achouLista = true;
+        checar(achouLista, juce::String::fromUTF8("the preview lists LIST \"V\xc3\xa9ritas\" -> \"Veritas\" (1 item)"));
 
         MainComponent janela;
         janela.setBounds(0, 0, 1200, 800);
@@ -255,6 +273,12 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
             checar(tagsDoItem(reg, c) == (std::vector<std::string>{"Show", "maria"}),
                    "an item that had two variations keeps a single entry");
             checar(colunaDoItem(reg, "dc_subject", b) == "Show; Tour", "subjects were unified in item.dc_subject");
+            {
+                auto st = reg.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = 'lista'");
+                st.bind(1, Value::of(c));
+                checar(colunaDoItem(reg, "lista", c) == "Veritas" && st.step() && st.columnText(0) == "Veritas",
+                       juce::String::fromUTF8("LIST \"V\xc3\xa9ritas\" became \"Veritas\" in item and item_campo"));
+            }
             {
                 auto st = reg.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = 'dc_subject'");
                 st.bind(1, Value::of(b));

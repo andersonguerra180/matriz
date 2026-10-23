@@ -1683,10 +1683,11 @@ std::string ProjetoAberto::descricaoUndoAtual() const {
 void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valorDigitado) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
-    // Nomes case-insensitive: "show" digitado vira o "Show" que o projeto já usa.
+    // Nomes sem distinção de caixa e acento: "show" digitado vira o "Show" que o projeto já usa; "Véritas" no LIST vira o
+    // "Veritas" já gravado.
     const std::string valor = coluna == "dc_subject"
                                   ? matriz::model::nomes::subjectsCanonicos(projeto_->registro(), valorDigitado)
-                                  : valorDigitado;
+                                  : matriz::model::nomes::valorCanonicoDaColuna(projeto_->registro(), coluna, valorDigitado);
 
     if (!desfazendo_) {
         auto old = lerMetadado(itemId, coluna);
@@ -1738,10 +1739,12 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
     MATRIZ_TRACE("ProjetoAberto::salvarMetadadoEmLote");
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemIds.empty() || camposEValoresDigitados.empty()) return;
-    // Nomes case-insensitive: SUBJECT entra na grafia que o projeto já usa.
+    // Nomes sem distinção de caixa e acento: SUBJECT, LIST, CREATOR... entram na grafia que o projeto já usa.
     auto camposEValores = camposEValoresDigitados;
-    for (auto& [coluna, valor] : camposEValores)
+    for (auto& [coluna, valor] : camposEValores) {
         if (coluna == "dc_subject") valor = matriz::model::nomes::subjectsCanonicos(projeto_->registro(), valor);
+        else valor = matriz::model::nomes::valorCanonicoDaColuna(projeto_->registro(), coluna, valor);
+    }
 
     // Uma entrada de Undo só pro lote inteiro (não uma por item x campo):
     // captura o valor antigo de cada combinação antes de escrever. Desfazer

@@ -7,6 +7,7 @@
 
 #include "NomesCanonicos.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -233,6 +234,32 @@ std::string subjectsCanonicos(matriz::db::Database& registro, const std::string&
     return canonizarListaSubjects(valor, [&registro](const std::string& t) { return subjectCanonico(registro, t); });
 }
 
+const std::vector<std::string>& colunasDeNome() {
+    static const std::vector<std::string> v = {"lista", "dc_creator", "dc_publisher", "dc_contributor"};
+    return v;
+}
+
+bool ehColunaDeNome(const std::string& coluna) {
+    const auto& v = colunasDeNome();
+    return std::find(v.begin(), v.end(), coluna) != v.end();
+}
+
+std::string valorCanonicoDaColuna(matriz::db::Database& registro, const std::string& coluna, const std::string& nome) {
+    if (!ehColunaDeNome(coluna)) return nome;
+    const std::string limpo = aparar(nome);
+    if (limpo.empty()) return limpo;
+    // Sem o atalho da grafia exata das tags: num projeto que já tem "Veritas" e "Véritas", gravar qualquer uma vira a
+    // mais antiga. Uma varredura de `item` por gravação (o lote grava um valor para N itens com uma consulta só).
+    const std::string k = chave(limpo);
+    try {
+        auto st = registro.prepare("SELECT " + coluna + " FROM item WHERE " + coluna + " LIKE ? ESCAPE '\\' ORDER BY rowid");
+        st.bind(1, Value::of(padraoLike(k)));
+        while (st.step())
+            if (chave(st.columnText(0)) == k) return aparar(st.columnText(0));
+    } catch (...) {}
+    return limpo;
+}
+
 // ---------------------------------------------------------------------------
 // Vocabulário em memória
 // ---------------------------------------------------------------------------
@@ -323,6 +350,20 @@ std::vector<GrupoUnificacao> levantarUnificacao(matriz::db::Database& registro) 
     const size_t nTags = grupos.size();
     auto subjects = agrupar(grafiasEmOrdem(registro, Vocabulario::Tipo::Subjects), GrupoUnificacao::Tipo::Subjects);
     for (auto& g : subjects) grupos.push_back(std::move(g));
+    const size_t nTagsESubjects = grupos.size();
+    // LIST, CREATOR...: grafias da coluna do item, na ordem do item mais antigo.
+    for (const auto& coluna : colunasDeNome()) {
+        std::vector<std::string> grafias;
+        try {
+            auto st = registro.prepare("SELECT " + coluna + ", MIN(rowid) AS o FROM item WHERE COALESCE(" + coluna +
+                                       ", '') <> '' GROUP BY " + coluna + " ORDER BY o");
+            while (st.step()) grafias.push_back(st.columnText(0));
+        } catch (...) {}
+        for (auto& g : agrupar(grafias, GrupoUnificacao::Tipo::Coluna)) {
+            g.coluna = coluna;
+            grupos.push_back(std::move(g));
+        }
+    }
 
     // Itens por grupo.
     try {
@@ -336,9 +377,9 @@ std::vector<GrupoUnificacao> levantarUnificacao(matriz::db::Database& registro) 
             }
             grupos[i].itens = static_cast<int>(ids.size());
         }
-        if (grupos.size() > nTags) {
+        if (nTagsESubjects > nTags) {
             std::map<std::string, size_t> grupoDaVariante;
-            for (size_t i = nTags; i < grupos.size(); ++i)
+            for (size_t i = nTags; i < nTagsESubjects; ++i)
                 for (const auto& v : grupos[i].variantes) grupoDaVariante[v] = i;
             std::vector<std::set<std::string>> ids(grupos.size());
             auto contar = [&](const std::string& sql) {
@@ -350,7 +391,15 @@ std::vector<GrupoUnificacao> levantarUnificacao(matriz::db::Database& registro) 
             };
             contar("SELECT id, dc_subject FROM item WHERE COALESCE(dc_subject, '') <> ''");
             contar("SELECT item_id, valor FROM item_campo WHERE campo_id = 'dc_subject' AND COALESCE(valor, '') <> ''");
-            for (size_t i = nTags; i < grupos.size(); ++i) grupos[i].itens = static_cast<int>(ids[i].size());
+            for (size_t i = nTags; i < nTagsESubjects; ++i) grupos[i].itens = static_cast<int>(ids[i].size());
+        }
+        for (size_t i = nTagsESubjects; i < grupos.size(); ++i) {
+            auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE " + grupos[i].coluna + " = ?");
+            for (const auto& v : grupos[i].variantes) {
+                st.reset();
+                st.bind(1, Value::of(v));
+                if (st.step()) grupos[i].itens += static_cast<int>(st.columnInt(0));
+            }
         }
     } catch (...) {}
     return grupos;
@@ -381,7 +430,7 @@ ResultadoUnificacao aplicarUnificacao(matriz::db::Database& registro, const juce
     for (const auto& g : grupos) {
         if (g.tipo == GrupoUnificacao::Tipo::Tags) {
             for (const auto& v : g.variantes) tagParaCanonica[v] = g.canonico;
-        } else {
+        } else if (g.tipo == GrupoUnificacao::Tipo::Subjects) {
             subjectPorChave[chave(g.canonico)] = g.canonico;
         }
     }
@@ -483,6 +532,25 @@ ResultadoUnificacao aplicarUnificacao(matriz::db::Database& registro, const juce
                 }
             }
         }
+        // 4. LIST, CREATOR...: a coluna do item, o espelho em item_campo e o histórico do autocomplete.
+        for (const auto& g : grupos) {
+            if (g.tipo != GrupoUnificacao::Tipo::Coluna) continue;
+            for (const auto& v : g.variantes) {
+                {
+                    auto st = registro.prepare("SELECT id FROM item WHERE " + g.coluna + " = ?");
+                    st.bind(1, Value::of(v));
+                    while (st.step()) itensAlterados.insert(st.columnText(0));
+                }
+                registro.run("UPDATE item SET " + g.coluna + " = ? WHERE " + g.coluna + " = ?", {Value::of(g.canonico), Value::of(v)});
+                registro.run("UPDATE item_campo SET valor = ? WHERE campo_id = ? AND valor = ?",
+                             {Value::of(g.canonico), Value::of(g.coluna), Value::of(v)});
+                if (tabelaExiste(registro, "autocomplete_historico")) {
+                    registro.run("UPDATE OR IGNORE autocomplete_historico SET valor = ? WHERE campo_id = ? AND valor = ?",
+                                 {Value::of(g.canonico), Value::of(g.coluna), Value::of(v)});
+                    registro.run("DELETE FROM autocomplete_historico WHERE campo_id = ? AND valor = ?", {Value::of(g.coluna), Value::of(v)});
+                }
+            }
+        }
         registro.exec("COMMIT");
     } catch (const std::exception& e) {
         try { registro.exec("ROLLBACK"); } catch (...) {}
@@ -500,7 +568,9 @@ ResultadoUnificacao aplicarUnificacao(matriz::db::Database& registro, const juce
         for (const auto& g : grupos) {
             juce::StringArray vs;
             for (const auto& v : g.variantes) vs.add("\"" + juce::String::fromUTF8(v.c_str()) + "\"");
-            linhas.add(juce::String(g.tipo == GrupoUnificacao::Tipo::Tags ? "Tag/Person: " : "Subject: ") +
+            linhas.add(juce::String(g.tipo == GrupoUnificacao::Tipo::Tags       ? "Tag/Person: "
+                                    : g.tipo == GrupoUnificacao::Tipo::Subjects ? "Subject: "
+                                                                                : juce::String(g.coluna) + ": ") +
                        vs.joinIntoString(" + ") + " -> \"" + juce::String::fromUTF8(g.canonico.c_str()) + "\" (" +
                        juce::String(g.itens) + " items)");
         }
