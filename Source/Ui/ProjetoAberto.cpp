@@ -924,6 +924,50 @@ void ProjetoAberto::revisarConflitosMerge(const std::string& itemId, std::set<st
         "Review Merge Conflicts");
 }
 
+void ProjetoAberto::carregarConflitosMergeEmSegundoPlano(
+    std::set<std::string> escopo,
+    std::function<void(std::vector<matriz::model::merge::GrupoConflito>, std::map<std::string, juce::String>)> aoConcluir) {
+    if (!projeto_) return;
+    std::weak_ptr<bool> vivo = vivo_;
+    poolMerge_.addJob([this, vivo, escopo, aoConcluir] {
+        std::vector<matriz::model::merge::GrupoConflito> grupos;
+        std::map<std::string, juce::String> miniaturas;
+        try {
+            grupos = matriz::model::merge::gruposDeConflitoPendentes(leitura(), escopo);
+            for (const auto& g : grupos)
+                if (!miniaturas.count(g.itemId))
+                    if (auto c = caminhoMiniaturaPrincipal(g.itemId)) miniaturas[g.itemId] = *c;
+        } catch (const std::exception& e) {
+            juce::Logger::writeToLog("[merge] leitura dos conflitos falhou: " + juce::String(e.what()));
+        }
+        juce::MessageManager::callAsync([vivo, grupos = std::move(grupos), miniaturas = std::move(miniaturas), aoConcluir]() mutable {
+            if (vivo.lock() && aoConcluir) aoConcluir(std::move(grupos), std::move(miniaturas));
+        });
+    });
+}
+
+void ProjetoAberto::resolverConflitosMergeEmSegundoPlano(
+    std::vector<std::pair<matriz::model::merge::GrupoConflito, std::string>> escolhas, std::function<void(bool)> aoConcluir) {
+    std::vector<std::string> itens;
+    for (const auto& [g, valor] : escolhas)
+        if (std::find(itens.begin(), itens.end(), g.itemId) == itens.end()) itens.push_back(g.itemId);
+    resolverDuplicatasEmSegundoPlano(
+        itens,
+        [escolhas](matriz::db::Database& db) {
+            for (const auto& [g, valor] : escolhas) matriz::model::merge::resolverGrupo(db, g, valor);
+            return std::vector<ResultadoSanitizacao>{};
+        },
+        [itens, aoConcluir](bool ok, std::vector<ResultadoSanitizacao>) {
+            if (ok) {
+                // Lote grande: um aviso de recarga só (mesmo limite da resolução de duplicatas).
+                if (itens.size() > 20) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+                else for (const auto& id : itens) EventBus::obterInstancia().dispararItemAlterado(id, "metadado");
+            }
+            if (aoConcluir) aoConcluir(ok);
+        },
+        "Resolve Merge Conflicts");
+}
+
 std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pastaColecao) const {
     juce::File resolvedDir = matriz::model::Project::resolverPastaProjeto(pastaColecao);
     juce::File regFile = resolvedDir.getChildFile("registro.sqlite");

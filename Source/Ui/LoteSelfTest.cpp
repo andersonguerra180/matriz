@@ -43,6 +43,7 @@
 #include "DuplicatesWorkspaceComponent.h"
 #include "LayoutArvoreFolderMap.h"
 #include "ConflitosMergeDialog.h"
+#include "RevisaoConflitosMergeComponent.h"
 #include "EventBus.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
@@ -995,6 +996,51 @@ void rodarTestesMerge(const Checar& checar) {
         esperarAte([&] { return ok.has_value(); }, 20000);
         pend = pa.conflitosMergePendentes(c);
         checar(pend.size() == 1 && pend[0].origem == "package Pacote X", "a value from a package names the package as origin");
+
+        // Janela de revisão em lote: grupos item × campo, escolha por grupo numa transação.
+        auto carregar = [&](std::set<std::string> escopo) {
+            std::optional<std::vector<mg::GrupoConflito>> grupos;
+            pa.carregarConflitosMergeEmSegundoPlano(std::move(escopo), [&](std::vector<mg::GrupoConflito> g, std::map<std::string, juce::String>) {
+                grupos = std::move(g);
+            });
+            esperarAte([&] { return grupos.has_value(); }, 20000);
+            return grupos.value_or(std::vector<mg::GrupoConflito>{});
+        };
+        auto grupos = carregar({});
+        checar(grupos.size() == 1 && grupos[0].itemId == c && grupos[0].campo == "dc_description" &&
+                   grupos[0].valorAtual == "daqui" && grupos[0].alternativas.size() == 1 &&
+                   grupos[0].alternativas[0].valor == "do pacote" && grupos[0].codigo == "MRG-3",
+               "batch review: one card per item x field, with the current value, the other value and the item's code");
+        checar(carregar({a}).empty(), "batch review: the scope limits the cards to the chosen items");
+        if (!grupos.empty()) {
+            std::optional<bool> okLote;
+            pa.resolverConflitosMergeEmSegundoPlano({{grupos[0], "do pacote"}}, [&](bool r) { okLote = r; });
+            esperarAte([&] { return okLote.has_value(); }, 20000);
+            checar(okLote.value_or(false) && colunaDoItem(reg, "dc_description", c) == "do pacote" && carregar({}).empty() &&
+                       pa.itensDaColecaoEmbutida("merge_conflitos").count(c) == 0,
+                   "batch review: USE writes the other value and the item leaves \"Merge conflicts\"");
+            checar(pa.desfazer() && colunaDoItem(reg, "dc_description", c) == "daqui" && carregar({}).size() == 1,
+                   "batch review: Undo brings the value and the pending conflict back");
+
+            // A janela: carrega em background, filtra em memória e aplica o lote nos selecionados visíveis.
+            RevisaoConflitosMergeComponent janela(pa, {});
+            janela.setSize(1200, 800);
+            esperarAte([&] { return !janela.ocupadoParaTeste(); }, 20000);
+            checar(janela.cardsParaTeste() == 1 && janela.visiveisParaTeste() == 1 && janela.opcoesDeCampoParaTeste() == 2,
+                   "merge window: one card, and the field filter lists only the fields in conflict");
+            janela.filtrarParaTeste(3, 1);  // 3 ou mais valores
+            checar(janela.visiveisParaTeste() == 0, "merge window: the \"3 or more values\" filter hides a 2-value conflict");
+            janela.filtrarParaTeste(1, 3);  // origem: pacotes
+            checar(janela.visiveisParaTeste() == 1, "merge window: the origin filter finds the package value");
+            janela.selecionarVisiveisParaTeste();
+            bombear(50);
+            checar(janela.selecionadosParaTeste() == 1 && janela.loteHabilitadoParaTeste(),
+                   "merge window: SELECT ALL SHOWN selects the card and enables the batch actions");
+            janela.usarOutroParaTeste();  // USAR O OUTRO VALOR (1 card: sem confirmação)
+            esperarAte([&] { return janela.cardsParaTeste() == 0 && !janela.ocupadoParaTeste(); }, 20000);
+            checar(colunaDoItem(reg, "dc_description", c) == "do pacote" && carregar({}).empty(),
+                   "merge window: USE THE OTHER VALUE writes it and the card leaves the list");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("merge selftest: ") + e.what());
     }

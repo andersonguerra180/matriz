@@ -1,4 +1,4 @@
-#include "ConflitosMergeDialog.h"
+#include "RevisaoConflitosMergeComponent.h"
 #include "AcoesItem.h"
 #include "ContainerVisual.h"
 #include "PastaPickerWindow.h"
@@ -597,7 +597,7 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kVerDuplicatas, matriz::i18n::t("acoes.ver_duplicatas"), umSo);
     // Fase 4: valores que perderam ao juntar duplicatas.
     if (std::any_of(itemIds.begin(), itemIds.end(), [&](const auto& id) { return projeto.temConflitoMergePendente(id); }))
-        menu.addItem(kRevisarConflitosMerge, umSo ? matriz::i18n::t("acoes.revisar_conflitos") : juce::String("Batch Merge Conflicts"));
+        menu.addItem(kRevisarConflitosMerge, matriz::i18n::t(umSo ? "acoes.revisar_conflitos" : "acoes.revisar_conflitos_lote"));
     return menu;
 }
 
@@ -763,28 +763,10 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             break;
         }
 
-        case kRevisarConflitosMerge: {
-            std::vector<ConflitosMergeDialog::Linha> linhas;
-            for (const auto& id : itemIds) for (const auto& c : projeto.conflitosMergePendentes(id))
-                linhas.push_back({c.historicoId, c.campo, juce::String::fromUTF8(id.c_str()) + ": " + matriz::model::merge::resumoDoValor(c.campo, c.valorAtual),
-                                  matriz::model::merge::resumoDoValor(c.campo, c.valorAlternativo) + "  (" +
-                                      juce::String::fromUTF8(c.origem.c_str()) + ")"});
-            if (linhas.empty()) break;
-            ProjetoAberto* p = &projeto;
-            std::weak_ptr<bool> vivo = projeto.tokenVida();
-            ConflitosMergeDialog::mostrar(matriz::i18n::t("merge.revisar_titulo"), matriz::i18n::t("merge.revisar_intro"),
-                                          matriz::i18n::t("merge.col_atual"), matriz::i18n::t("merge.col_outro"),
-                                          std::move(linhas), [p, vivo, itemIds](bool ok, std::set<std::string> trocar) {
-                                              if (ok && vivo.lock()) p->resolverDuplicatasEmSegundoPlano(itemIds,
-                                                  [itemIds, trocar](matriz::db::Database& db) {
-                                                      for (const auto& id : itemIds) matriz::model::merge::revisarConflitos(db, id, trocar);
-                                                      return std::vector<ProjetoAberto::ResultadoSanitizacao>{};
-                                                  }, [](bool sucesso, std::vector<ProjetoAberto::ResultadoSanitizacao>) {
-                                                      if (sucesso) EventBus::obterInstancia().dispararItemAlterado({}, "metadado");
-                                                  }, "Batch Merge Conflicts");
-                                          });
+        case kRevisarConflitosMerge:
+            // Janela no desenho da aba Duplicates; lê os conflitos em background.
+            RevisaoConflitosMergeComponent::abrir(projeto, std::set<std::string>(itemIds.begin(), itemIds.end()));
             break;
-        }
 
         default: break;
     }

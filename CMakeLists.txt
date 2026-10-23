@@ -605,6 +605,7 @@ target_sources(matriz PRIVATE
     Source/Model/NomesSeguros.cpp
     Source/Model/MergeFichas.cpp
     Source/Ui/ConflitosMergeDialog.cpp
+    Source/Ui/RevisaoConflitosMergeComponent.cpp
     Source/Ui/NotesEstruturadasComponent.cpp
     Source/Ingest/LightroomImporter.cpp
     Source/Ingest/Loudness.cpp

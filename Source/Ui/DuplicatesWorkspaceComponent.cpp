@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "ConflitosMergeDialog.h"
+#include "RevisaoConflitosMergeComponent.h"
 
 namespace matriz::ui {
 
@@ -155,12 +156,20 @@ namespace {
         // snapshot em andamento — a grade ficava vazia.
         // Fase 4: quantos itens mantidos ficaram com conflito (valor perdedor
         // no histórico) — revisão no filtro "Merge conflicts" do METADATA.
-        int comConflito = 0;
-        for (const auto& r : resultados) if (r.conflitos > 0) ++comConflito;
-        if (comConflito > 0)
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("merge.resolver_titulo"),
-                                                   matriz::i18n::t("duplicatas.conflitos_lote").replace("{n}", juce::String(comConflito)),
-                                                   {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        std::set<std::string> comConflito;
+        for (const auto& r : resultados) if (r.conflitos > 0) comConflito.insert(r.idMantido);
+        if (!comConflito.empty()) {
+            // REVIEW NOW abre a janela de revisão em lote só com esses itens.
+            ProjetoAberto* p = &proj;
+            std::weak_ptr<bool> vivo = proj.tokenVida();
+            juce::AlertWindow::showOkCancelBox(
+                juce::AlertWindow::InfoIcon, matriz::i18n::t("merge.resolver_titulo"),
+                matriz::i18n::t("duplicatas.conflitos_lote").replace("{n}", juce::String(static_cast<int>(comConflito.size()))),
+                matriz::i18n::t("merge.janela.revisar_agora"), matriz::i18n::t("comum.ok"), nullptr,
+                juce::ModalCallbackFunction::create([p, vivo, comConflito](int r) {
+                    if (r == 1 && vivo.lock()) RevisaoConflitosMergeComponent::abrir(*p, comConflito);
+                }));
+        }
         constexpr size_t kLimiteItemAItem = 20;
         if (idsAlterados.size() > kLimiteItemAItem) {
             EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");

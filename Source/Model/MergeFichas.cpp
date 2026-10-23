@@ -1,5 +1,6 @@
 #include "MergeFichas.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <regex>
@@ -384,6 +385,70 @@ void revisarConflitos(matriz::db::Database& registro, const std::string& itemId,
     registro.run("UPDATE item_historico SET confianca_origem = 1 WHERE item_id = ? AND modelo_origem = ? "
                  "AND confianca_origem IS NULL",
                  {Value::of(itemId), Value::of(std::string(kModeloMerge))});
+}
+
+std::vector<GrupoConflito> gruposDeConflitoPendentes(matriz::db::Database& registro, const std::set<std::string>& itemIds) {
+    std::vector<GrupoConflito> out;
+    std::map<std::pair<std::string, std::string>, size_t> indice;  // (item, campo) -> posição em out
+    auto st = registro.prepare(
+        "SELECT h.id, h.item_id, COALESCE(h.campo_id, ''), COALESCE(h.valor_novo, ''), COALESCE(h.valor_anterior, ''), "
+        "COALESCE(h.autor, ''), COALESCE(i.codigo_acervo, ''), COALESCE(i.titulo, ''), COALESCE(a.caminho_relativo, ''), "
+        "COALESCE(i.tipo_midia, ''), "
+        "COALESCE((SELECT ap.nome FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+        "          WHERE aip.item_id = i.id LIMIT 1), '') "
+        "FROM item_historico h JOIN item i ON i.id = h.item_id "
+        "LEFT JOIN arquivo a ON a.id = (SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id "
+        "                               ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
+        "WHERE h.modelo_origem = ? AND h.confianca_origem IS NULL "
+        "ORDER BY i.codigo_acervo, h.item_id, h.campo_id, h.criado_em, h.rowid");
+    st.bind(1, Value::of(std::string(kModeloMerge)));
+    while (st.step()) {
+        const std::string itemId = st.columnText(1);
+        if (!itemIds.empty() && !itemIds.count(itemId)) continue;
+        const auto chave = std::make_pair(itemId, st.columnText(2));
+        auto [it, novo] = indice.emplace(chave, out.size());
+        if (novo) {
+            GrupoConflito g;
+            g.itemId = itemId;
+            g.campo = chave.second;
+            g.codigo = st.columnText(6);
+            g.titulo = st.columnText(7);
+            g.caminho = st.columnText(8);
+            g.tipoMidia = st.columnText(9);
+            g.pasta = st.columnText(10);
+            out.push_back(std::move(g));
+        }
+        auto& g = out[it->second];
+        g.historicoIds.push_back(st.columnText(0));
+        g.valorAtual = st.columnText(3);  // ORDER BY criado_em: o último vencedor é o valor de agora
+        g.alternativas.push_back({st.columnText(4), st.columnText(5)});
+    }
+    // Perdedores distintos, sem o valor atual (uma troca anterior pode ter devolvido um deles).
+    for (auto& g : out) {
+        std::vector<AlternativaConflito> distintas;
+        for (auto& alt : g.alternativas) {
+            if (alt.valor == g.valorAtual) continue;
+            if (std::none_of(distintas.begin(), distintas.end(), [&](const auto& d) { return d.valor == alt.valor; }))
+                distintas.push_back(std::move(alt));
+        }
+        g.alternativas = std::move(distintas);
+    }
+    return out;
+}
+
+void resolverGrupo(matriz::db::Database& registro, const GrupoConflito& grupo, const std::string& valorEscolhido) {
+    const bool trocar = valorEscolhido != grupo.valorAtual &&
+                        std::any_of(grupo.alternativas.begin(), grupo.alternativas.end(),
+                                    [&](const auto& a) { return a.valor == valorEscolhido; });
+    if (trocar) gravarValor(registro, grupo.itemId, grupo.campo, valorEscolhido);
+    for (const auto& id : grupo.historicoIds) {
+        if (trocar)
+            // Vencedor passa a ser o escolhido; quem perdia com o escolhido agora perde com o antigo atual.
+            registro.run("UPDATE item_historico SET valor_anterior = CASE WHEN valor_anterior = ? THEN ? ELSE valor_anterior END, "
+                         "valor_novo = ? WHERE id = ?",
+                         {Value::of(valorEscolhido), Value::of(grupo.valorAtual), Value::of(valorEscolhido), Value::of(id)});
+        registro.run("UPDATE item_historico SET confianca_origem = 1 WHERE id = ?", {Value::of(id)});
+    }
 }
 
 // ---------------------------------------------------------------------------
