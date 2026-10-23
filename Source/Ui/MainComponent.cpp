@@ -1954,15 +1954,11 @@ void MainComponent::garantirCartoesAnalytics() {
         mostrarGrid();
         if (catalogWorkspace_) catalogWorkspace_->filtrarPorIds(ids);
     };
-    // Mesmo caminho do clique no nó SEM PASTA do Folder Map (atualiza a ficha e escopa as contagens).
-    cartoesAnalytics_->aoAbrirSemPasta = [this](const std::set<std::string>& itemIds) {
-        mostrarGrid();
-        if (catalogWorkspace_) {
-            catalogWorkspace_->definirSelecaoItens(itemIds);
-        } else if (mosaico_) {
-            mosaico_->definirFiltroItens(itemIds);
-            mosaico_->definirSelecao(itemIds);
-        }
+    // NO FOLDER: leva à pasta `_no folder` da STRUCTURE com todos os arquivos selecionados. A aba METADATA não servia: ela esconde
+    // CONTENT = Hidden e os itens do INTAKE, e o card mostrava uma contagem que abria uma grade vazia. A janela diz quantos são de cada caso.
+    cartoesAnalytics_->aoAbrirSemPasta = [this] {
+        mostrarStructure(SubTabEstrutura::FolderMap);
+        abrirJanelaDaPasta(JanelaPastaFlutuante::kPastaSemPasta, JanelaPastaFlutuante::kNomeSemPasta, true);
     };
     addAndMakeVisible(*cartoesAnalytics_);
     cartoesAnalytics_->recarregar();
@@ -2028,6 +2024,7 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
             treeWorkspace_->aoAbrirPastaJanela = [this](const std::string& pastaId, const juce::String& nome) {
                 abrirJanelaDaPasta(pastaId, nome);
             };
+            treeWorkspace_->aoMudarSemPasta = [this] { if (cartoesAnalytics_) cartoesAnalytics_->recarregar(); };
             treeWorkspace_->aoAbrirProject = [this](const std::string& nestId, const std::string& origem) { abrirProjectDoContainer(nestId, origem); };
             treeWorkspace_->aoAbrirContainerJanela = [this](const std::string& nestId, const juce::String& nome) {
                 // Container: abre direto o preview do arquivo-capa (o mesmo do Open Project); a janela de
@@ -3488,7 +3485,7 @@ void MainComponent::ingerirPastaDoBridge() {
         });
 }
 
-void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta) {
+void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta, bool selecionarTudo) {
     if (!projetoAberto_) return;
     janelaPasta_.reset();
     juce::Component::SafePointer<MainComponent> seguro(this);
@@ -3505,7 +3502,9 @@ void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::S
             if (seguro->mosaico_) seguro->mosaico_->recarregar();
             if (seguro->filtros_) seguro->filtros_->recarregar();
             if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
-        });
+            if (seguro->cartoesAnalytics_) seguro->cartoesAnalytics_->recarregar();  // MOVE TO FOLDER muda o NO FOLDER
+        },
+        std::string(), selecionarTudo);
 }
 
 // Open Project: o player de CD no DDP; nos demais PROJECTS o preview do arquivo-capa, com a capa do projeto e a coluna dos arquivos.

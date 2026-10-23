@@ -13,6 +13,7 @@
 #include "Ui/BounceSelfTest.h"
 #include "Ui/VerifySourceSelfTest.h"
 #include "Ui/RebuildSelfTest.h"
+#include "Ui/SemPastaSelfTest.h"
 #include "Ui/ManifestoSelfTest.h"
 #include "Model/CompactacaoRegistro.h"
 #include "Ui/MosaicoStressTest.h"
@@ -292,6 +293,11 @@ public:
         }
         if (commandLine.contains("--selftest-lote")) {
             setApplicationReturnValue(matriz::ui::rodarLoteSelfTest());
+            quit();
+            return;
+        }
+        if (commandLine.contains("--selftest-sem-pasta")) {
+            setApplicationReturnValue(matriz::ui::rodarSemPastaSelfTest());
             quit();
             return;
         }
