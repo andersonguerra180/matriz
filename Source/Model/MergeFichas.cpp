@@ -517,7 +517,9 @@ struct Retrato {
         std::string id;
         std::vector<Value> colunasItem;
         std::vector<std::vector<std::vector<Value>>> linhasPorTabela;  // na ordem de tabelasRetrato()
-        std::set<std::string> historicoMerge;                          // ids que já existiam
+        // Linhas de merge que já existiam: id -> (valor_anterior, valor_novo, confianca_origem). A revisão as
+        // altera (troca de valor, marca de revisado), então o Undo precisa dos valores, não só dos ids.
+        std::map<std::string, std::vector<Value>> historicoMerge;
     };
     std::vector<DoItem> itens;
 };
@@ -548,10 +550,12 @@ std::shared_ptr<Retrato> retratar(matriz::db::Database& db, const std::vector<st
             d.linhasPorTabela.push_back(std::move(linhas));
         }
         {
-            auto st = db.prepare("SELECT id FROM item_historico WHERE item_id = ? AND modelo_origem = ?");
+            auto st = db.prepare("SELECT id, valor_anterior, valor_novo, confianca_origem FROM item_historico "
+                                 "WHERE item_id = ? AND modelo_origem = ?");
             st.bind(1, Value::of(id));
             st.bind(2, Value::of(std::string(kModeloMerge)));
-            while (st.step()) d.historicoMerge.insert(st.columnText(0));
+            while (st.step())
+                d.historicoMerge[st.columnText(0)] = {lerTipado(st, 1, 'T'), lerTipado(st, 2, 'T'), lerTipado(st, 3, 'R')};
         }
         r->itens.push_back(std::move(d));
     }
@@ -586,6 +590,11 @@ void restaurar(matriz::db::Database& db, const Retrato& retrato) {
                 if (!d.historicoMerge.count(st.columnText(0))) novos.push_back(st.columnText(0));
         }
         for (const auto& h : novos) db.run("DELETE FROM item_historico WHERE id = ?", {Value::of(h)});
+        for (const auto& [h, valores] : d.historicoMerge) {
+            auto vals = valores;
+            vals.push_back(Value::of(h));
+            db.run("UPDATE item_historico SET valor_anterior = ?, valor_novo = ?, confianca_origem = ? WHERE id = ?", vals);
+        }
     }
 }
 
