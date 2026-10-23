@@ -171,6 +171,10 @@ int rodarSemPastaSelfTest() {
             if (mosaico != nullptr) {
                 checar(esperarAte([&] { return mosaico->itensSelecionados().size() == 2; }),
                        "opened from the NO FOLDER card it arrives with every shown file selected (2)");
+                bombear(500);
+                checar(mosaico->totalItensVisiveis() == 2,
+                       "the files are visible as soon as the window opens (visible: " + juce::String(mosaico->totalItensVisiveis()) +
+                           ", loaded: " + juce::String(mosaico->totalItensCarregados()) + ")");
                 const auto sel = mosaico->itensSelecionados();
                 checar(sel.count(solto) == 1 && sel.count(oculto) == 1, "the CONTENT = Hidden file is shown and selected");
             }

@@ -309,6 +309,7 @@ private:
     // O snapshot da grade roda em background (como no resto do app); os filtros recontam quando ele termina.
     void carregarGrade() {
         aguardandoCarga_ = true;
+        mosaico_->definirEscopoCarga(ids_);  // só os arquivos desta janela, não o catálogo inteiro (19 mil itens = ~8 s de grade vazia)
         mosaico_->definirFiltroItens(ids_);
         filtros_->definirEscopo(ids_);
         mosaico_->recarregar();

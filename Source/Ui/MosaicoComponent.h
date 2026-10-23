@@ -334,6 +334,8 @@ public:
     // true enquanto o snapshot em background disparado por recarregar()
     // ainda não voltou. Mesmo uso que ArvoreComponent::recargaPendente().
     bool snapshotPendente() const { return snapshotPendente_; }
+    // Carrega só estes itens no próximo recarregar() (janela de uma pasta), em vez do catálogo inteiro. nullopt = tudo.
+    void definirEscopoCarga(std::optional<std::set<std::string>> itemIds) { escopoCarga_ = std::move(itemIds); }
     // Incrementa a cada snapshot COMPLETO aplicado (não em atualizarItemEmMemoria).
     int versaoSnapshot() const { return versaoSnapshot_; }
     // Grade vazia por causa de um filtro (ex.: "Show Recently Ingested" sem
@@ -509,6 +511,7 @@ private:
     void recomputarBuscaResultado();
     Ordenacao ordenacao_ = Ordenacao::Codigo;
     std::optional<std::set<std::string>> filtroItens_; // seleção da árvore, ver definirFiltroItens
+    std::optional<std::set<std::string>> escopoCarga_; // ver definirEscopoCarga
 
     juce::Rectangle<int> boundsBotaoAdicionarGrid(int indice) const;
     bool modoQuarentena_ = false;

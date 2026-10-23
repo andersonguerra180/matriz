@@ -338,6 +338,7 @@ void MosaicoComponent::recarregar() {
     juce::Component::SafePointer<MosaicoComponent> safeThis(this);
     ProjetoAberto* projeto = &projeto_;
     bool isQuarentena = modoQuarentena_;
+    auto escopo = escopoCarga_ ? std::make_shared<const std::set<std::string>>(*escopoCarga_) : nullptr;
 
     ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", matriz::i18n::t("catalogo.carregando_titulo"), 100, nullptr, matriz::i18n::t("catalogo.carregando_indice"),
                                                    /*temModalProprio*/ false, /*somenteBarra*/ true);
@@ -349,7 +350,7 @@ void MosaicoComponent::recarregar() {
     if (isQuarentena) fase->store(1);  // sem contagem prévia no modo quarentena
     agendarRelogioCatalogo(fase, totalLinhas, std::chrono::steady_clock::now());
 
-    poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena, fase, totalLinhas]() {
+    poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena, escopo, fase, totalLinhas]() {
         std::vector<ItemResumo> itens;
         std::vector<TextosCelula> textos;
         struct FimDeFase {
@@ -370,7 +371,7 @@ void MosaicoComponent::recarregar() {
                 pg.atualizarFracao("catalog_assets", 0.1 + 0.8 * (total > 0 ? static_cast<double>(feitos) / total : 0.0),
                                    matriz::i18n::t("catalogo.carregando_miniaturas").replace("{a}", juce::String(feitos)).replace("{b}", juce::String(total)));
             };
-            itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens(aoProgredir);
+            itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens(aoProgredir, escopo.get());
             fase->store(3);
             ProgressoGlobal::obterInstancia().atualizarFracao("catalog_assets", 0.92, matriz::i18n::t("catalogo.carregando_montando"));
             // Textos de exibição aqui, no job (não no paint, por célula, a cada quadro).

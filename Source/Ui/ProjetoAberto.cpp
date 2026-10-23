@@ -309,12 +309,22 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                                                             const juce::File& pastaProjeto,
                                                             const std::map<std::string, std::string>& inMemoryRelinks,
                                                             const std::set<std::string>* itensOffline,
-                                                            const std::function<void(int feitos, int total)>& aoProgredir) {
+                                                            const std::function<void(int feitos, int total)>& aoProgredir,
+                                                            const std::set<std::string>* soIds) {
     std::vector<ItemResumo> out;
     int totalLinhas = 0;
+    // Janela de uma pasta: só os ids dela, numa lista JSON (json_each), em vez do catálogo inteiro filtrado depois.
+    std::string idsJson;
+    if (soIds != nullptr) {
+        juce::Array<juce::var> lista;
+        for (const auto& id : *soIds) lista.add(juce::String(id));
+        idsJson = juce::JSON::toString(juce::var(lista), true).toStdString();
+    }
+    const std::string filtroIds = soIds != nullptr ? " AND i.id IN (SELECT value FROM json_each(?))" : "";
     if (aoProgredir) {
         try {
-            auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata'");
+            auto st = registro.prepare("SELECT COUNT(*) FROM item i WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(i.estado, '') != 'duplicata'" + filtroIds);
+            if (soIds != nullptr) st.bind(1, matriz::db::Value::of(idsJson));
             if (st.step()) totalLinhas = static_cast<int>(st.columnInt(0));
         } catch (...) {}
         aoProgredir(-1, totalLinhas);
@@ -369,7 +379,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
         ") "
         "LEFT JOIN vault v ON v.id = a.vault_id "
-        "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(i.estado, '') != 'duplicata' ORDER BY i.codigo_acervo");
+        "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(i.estado, '') != 'duplicata'" + filtroIds + " ORDER BY i.codigo_acervo");
+    if (soIds != nullptr) stmt.bind(1, matriz::db::Value::of(idsJson));
 
     const auto nests = mapaDeNests(registro);  // uma consulta: item -> nest
     auto minStmt = indice.prepare(
@@ -517,7 +528,8 @@ int ProjetoAberto::contarItens() const {
     return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
 }
 
-std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int feitos, int total)>& aoProgredir) const {
+std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int feitos, int total)>& aoProgredir,
+                                                   const std::set<std::string>* soIds) const {
     if (!projeto_) return {};
     // Cópia das marcações/relinks em memória sob marcacoesMutex_ (comentário
     // no membro, ProjetoAberto.h) -- este método roda em background
@@ -538,7 +550,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int 
         for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
-    auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia, aoProgredir);
+    auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia, aoProgredir, soIds);
     for (auto& item : items) {
         item.marcadoPublicacao = htmlCopia.count(item.id) > 0;
         item.marcadoZip = zipCopia.count(item.id) > 0;
