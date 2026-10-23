@@ -470,6 +470,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*comboEscopoBusca_);
     campoBusca_->setTooltip("Type a term and click the magnifier (or press Enter) to search");
+    campoBusca_->setBorder(juce::BorderSize<int>(1, 6, 1, 52));  // a lupa e o × ficam dentro do campo, à direita
     addAndMakeVisible(*campoBusca_);
 
     btnLupaBusca_ = std::make_unique<LupaBuscaButton>();
@@ -533,7 +534,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     lblTamanho_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteMicro, juce::Font::bold)));
     lblTamanho_->setColour(juce::Label::textColourId, tema().textoTerciario);
     lblTamanho_->setJustificationType(juce::Justification::centred);
-    addAndMakeVisible(*lblTamanho_);
+    addChildComponent(*lblTamanho_);  // o mapa da barra não tem o rótulo SIZE: o slider fica ao lado do seletor
 
     btnVisaoGrade_ = std::make_unique<ViewModeIconButton>(ViewModeIconButton::IconType::Grid);
     btnVisaoGrade_->setAtivo(true);
@@ -552,6 +553,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         resized();
         repaint();
     };
+    btnVisaoGrade_->setSegmentado(true);
     addAndMakeVisible(*btnVisaoGrade_);
 
     btnVisaoLista_ = std::make_unique<ViewModeIconButton>(ViewModeIconButton::IconType::List);
@@ -566,6 +568,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         resized();
         repaint();
     };
+    btnVisaoLista_->setSegmentado(true);
     addAndMakeVisible(*btnVisaoLista_);
 
     btnOcultarEditados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.ocultar_editados_off"));
@@ -667,7 +670,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addChildComponent(*btnMostrarRejeitados_);
 
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
-    btnSelecionarTodos_->setLookAndFeel(&sidebarButtonLf_);
+    btnSelecionarTodos_->setLookAndFeel(&pilulaLf_);
     btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
     btnSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnSelecionarTodos_->onClick = [this] {
@@ -686,7 +689,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnSelecionarTodos_);
 
     btnLimparSelecao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.desmarcar"));
-    btnLimparSelecao_->setLookAndFeel(&sidebarButtonLf_);
+    btnLimparSelecao_->setLookAndFeel(&pilulaLf_);
     btnLimparSelecao_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
     btnLimparSelecao_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnLimparSelecao_->onClick = [this] { if (mosaico_) mosaico_->limparSelecao(); };
@@ -694,7 +697,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnLimparSelecao_);
 
     btnFiltroOpcoes_ = std::make_unique<juce::TextButton>("FILTER OPTIONS  " + juce::String::fromUTF8("\xe2\x96\xbe"));
-    btnFiltroOpcoes_->setLookAndFeel(&sidebarButtonLf_);
+    btnFiltroOpcoes_->setLookAndFeel(&filtroOpcoesLf_);
     btnFiltroOpcoes_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
     btnFiltroOpcoes_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
     btnFiltroOpcoes_->setTooltip("Hide / show filter options");
@@ -848,6 +851,10 @@ void CatalogWorkspaceComponent::sincronizarFiltroOpcoesDropdown() {
     texto += "  " + juce::String::fromUTF8("\xe2\x96\xbe");
     btnFiltroOpcoes_->setButtonText(texto);
     btnFiltroOpcoes_->setColour(juce::TextButton::buttonColourId, ativos > 0 ? tema().acento.withAlpha(0.25f) : tema().painelAlt);
+    btnFiltroOpcoes_->getProperties().set("n", ativos);  // o botão compacto mostra funil + número (barra::FiltroOpcoesLf)
+    btnFiltroOpcoes_->setTooltip("Filter options" + (ativos > 0 ? " (" + juce::String(ativos) + ")" : juce::String()));
+    btnFiltroOpcoes_->repaint();
+    repaint(barra_.ultimoCard().isEmpty() ? getLocalBounds() : getLocalBounds().removeFromLeft(kLarguraSidebar));
 }
 
 CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
@@ -867,6 +874,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     if (btnMostrarRejeitados_) btnMostrarRejeitados_->setLookAndFeel(nullptr);
     for (auto& b : botoesCategorias_) if (b) b->setLookAndFeel(nullptr);
     for (auto& b : botoesAnos_) if (b) b->setLookAndFeel(nullptr);
+    if (btnAnosMais_) btnAnosMais_->setLookAndFeel(nullptr);
 }
 
 void CatalogWorkspaceComponent::lookAndFeelChanged() {
@@ -973,8 +981,10 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         else if (cat.chave == "documents")   cat.rotulo = matriz::i18n::t("catwork.documents");
         else if (cat.chave == "sessions")    cat.rotulo = matriz::i18n::t("catwork.sessions");
         else if (cat.chave == "others")      cat.rotulo = matriz::i18n::t("catwork.others");
-        else if (cat.chave == "phone_dump")  cat.rotulo = "Phone Dump";
+        else if (cat.chave == "phone_dump")  cat.rotulo = matriz::i18n::t("catwork.phone_dump");
+        else if (cat.chave == "ai_generated") cat.rotulo = matriz::i18n::t("catwork.ai_generated");
         else if (cat.chave == "projects")    cat.rotulo = matriz::i18n::t("catwork.projects");
+        else if (cat.chave == "merge_conflitos") cat.rotulo = matriz::i18n::t("catwork.merge_conflitos");
     }
     for (size_t i = 0; i < categorias_.size() && i < botoesCategorias_.size(); ++i) {
         juce::String texto = categorias_[i].rotulo;
@@ -982,7 +992,10 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
             texto += " (" + juce::String(categorias_[i].contagem) + ")";
         }
         botoesCategorias_[i]->setButtonText(texto);
-        if (categorias_[i].chave == "all") botoesCategorias_[i]->setTooltip("RESET FILTERS");
+        if (categorias_[i].chave == "all") {
+            botoesCategorias_[i]->setTooltip("RESET FILTERS");
+            botoesCategorias_[i]->getProperties().set("rotulo", matriz::i18n::t("catwork.reset"));
+        }
     }
 
     atualizarBotoesSidebar();
@@ -1031,23 +1044,30 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.documents"), "documents", 0});
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
     categorias_.push_back({matriz::i18n::t("catwork.others"), "others", 0});
-    categorias_.push_back({"Phone Dump", "phone_dump", 0});
-    categorias_.push_back({"AI Generated", "ai_generated", 0});
+    // Ordem do mapa "FILTROS DO METADATA": AI generated | Projects, depois Phone dump e Merge conflicts (os nomes longos,
+    // na linha inteira).
+    categorias_.push_back({matriz::i18n::t("catwork.ai_generated"), "ai_generated", 0});
     categorias_.push_back({matriz::i18n::t("catwork.projects"), "projects", 0});
+    categorias_.push_back({matriz::i18n::t("catwork.phone_dump"), "phone_dump", 0});
 
     // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
-    // duplicatas (valor perdedor no histórico), pra revisão.
-    secoesSidebar_.push_back({static_cast<int>(categorias_.size()), matriz::i18n::t("catwork.secao_revisao")});
+    // duplicatas (valor perdedor no histórico), pra revisão. No mapa, dentro do MEDIA TYPE.
     categorias_.push_back({matriz::i18n::t("catwork.merge_conflitos"), "merge_conflitos", 0});
 
     for (size_t i = 0; i < categorias_.size(); ++i) {
         auto btn = std::make_unique<juce::TextButton>(categorias_[i].rotulo);
-        btn->setLookAndFeel(i == 0 ? static_cast<juce::LookAndFeel*>(&resetButtonLf_)
-                                   : static_cast<juce::LookAndFeel*>(&sidebarButtonLf_));
+        btn->setLookAndFeel(i == 0 ? static_cast<juce::LookAndFeel*>(&primariaLf_)
+                                   : static_cast<juce::LookAndFeel*>(&chipLf_));
         btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
         btn->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
         btn->onClick = [this, i] { selecionarCategoria(static_cast<int>(i)); };
-        if (i == 0) btn->setTooltip("RESET FILTERS");
+        if (i == 0) {
+            btn->setTooltip("RESET FILTERS");
+            btn->getProperties().set("rotulo", matriz::i18n::t("catwork.reset"));  // "Reset · 18975"
+        } else {
+            barra::definirCor(*btn, barra::corDoTipo(categorias_[i].chave));
+            btn->getProperties().set("apagarSemContagem", true);  // tipo sem arquivo fica cinza (continua clicável)
+        }
         addAndMakeVisible(*btn);
         botoesCategorias_.push_back(std::move(btn));
     }
@@ -1099,7 +1119,8 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
         juce::String label = (ano == -1) ? matriz::i18n::t("comum.desconhecido") : juce::String(ano);
         label += " (" + juce::String(contagem) + ")";
         auto btn = std::make_unique<juce::TextButton>(label);
-        btn->setLookAndFeel(&sidebarButtonLf_);
+        btn->setLookAndFeel(&chipLf_);
+        btn->getProperties().set("negrito", true);  // ano em negrito, contagem cinza à direita
         btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
         btn->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
         btn->onClick = [this, i] {
@@ -1119,6 +1140,43 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
         anosContainer_.addAndMakeVisible(*btn);
         botoesAnos_.push_back(std::move(btn));
     }
+    if (!btnAnosMais_) {
+        btnAnosMais_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.anos_mais"));
+        btnAnosMais_->setLookAndFeel(&chipLf_);
+        btnAnosMais_->onClick = [this] { abrirMenuAnosMais(); };
+        anosContainer_.addChildComponent(*btnAnosMais_);
+    }
+}
+
+void CatalogWorkspaceComponent::abrirMenuAnosMais() {
+    juce::PopupMenu menu;
+    for (size_t i = anosVisiveis_; i < anosDisponiveis_.size(); ++i) {
+        const auto& [ano, n] = anosDisponiveis_[i];
+        const juce::String rotulo = (ano == -1 ? matriz::i18n::t("comum.desconhecido") : juce::String(ano)) + "  (" + juce::String(n) + ")";
+        menu.addItem(static_cast<int>(i) + 1, rotulo, true, anosSelecionados_.count(ano) > 0);
+    }
+    juce::Component::SafePointer<CatalogWorkspaceComponent> seguro(this);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnAnosMais_.get()), [seguro](int r) {
+        if (seguro == nullptr || r < 1) return;
+        const size_t i = static_cast<size_t>(r - 1);
+        if (i < seguro->botoesAnos_.size() && seguro->botoesAnos_[i]->onClick) seguro->botoesAnos_[i]->onClick();  // mesmo clique do chip
+    });
+}
+
+int CatalogWorkspaceComponent::contarFiltrosAtivos() const {
+    int n = 0;
+    if (tipoMidiaSelecionado_.has_value()) ++n;
+    if (categoriaSelecionada_ > 0 && static_cast<size_t>(categoriaSelecionada_) < categorias_.size() &&
+        categorias_[static_cast<size_t>(categoriaSelecionada_)].chave == "merge_conflitos") ++n;
+    if (!anosSelecionados_.empty()) ++n;
+    if (collectionSelecionado_.has_value()) ++n;
+    if (subjectSelecionado_.has_value()) ++n;
+    if (listaSelecionada_.has_value()) ++n;
+    if (mosaico_ && !mosaico_->termosBuscaAtuais().isEmpty()) ++n;
+    if (filtroHerdadoIds_.has_value()) ++n;
+    n += (ocultarEditados_ ? 1 : 0) + (mostrarApenasRejeitados_ ? 1 : 0) + (ocultarNaoSelecionados_ ? 1 : 0) +
+         (mostrarApenasRecentes_ ? 1 : 0) + (incluirOcultosNaSelecao_ ? 1 : 0) + (mostrarApenasBounce_ ? 1 : 0) + (ocultarComGeo_ ? 1 : 0);
+    return n;
 }
 
 void CatalogWorkspaceComponent::EscutaEventos::aoItemAlterado(const EventoItemAlterado& e) {
@@ -1169,7 +1227,15 @@ void CatalogWorkspaceComponent::atualizarDestaqueBotoesAnoCollection() {
             ativo ? tema().acento.withAlpha(0.2f) : juce::Colours::transparentBlack);
         botoesAnos_[i]->setColour(juce::TextButton::textColourOffId,
             ativo ? tema().textoPrimario : tema().textoSecundario);
+        barra::definirAtivo(*botoesAnos_[i], ativo);
     }
+    if (btnAnosMais_) {  // algum ano escondido no menu está marcado: o "[older...]" fica aceso
+        bool escondidoAtivo = false;
+        for (size_t i = anosVisiveis_; i < anosDisponiveis_.size(); ++i)
+            escondidoAtivo = escondidoAtivo || anosSelecionados_.count(anosDisponiveis_[i].first) > 0;
+        barra::definirAtivo(*btnAnosMais_, escondidoAtivo);
+    }
+    repaint(0, 0, kLarguraSidebar, getHeight());
 
     // CONTENT TYPE (item 4, nova lista) é um dropdown, não botões — só
     // precisa refletir collectionSelecionado_ no item selecionado do combo,
@@ -1928,8 +1994,8 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
         // chamar aplicarFiltrosAdicionais() inteiro (isso tocaria a grade e
         // reintroduziria o problema de performance que aoMudar evita).
         atualizarDestaqueBotoesAnoCollection();
-        resized();
     }
+    resized();  // um chip do MEDIA TYPE pode passar a precisar da linha inteira com a contagem nova
 }
 
 // Reset completo dos filtros (botão HOME / "All Assets"). Não toca na
@@ -2131,7 +2197,9 @@ void CatalogWorkspaceComponent::atualizarBotoesSidebar() {
             ativo ? tema().acento.withAlpha(0.2f) : juce::Colours::transparentBlack);
         botoesCategorias_[i]->setColour(juce::TextButton::textColourOffId,
             ativo ? tema().textoPrimario : tema().textoSecundario);
+        if (i > 0) barra::definirAtivo(*botoesCategorias_[i], ativo);
     }
+    repaint(0, 0, kLarguraSidebar, getHeight());  // "N active" no título do card FILTERS
 }
 
 void CatalogWorkspaceComponent::navegarParaPastaOrigem(std::optional<std::string> nomePasta) {
@@ -2515,45 +2583,15 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.fundo);
 
-    auto sidebar = getLocalBounds().removeFromLeft(kLarguraSidebar);
-    g.setColour(tk.fundo);
-    g.fillRect(sidebar);
-    g.setColour(tk.borda);
-    g.fillRect(sidebar.getRight() - 1, sidebar.getY(), 1, sidebar.getHeight());
-
-    // Cards da coluna esquerda (item 7): LIBRARY / MEDIA TYPE / DATE, cada
-    // um com fundo e borda próprios, em vez de botões soltos direto no
-    // fundo da sidebar.
-    for (const auto& cardBounds : secaoCardBounds_) {
-        g.setColour(tk.painelAlt.withAlpha(0.25f));
-        g.fillRoundedRectangle(cardBounds.toFloat(), tk.raioPequeno);
-        g.setColour(tk.borda.withAlpha(0.7f));
-        g.drawRoundedRectangle(cardBounds.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
-    }
-
-    for (auto& [titulo, bounds] : secaoHeaderBounds_) {
-        g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteMicro, juce::Font::bold)));
-        g.drawText(titulo, bounds, juce::Justification::centredLeft);
-    }
-
-    for (size_t i = 0; i < categorias_.size(); ++i) {
-        juce::Colour cor;
-        const auto& ch = categorias_[i].chave;
-        if      (ch == "audio")     cor = juce::Colour(0xff2a9d8f);
-        else if (ch == "video")     cor = juce::Colour(0xff9d4edd);
-        else if (ch == "images")    cor = juce::Colour(0xfff4a261);
-        else if (ch == "documents") cor = juce::Colour(0xff2b9348);
-        else if (ch == "sessions")  cor = juce::Colour(0xff2b9348);
-        else if (ch == "others")    cor = juce::Colour(0xff8a8f98);
-        else if (ch == "phone_dump") cor = juce::Colour(0xff0284c7);
-        else if (ch == "projects")  cor = juce::Colour(0xffb8860b);
-        else continue;
-        auto btnBounds = botoesCategorias_[i]->getBounds();
-        float cy = btnBounds.getCentreY() - 4.0f;
-        float cx = btnBounds.getX() + 2.0f;
-        g.setColour(cor);
-        g.fillEllipse(cx, cy, 8.0f, 8.0f);
+    // Barra lateral no desenho do mapa "FILTROS DO METADATA": cards, títulos e o trilho do seletor lista/grade. Os
+    // pontos de cor e as contagens dos chips são do barra::ChipLf.
+    barra_.paint(g);
+    if (!trilhoVisao_.isEmpty()) barra::pintarTrilhoSegmentado(g, trilhoVisao_);
+    if (!tituloFiltros_.isEmpty()) {
+        g.setColour(tk.textoTerciario);
+        g.setFont(barra::fonteContagem());
+        g.drawText(matriz::i18n::t("catwork.filtros_ativos").replace("{n}", juce::String(contarFiltrosAtivos())), tituloFiltros_,
+                   juce::Justification::centredRight, true);
     }
 
     if (!toolbarBounds_.isEmpty()) {
@@ -2586,196 +2624,151 @@ void CatalogWorkspaceComponent::atualizarBarraPaginacao() {
 }
 
 void CatalogWorkspaceComponent::resized() {
-    secaoHeaderBounds_.clear();
-    secaoCardBounds_.clear();
     auto area = getLocalBounds();
+    using namespace barra;
 
-    auto sidebar = area.removeFromLeft(kLarguraSidebar);
-    int availH = sidebar.getHeight();
+    // Barra lateral no desenho do mapa "FILTROS DO METADATA" (240 px): os mesmos controles, em cards, cabendo na tela
+    // inteira (inclusive os anos — o card DATE nunca rola; o que não cabe vai para o "[older...]").
+    barra_.comecar(area.removeFromLeft(kLarguraSidebar));
+    auto& corpo = barra_.corpo();
 
-    // Symmetrical, uniform button dimensions and typography
-    const int kBtnH = 24;
-    const int kHeaderH = 20;
-    const int kItemGap = 2;
-
-    // Calculate total required vertical height to distribute gaps without squashing bottom buttons
-    int totalRequiredH = 8 + 28 + 4; // top margin + search + gap
-    // Item 1 (lista nova de hoje): quando o chip de busca ativa está
-    // visível ele entra na conta, senão a coluna fica mais folgada — não é
-    // um "sempre presente" como o resto.
-    if (chipBuscaAtiva_ && chipBuscaAtiva_->temTermos()) totalRequiredH += 24 + 3;
-    totalRequiredH += 24 + 3 + 18 + 2; // View modes row 24, slider 18 (compactados no item 1 de hoje)
-    if (btnSelecionarTodos_ && btnLimparSelecao_) totalRequiredH += 20 + kItemGap; // Select all / clear row
-    totalRequiredH += 42 + kItemGap; // HOME: altura dobrada (comprimida a 42) pra caber ícone + "All Assets"
-    totalRequiredH += (6 * (20 + 1)) + 6; // 6 toggle buttons (incl. Show Bounce List e Show Rejected)
-    // Card LIBRARY eliminado (item "Coluna esquerda da aba METADATA") — só
-    // MEDIA TYPE e DATE continuam sendo cards.
-    totalRequiredH += kHeaderH + kItemGap + ((static_cast<int>(botoesCategorias_.size()) - indiceInicioMediaType_) * (kBtnH + kItemGap)); // Media Type
-    totalRequiredH += kHeaderH + kItemGap + kBtnH + kItemGap; // Content Type (item 4, nova lista): header + um combo só
-    totalRequiredH += kHeaderH + kItemGap; // Date
-    totalRequiredH += 22 + kItemGap; // Item 5/6 (nova lista): FROM/TO/CLEAR saíram, entrou o toggle "multiple years"
-    const int kCardPad = 6; // respiro interno do card (item 7), topo + base
-    totalRequiredH += 3 * (2 * kCardPad); // Media Type, Content Type e Date
-    // A seção DATE agora vive num Viewport próprio e usa todo o espaço
-    // vertical restante da sidebar (item 5) — não entra mais na conta de
-    // altura fixa.
-    int extraSpace = availH - totalRequiredH;
-    int numGaps = 4;
-    int sectionSpacing = juce::jlimit(6, 24, extraSpace > 0 ? (extraSpace / (numGaps + 1)) : 4);
-
-    sidebar.removeFromTop(8);
-
-    auto buscaArea = sidebar.removeFromTop(28).reduced(8, 2);
-    // Os dois botões ficam à DIREITA do campo, nesta ordem a partir da borda:
-    // × (limpar) na ponta e a lupa logo à esquerda dele. O campo de texto
-    // começa colado na borda esquerda — sem vão sobrando de onde a lupa saiu.
-    if (btnLimparBusca_) {
-        btnLimparBusca_->setBounds(buscaArea.removeFromRight(24));
+    // 1. Busca: o campo com a lupa (e o ×) por dentro, à direita; "in: All fields" numa linha fina logo abaixo.
+    {
+        auto linha = corpo.removeFromTop(28);
+        campoBusca_->setBounds(linha);
+        auto dentro = linha.reduced(2, 2);
+        if (btnLupaBusca_) btnLupaBusca_->setBounds(dentro.removeFromRight(24));
+        if (btnLimparBusca_) btnLimparBusca_->setBounds(dentro.removeFromRight(22));
+        corpo.removeFromTop(4);
+        if (comboEscopoBusca_) comboEscopoBusca_->setBounds(corpo.removeFromTop(24));
+        corpo.removeFromTop(kEntreCards);
     }
-    if (btnLupaBusca_) {
-        btnLupaBusca_->setBounds(buscaArea.removeFromRight(26));
-        buscaArea.removeFromRight(2);
-    }
-    campoBusca_->setBounds(buscaArea);
-    sidebar.removeFromTop(2);
-    if (comboEscopoBusca_) comboEscopoBusca_->setBounds(sidebar.removeFromTop(24).reduced(8, 1));
-    sidebar.removeFromTop(4);
-
-    // Item 1 (lista nova de hoje): chip de busca ativa logo abaixo da
-    // caixa — só ocupa espaço quando há um termo filtrando, senão a linha
-    // desaparece e o resto da coluna sobe pro lugar de sempre. Pra caber
-    // sem empurrar o card MEDIA TYPE pra baixo, o grupo de controles daqui
-    // até SHOW RECENTLY INGESTED ficou um pouco mais compacto (linhas e
-    // vãos alguns px menores) — ver alturas ajustadas abaixo.
+    // Chips da busca ativa: só ocupam a linha quando há termo filtrando.
     if (chipBuscaAtiva_ && chipBuscaAtiva_->temTermos() && viewportChipsBusca_) {
-        auto chipArea = sidebar.removeFromTop(24).reduced(8, 2);
-        // O viewport é o frame visível (rola na horizontal quando os chips
-        // não cabem); chipBuscaAtiva_ mantém sua própria largura de
-        // conteúdo (calculada em definirTermos) e só a altura acompanha o
-        // frame.
+        auto chipArea = corpo.removeFromTop(24);
         chipBuscaAtiva_->setSize(juce::jmax(chipBuscaAtiva_->getWidth(), 1), chipArea.getHeight());
         viewportChipsBusca_->setBounds(chipArea);
-        sidebar.removeFromTop(3);
+        corpo.removeFromTop(kEntreCards);
     } else if (viewportChipsBusca_) {
         viewportChipsBusca_->setBounds(0, 0, 0, 0);
     }
 
-    // ==========================================
-    // CARD 1: VIEW
-    // ==========================================
-    int viewCardTop = sidebar.getY();
-    sidebar.removeFromTop(kCardPad);
-    secaoHeaderBounds_.push_back({"VIEW", sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
-    sidebar.removeFromTop(kItemGap);
-
-    if (btnVisaoLista_ && btnVisaoGrade_) {
-        auto viewRow = sidebar.removeFromTop(24).reduced(6, 0);
-        int half = (viewRow.getWidth() - 6) / 2;
-        btnVisaoLista_->setBounds(viewRow.removeFromLeft(half));
-        viewRow.removeFromLeft(6);
-        btnVisaoGrade_->setBounds(viewRow);
-        sidebar.removeFromTop(3);
+    // 2. VIEW numa linha só: lista/grade e o tamanho das miniaturas lado a lado.
+    {
+        auto linha = barra_.iniciarCardEmLinha(matriz::i18n::t("catwork.secao_view"), 28);
+        trilhoVisao_ = linha.removeFromLeft(60);
+        auto seg = trilhoVisao_;
+        if (btnVisaoLista_) btnVisaoLista_->setBounds(seg.removeFromLeft(30));
+        if (btnVisaoGrade_) btnVisaoGrade_->setBounds(seg);
+        linha.removeFromLeft(10);
+        if (sliderTamanho_) sliderTamanho_->setBounds(linha);
+        barra_.finalizarCard();
     }
-    if (sliderTamanho_) {
-        auto sliderRow = sidebar.removeFromTop(18).reduced(6, 0);
-        if (lblTamanho_) lblTamanho_->setBounds(sliderRow.removeFromLeft(20));
-        sliderTamanho_->setBounds(sliderRow);
-        sidebar.removeFromTop(2);
-    }
-    sidebar.removeFromTop(kCardPad);
-    secaoCardBounds_.push_back(juce::Rectangle<int>(4, viewCardTop, kLarguraSidebar - 8, sidebar.getY() - viewCardTop));
-    sidebar.removeFromTop(6);
 
-    // ==========================================
-    // CARD 2: FILTERS
-    // ==========================================
-    int filtersCardTop = sidebar.getY();
-    sidebar.removeFromTop(kCardPad);
-    secaoHeaderBounds_.push_back({"FILTERS", sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
-    sidebar.removeFromTop(kItemGap);
-
-    // Row: Select All & Deselect
+    // 3. FILTERS: "N active" no título; Select all | Clear; Reset (grafite, com a contagem) + Filter options compacto.
+    tituloFiltros_ = barra_.iniciarCard(matriz::i18n::t("catwork.secao_filters"));
     if (btnSelecionarTodos_ && btnLimparSelecao_) {
-        auto selRow = sidebar.removeFromTop(20).reduced(6, 0);
-        int halfW = (selRow.getWidth() - 4) / 2;
-        btnSelecionarTodos_->setBounds(selRow.removeFromLeft(halfW));
-        selRow.removeFromLeft(4);
-        btnLimparSelecao_->setBounds(selRow);
-        sidebar.removeFromTop(4);
+        auto linha = corpo.removeFromTop(kChipH);
+        const int meia = (linha.getWidth() - 8) / 2;
+        btnSelecionarTodos_->setBounds(linha.removeFromLeft(meia));
+        linha.removeFromLeft(8);
+        btnLimparSelecao_->setBounds(linha);
+        corpo.removeFromTop(6);
     }
-
-    // RESET FILTERS button (green button matching Intake APPROVE SELECTED)
-    if (!botoesCategorias_.empty()) {
-        botoesCategorias_[0]->setBounds(sidebar.removeFromTop(28).reduced(6, 0));
-        sidebar.removeFromTop(4);
+    {
+        auto linha = corpo.removeFromTop(28);
+        if (btnFiltroOpcoes_) {
+            btnFiltroOpcoes_->setBounds(linha.removeFromRight(46));
+            linha.removeFromRight(8);
+        }
+        if (!botoesCategorias_.empty()) botoesCategorias_[0]->setBounds(linha);
     }
+    barra_.finalizarCard();
 
-    // Checkbox toggle ON/OFF + Dropdown with the 6 options
-    if (btnFiltroOpcoes_) {
-        btnFiltroOpcoes_->setBounds(sidebar.removeFromTop(24).reduced(6, 0));
-        sidebar.removeFromTop(6);
-    }
-
-    // Sub-header: MEDIA TYPE
-    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_media_type"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
-    sidebar.removeFromTop(kItemGap);
-    for (size_t i = static_cast<size_t>(indiceInicioMediaType_); i < botoesCategorias_.size(); ++i) {
-        auto btnArea = sidebar.removeFromTop(kBtnH).reduced(4, 0);
-        btnArea.removeFromLeft(14);
-        botoesCategorias_[i]->setBounds(btnArea);
-        sidebar.removeFromTop(kItemGap);
-    }
-    sidebar.removeFromTop(4);
-
-    // Sub-header: CONTENT TYPE
-    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_content_type"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
-    sidebar.removeFromTop(kItemGap);
-    if (comboContentType_) {
-        comboContentType_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
-        sidebar.removeFromTop(kItemGap);
-    }
-    if (comboSubject_) {
-        comboSubject_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
-        sidebar.removeFromTop(kItemGap);
-    }
-    if (comboLista_) {
-        comboLista_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
-        sidebar.removeFromTop(kItemGap);
-    }
-    sidebar.removeFromTop(4);
-
-    // Sub-header: DATE
-    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_date"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
-    sidebar.removeFromTop(kItemGap);
-
-    if (toggleMultiplosAnos_) {
-        toggleMultiplosAnos_->setBounds(sidebar.removeFromTop(22).reduced(6, 0));
-        sidebar.removeFromTop(kItemGap);
-    }
-
-    if (anosViewport_) {
-        auto anosArea = sidebar;
-        anosArea.removeFromBottom(kCardPad);
-        anosViewport_->setBounds(anosArea);
-
-        int numAnoRows = (static_cast<int>(botoesAnos_.size()) + 1) / 2;
-        int contentH = numAnoRows * (kBtnH + kItemGap);
-        int containerW = anosArea.getWidth() - anosViewport_->getScrollBarThickness();
-        anosContainer_.setSize(juce::jmax(containerW, 0), contentH);
-
-        for (size_t i = 0; i < botoesAnos_.size(); i += 2) {
-            auto rowArea = juce::Rectangle<int>(0, static_cast<int>(i / 2) * (kBtnH + kItemGap),
-                                                 anosContainer_.getWidth(), kBtnH).reduced(4, 0);
-            int halfW = rowArea.getWidth() / 2;
-            botoesAnos_[i]->setBounds(rowArea.removeFromLeft(halfW).reduced(2, 0));
-            if (i + 1 < botoesAnos_.size()) {
-                botoesAnos_[i + 1]->setBounds(rowArea.reduced(2, 0));
+    // 4. MEDIA TYPE em duas colunas: ponto de cor, nome e contagem à direita. Nome nunca é cortado: Phone dump e Merge
+    //    conflicts (os longos) ocupam a linha inteira, e um par que não cabe lado a lado vira duas linhas inteiras.
+    barra_.iniciarCard(matriz::i18n::t("catwork.secao_media_type"));
+    {
+        const int meia = (corpo.getWidth() - kGap) / 2;
+        auto precisaLinhaInteira = [&](size_t i) {
+            const auto& ch = categorias_[i].chave;
+            return ch == "phone_dump" || ch == "merge_conflitos" ||
+                   larguraNecessariaDoChip(botoesCategorias_[i]->getButtonText(), true) > meia;
+        };
+        bool primeiraLinha = true;
+        auto novaLinha = [&] {
+            if (!primeiraLinha) corpo.removeFromTop(kGap);
+            primeiraLinha = false;
+            return corpo.removeFromTop(kChipH);
+        };
+        for (size_t i = static_cast<size_t>(indiceInicioMediaType_); i < botoesCategorias_.size(); ++i) {
+            const bool inteira = precisaLinhaInteira(i) || i + 1 >= botoesCategorias_.size() || precisaLinhaInteira(i + 1);
+            auto linha = novaLinha();
+            if (inteira) {
+                botoesCategorias_[i]->setBounds(linha);
+            } else {
+                botoesCategorias_[i]->setBounds(linha.removeFromLeft(meia));
+                linha.removeFromLeft(kGap);
+                botoesCategorias_[++i]->setBounds(linha);
             }
         }
     }
+    barra_.finalizarCard();
 
-    secaoCardBounds_.push_back(juce::Rectangle<int>(4, filtersCardTop, kLarguraSidebar - 8,
-                                                      sidebar.getBottom() - filtersCardTop - kCardPad));
+    // 5. CONTENT TYPE: content, subject e list.
+    barra_.iniciarCard(matriz::i18n::t("catwork.secao_content_type"));
+    {
+        bool primeiro = true;
+        for (auto* combo : {comboContentType_.get(), comboSubject_.get(), comboLista_.get()}) {
+            if (!combo) continue;
+            if (!primeiro) corpo.removeFromTop(6);
+            primeiro = false;
+            combo->setBounds(corpo.removeFromTop(28));
+        }
+    }
+    barra_.finalizarCard();
+
+    // 6. DATE: "Multiple years" na linha do título; anos em grade com o número à direita, em cinza.
+    {
+        auto titulo = barra_.iniciarCard(matriz::i18n::t("catwork.secao_date"));
+        if (toggleMultiplosAnos_) {
+            // Caixa + texto numa linha só (o ToggleButton desenha o texto em 14 px, com a caixa de ~24 px à esquerda).
+            const int w = juce::jmin(titulo.getWidth() - 50,
+                                     juce::GlyphArrangement::getStringWidthInt(juce::Font(juce::FontOptions(14.0f)), toggleMultiplosAnos_->getButtonText()) + 40);
+            toggleMultiplosAnos_->setBounds(titulo.removeFromRight(w).withSizeKeepingCentre(w, 22));
+        }
+        if (anosViewport_) {
+            const int disponivel = juce::jmax(kChipH, corpo.getHeight() - kPadV - 8);
+            const int linhasCabem = juce::jmax(1, (disponivel + kGap) / (kChipH + kGap));
+            const size_t total = botoesAnos_.size();
+            const size_t celulas = static_cast<size_t>(linhasCabem) * 2;
+            const bool sobra = total > celulas;
+            anosVisiveis_ = sobra ? celulas - 1 : total;
+            const size_t ocupadas = anosVisiveis_ + (sobra ? 1 : 0);
+            const int linhas = static_cast<int>((ocupadas + 1) / 2);
+            const int alturaGrade = linhas > 0 ? linhas * kChipH + (linhas - 1) * kGap : 0;
+
+            auto grade = corpo.removeFromTop(alturaGrade);
+            anosViewport_->setScrollBarsShown(false, false);
+            anosViewport_->setBounds(grade);
+            anosContainer_.setSize(grade.getWidth(), alturaGrade);
+            const int meia = (grade.getWidth() - kGap) / 2;
+            auto celula = [&](size_t k) {
+                const int lin = static_cast<int>(k / 2), col = static_cast<int>(k % 2);
+                return juce::Rectangle<int>(col == 0 ? 0 : meia + kGap, lin * (kChipH + kGap), col == 0 ? meia : grade.getWidth() - meia - kGap, kChipH);
+            };
+            for (size_t k = 0; k < total; ++k) {
+                const bool visivel = k < anosVisiveis_;
+                botoesAnos_[k]->setVisible(visivel);
+                if (visivel) botoesAnos_[k]->setBounds(celula(k));
+            }
+            if (btnAnosMais_) {
+                btnAnosMais_->setVisible(sobra);
+                if (sobra) btnAnosMais_->setBounds(celula(anosVisiveis_));
+            }
+        }
+        barra_.finalizarCard();
+    }
 
     if (!fichaColapsada_ && fichaPanel_) {
         fichaPanel_->setVisible(true);

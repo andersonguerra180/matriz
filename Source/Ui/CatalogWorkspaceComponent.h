@@ -14,6 +14,7 @@
 #include "FloatingPreviewWindow.h"
 #include "OverlayComponent.h"
 #include "ViewModeIconButton.h"
+#include "BarraLateral.h"
 
 namespace matriz::ui {
 
@@ -266,6 +267,16 @@ private:
         }
     };
     SidebarButtonLookAndFeel sidebarButtonLf_;
+    // Barra lateral no desenho do mapa "FILTROS DO METADATA" (240 px): cards, chips com ponto e contagem, pílulas.
+    barra::Layout barra_;
+    barra::ChipLf chipLf_;
+    barra::PilulaLf pilulaLf_;
+    barra::PrimariaLf primariaLf_;
+    barra::FiltroOpcoesLf filtroOpcoesLf_;
+    juce::Rectangle<int> trilhoVisao_;  // trilho do seletor lista/grade
+    juce::Rectangle<int> tituloFiltros_;  // linha do título FILTERS ("N active" é pintado à direita)
+    // Quantos filtros estão escondendo arquivos agora ("1 active" no título do card FILTERS).
+    int contarFiltrosAtivos() const;
 
     // RESET FILTERS: a ação principal da barra lateral (pílula grafite, texto branco).
     struct ResetButtonLookAndFeel : public MatrizLookAndFeel {
@@ -334,6 +345,10 @@ private:
     std::unique_ptr<juce::ToggleButton> toggleMultiplosAnos_;
     juce::Component anosContainer_;
     std::unique_ptr<juce::Viewport> anosViewport_;
+    // "[older...]": os anos que não cabem na altura do card DATE (o card nunca rola) ficam num menu.
+    std::unique_ptr<juce::TextButton> btnAnosMais_;
+    size_t anosVisiveis_ = 0;
+    void abrirMenuAnosMais();
 
     std::vector<std::pair<std::string, int>> collectionDisponiveis_;
     std::unique_ptr<juce::ComboBox> comboContentType_;
@@ -356,7 +371,7 @@ private:
                                     .withNumberOfThreads(1)
                                     .withDesiredThreadPriority(juce::Thread::Priority::low)};
 
-    static constexpr int kLarguraSidebar = 200;
+    static constexpr int kLarguraSidebar = barra::kLargura;
     static constexpr int kLarguraFichaMin = 280;
     static constexpr int kLarguraFichaMax = 900;
 
