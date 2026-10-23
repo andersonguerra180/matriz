@@ -2285,11 +2285,45 @@ int rodarLoteSelfTest() {
                     cbIa->setSelectedItemIndex(1, juce::sendNotificationSync);
                     bombear(300);
 
+                    // LAYOUT ACORDADO DA FICHA (chat "Revisão do app na main", 22/10/2026): trava contra regressão ao juntar
+                    // branches. Individual e lote: nenhum selo "[...]" visível ([EDITABLE], [AUTO + FIXED], [TAGS]...), Presets
+                    // no cabeçalho do card na mesma linha do AI generated, NOTES numa linha só ("Add a note…" / "Notes: N").
+                    auto conferirLayoutFicha = [&](const juce::String& modo, juce::Component* ia) {
+                        std::vector<juce::Component*> visiveis;
+                        std::function<void(juce::Component&)> varrer = [&](juce::Component& c) {
+                            for (auto* f : c.getChildren())
+                                if (f->isVisible()) { visiveis.push_back(f); varrer(*f); }
+                        };
+                        varrer(*ficha);
+                        juce::String selo;
+                        juce::Component* presets = nullptr;
+                        bool notasUmaLinha = false;
+                        const auto prefixoNotas = matriz::i18n::t("ficha.notas_contagem").upToFirstOccurrenceOf("{n}", false, false);
+                        for (auto* c : visiveis) {
+                            juce::String txt;
+                            if (auto* l = dynamic_cast<juce::Label*>(c)) txt = l->getText().trim();
+                            else if (auto* b = dynamic_cast<juce::Button*>(c)) txt = b->getButtonText().trim();
+                            if (txt.startsWith("[") && txt.endsWith("]")) selo = txt;
+                            if (txt.startsWith("Presets")) presets = c;
+                            if (dynamic_cast<juce::Label*>(c) != nullptr &&
+                                (txt == matriz::i18n::t("ficha.notas_adicionar") || txt.startsWith(prefixoNotas)))
+                                notasUmaLinha = true;
+                        }
+                        auto centroY = [&](juce::Component* c) { return ficha->getLocalArea(c, c->getLocalBounds()).getCentreY(); };
+                        checar(selo.isEmpty(), modo + " layout: no \"[...]\" badges on the card" + (selo.isEmpty() ? juce::String() : " (" + selo + ")"));
+                        checar(presets != nullptr && presets->getParentComponent() != ficha && ia != nullptr && ia->isVisible() &&
+                                   std::abs(centroY(presets) - centroY(ia)) <= 8,
+                               modo + " layout: Presets sits in the card header, on the AI generated row");
+                        checar(notasUmaLinha, modo + " layout: NOTES is a single \"Add a note\" line");
+                    };
+                    conferirLayoutFicha("batch", ficha->editorDoCampoLoteParaTeste("ai_generated"));
+
                     // Ficha INDIVIDUAL: o toggle reflete o estado, liga e desliga campo + tags, e relido continua certo.
                     const std::vector<std::string> selVec(sel.begin(), sel.end());
                     const std::string um = selVec.front();
                     ficha->mostrarItem(um);
                     bombear(100);
+                    conferirLayoutFicha("single", ficha->editorDoCampoParaTeste("raiz", 0, "ai_generated"));
                     auto* tg = dynamic_cast<juce::ToggleButton*>(ficha->editorDoCampoParaTeste("raiz", 0, "ai_generated"));
                     checar(tg != nullptr && !tg->getToggleState(), "single: AI generated toggle starts off for an item without it");
                     if (tg) {
