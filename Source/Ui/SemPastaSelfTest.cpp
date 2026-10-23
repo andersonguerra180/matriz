@@ -122,6 +122,12 @@ int rodarSemPastaSelfTest() {
             arvore.mouseDown(clique(arvore, card.getCentre()));
             checar(pastaPedida == JanelaPastaFlutuante::kPastaSemPasta && nomePedido == JanelaPastaFlutuante::kNomeSemPasta,
                    "clicking the card asks the host to open the _no folder window");
+            pastaPedida.clear();
+            bool foiParaGrade = false;
+            arvore.aoMostrarConteudoNaGrade = [&](const std::set<std::string>&) { foiParaGrade = true; };
+            arvore.mouseDown(clique(arvore, arvore.boundsSemPasta().getCentre()));
+            checar(pastaPedida == JanelaPastaFlutuante::kPastaSemPasta && !foiParaGrade,
+                   "the left-column SEM PASTA card also opens _no folder (not the METADATA grid)");
 
             // ---- 3. IMPORT FROM _no folder (pasta com auto-organização)
             bool reconta = false;

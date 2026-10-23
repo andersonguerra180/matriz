@@ -14,10 +14,11 @@ não devem ser revertidas.
      carrega o INTAKE, mas `contarItensSemPasta` conta os dois (no acervo Fotos/Project os 376 sem pasta são todos Hidden).
      O clique agora leva à STRUCTURE › `_no folder` com tudo selecionado; a janela diz quantos são Hidden / INTAKE.
   3. Pasta com auto-organize: "Import files from _no folder..." (fora do INTAKE) → `adicionarItensAPasta` + `aplicarAutoOrganizacao`.
-- Teste: `"build/matriz_artefacts/Debug/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-sem-pasta` — 19 OK em 2026-10-23.
+- Teste: `"build/matriz_artefacts/Debug/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-sem-pasta` — 20 OK em 2026-10-23.
   Não foi clicado no app por mim (sessão sem permissão de Acessibilidade/Gravação de Tela); a suíte ampla e ASan/TSan não rodaram.
-- Não mudou: o card SEM PASTA da coluna esquerda do Folder Map continua mandando para a aba METADATA (mesma limitação do
-  Hidden); `_SEM_PASTA` físico do MAIN e `kPastaNoFolderExport` intocados.
+- O card SEM PASTA da coluna esquerda do Folder Map também abre o `_no folder` (antes ia para a aba METADATA, com a mesma
+  limitação do Hidden); soltar arquivos nele continua tirando-os das pastas. `_SEM_PASTA` físico do MAIN e
+  `kPastaNoFolderExport` intocados.
 - WINPORT (nada de I/O na message thread): `ArvoreBackupComponent::importarSemPastaNaPasta` grava síncrono na message thread
   (mesmas funções do MOVE TO FOLDER / Reorganize now); a contagem do card `_no folder` reaproveita o COUNT já feito no paint
   (1x/s) pelo card SEM PASTA.

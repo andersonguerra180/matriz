@@ -3302,9 +3302,12 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
-    // SEM PASTA (Fase 1) — card fixo na coluna esquerda, nunca aparece no ORIGINAL.
+    // SEM PASTA (Fase 1) — card fixo na coluna esquerda, nunca aparece no ORIGINAL. Abre a pasta virtual `_no folder` (a aba
+    // METADATA esconde CONTENT = Hidden e o INTAKE: o card contava arquivos que a grade não mostrava). Sem quem abra a janela,
+    // fica o caminho antigo.
     if (!mapaAtivoEhOriginal() && boundsSemPasta().contains(e.getPosition())) {
-        if (aoMostrarConteudoNaGrade) aoMostrarConteudoNaGrade(projeto_.itensSemPasta(mapaAtivoId_));
+        if (aoAbrirPastaJanela) aoAbrirPastaJanela(JanelaPastaFlutuante::kPastaSemPasta, JanelaPastaFlutuante::kNomeSemPasta);
+        else if (aoMostrarConteudoNaGrade) aoMostrarConteudoNaGrade(projeto_.itensSemPasta(mapaAtivoId_));
         return;
     }
 
