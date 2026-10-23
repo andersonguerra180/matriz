@@ -7,10 +7,12 @@
 #include "GeoAcoes.h"
 #include "LogosTipoArquivo.h"
 #include "Moldura.h"
+#include "OverlayComponent.h"
 #include "Tablet.h"
 #include "Tokens.h"
 #include "VideoPlayerComponent.h"
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <set>
@@ -31,7 +33,7 @@ constexpr std::uint32_t kRaiz = 0xffffffffu;  // LIBMTP_FILES_AND_FOLDERS_ROOT
 constexpr int kAlturaNome = 22;
 constexpr int kGap = 10;
 constexpr int kMaxMiniaturas = 2500;
-constexpr int kMenuMarcar = 1, kMenuPreview = 2, kMenuImportar = 3, kMenuMarcarPasta = 4, kMenuImportarPasta = 5;
+constexpr int kMenuMarcar = 1, kMenuPreview = 2, kMenuImportar = 3, kMenuMarcarPasta = 4, kMenuImportarPasta = 5, kMenuMarcarR = 6;
 
 juce::String bytesLegiveis(std::uint64_t b) { return juce::File::descriptionOfSizeInBytes(static_cast<juce::int64>(b)); }
 juce::String sep() { return juce::String::fromUTF8("  \xc2\xb7  "); }
@@ -43,6 +45,15 @@ bool ehImagem(CategoriaMidia c) { return c == CategoriaMidia::Imagem || c == Cat
 bool temMiniaturaProvavel(const EntradaAndroid& e) {
     const auto c = categoriaDe(e);
     return ehImagem(c) || c == CategoriaMidia::Video;
+}
+
+// Selo "R" (rejeitado: sai do celular), igual ao R do INTAKE: quadrado vermelho com a letra branca.
+void desenharSeloR(juce::Graphics& g, juce::Rectangle<float> b) {
+    g.setColour(tema().perigo);
+    g.fillRoundedRectangle(b, 3.0f);
+    g.setColour(juce::Colours::white);
+    g.setFont(fonteUi(b.getHeight() * 0.62f, juce::Font::bold));
+    g.drawText("R", b, juce::Justification::centred);
 }
 
 // Selo "I" (marcado para importar), no desenho dos selos H/K/P/W do Matriz: quadrado preto com a letra branca.
@@ -108,6 +119,10 @@ public:
     std::vector<EntradaAndroid> arquivos_;           // arquivos da pasta aberta
     std::vector<int> visiveis_;                      // índices em arquivos_ depois de filtro e busca
     std::map<Chave, EntradaAndroid> marcados_;       // arquivos e pastas marcados (pasta = tudo dentro)
+    std::map<Chave, EntradaAndroid> rejeitados_;     // R: arquivos que vão ser APAGADOS do celular (só com confirmação)
+    bool soRejeitados_ = false;
+    bool apagarAposImportar_ = false;                // "mover": apaga do celular o que chegou inteiro no Mac
+    std::unique_ptr<PainelOverlay> overlay_;
     std::set<int> selecao_;
     int cursor_ = -1, ancora_ = -1;
     bool focoNaArvore_ = false;
@@ -133,6 +148,7 @@ public:
         return &arquivos_[static_cast<size_t>(visiveis_[static_cast<size_t>(i)])];
     }
     bool estaMarcado(const EntradaAndroid& e) const { return marcados_.count(chaveDe(e)) > 0; }
+    bool estaRejeitado(const EntradaAndroid& e) const { return rejeitados_.count(chaveDe(e)) > 0; }
     bool jaNoProjeto(const EntradaAndroid& e) const {
         return !e.pasta && !existentes_.empty() &&
                existentes_.count(chaveDoArquivo(e.nome.toStdString(), static_cast<std::int64_t>(e.tamanho))) > 0;
@@ -154,13 +170,17 @@ public:
     void moverCursor(int delta, bool estender);
     void alternarMarca(std::vector<EntradaAndroid> itens);
     void alternarMarcaDaSelecao();
+    void alternarRDaSelecao();
+    void apagarRejeitados();
+    void confirmarApagar();
     void abrirPreview(int i);
     void lerMetadadosDoSelecionado();
     void baixarParaCache(const EntradaAndroid& e, std::function<void(juce::File)> aoTerminar);
     void abrirMenuGrade();
     void abrirMenuPasta(const EntradaAndroid& pasta);
     void importar();
-    void copiarParaIntake(std::vector<ItemCopiaAndroid> itens);
+    void copiarParaIntake(std::vector<ItemCopiaAndroid> itens, bool confirmado = false);
+    void pedirConfirmacao(const juce::String& titulo, const juce::String& msg, const juce::String& ok, std::function<void()> aoConfirmar);
     void atualizarTudo();
     void timerCallback() override { stopTimer(); lerMetadadosDoSelecionado(); }
 
@@ -172,7 +192,7 @@ public:
     juce::TreeView arvore_;
     std::unique_ptr<juce::TreeViewItem> raizArvore_;
     juce::TextButton btnVoltar_;
-    std::unique_ptr<BotaoPilula> btnImportar_, btnTentar_, btnMapa_;
+    std::unique_ptr<BotaoPilula> btnImportar_, btnTentar_, btnMapa_, btnRejeitar_;
     juce::Label lblTitulo_, lblContagem_, lblStatus_;
     juce::TextEditor campoBusca_;
     juce::Slider sliderTamanho_;
@@ -256,6 +276,11 @@ public:
             g.drawText(t("cel.usb.noProjeto"), b, juce::Justification::centred, true);
         }
         if (c_.estaMarcado(*e)) desenharSeloI(g, {img.getX() + 6, img.getY() + 6, 20, 20});
+        if (c_.estaRejeitado(*e)) {  // R: o card escurece, como um arquivo que vai sair
+            g.setColour(juce::Colours::black.withAlpha(0.35f));
+            g.fillRoundedRectangle(img, 12.0f);
+            desenharSeloR(g, {img.getX() + 6, img.getY() + 6, 20, 20});
+        }
         if (sel) {
             g.setColour(tk.acento);
             g.drawRoundedRectangle(img.reduced(1.0f), 12.0f, 3.0f);
@@ -302,7 +327,7 @@ public:
     explicit Filtros(Conteudo& c) : c_(c) {}
 
     struct Linha { int tipo = 0; juce::String rotulo; int contagem = -1; bool ativo = false; int valor = 0; juce::Colour ponto; };
-    enum { kCabecalho, kTipo, kAno, kMarcados, kAtalho };
+    enum { kCabecalho, kTipo, kAno, kMarcados, kAtalho, kRejeitados, kApagarApos };
     static constexpr int kAlturaSecao = 22, kAlturaLinha = 24;
 
     void reconstruir() {
@@ -329,6 +354,8 @@ public:
             linhas_.push_back({kTipo, t(tipos[i].first), cont[i], static_cast<int>(c_.filtro_) == i, i, tipos[i].second});
         linhas_.push_back({kCabecalho, t("cel.usb.sec.importar")});
         linhas_.push_back({kMarcados, t("cel.usb.f.marcados"), marc, c_.soMarcados_});
+        linhas_.push_back({kRejeitados, t("cel.usb.f.rejeitados"), static_cast<int>(c_.rejeitados_.size()), c_.soRejeitados_});
+        linhas_.push_back({kApagarApos, t("cel.usb.apagarApos"), -1, c_.apagarAposImportar_});
         if (!porAno.empty()) {
             linhas_.push_back({kCabecalho, t("cel.usb.sec.data")});
             for (auto it = porAno.rbegin(); it != porAno.rend(); ++it)
@@ -361,6 +388,27 @@ public:
                 g.drawText(moldura::caixaAlta(l.rotulo), b.reduced(tk.espacoMedio, 0), juce::Justification::centredLeft);
                 continue;
             }
+            if (l.tipo == kApagarApos) {  // interruptor (caixa de marcar), não filtro
+                auto miolo = b.reduced(tk.espacoMedio, 0);
+                auto caixa = miolo.removeFromLeft(18).toFloat().withSizeKeepingCentre(14, 14);
+                g.setColour(l.ativo ? tk.perigo : tk.campoFundo);
+                g.fillRoundedRectangle(caixa, 3.0f);
+                g.setColour(l.ativo ? tk.perigo : tk.borda);
+                g.drawRoundedRectangle(caixa, 3.0f, 1.2f);
+                if (l.ativo) {
+                    juce::Path v;
+                    v.startNewSubPath(caixa.getX() + 3.0f, caixa.getCentreY());
+                    v.lineTo(caixa.getX() + 6.0f, caixa.getBottom() - 3.5f);
+                    v.lineTo(caixa.getRight() - 2.5f, caixa.getY() + 3.5f);
+                    g.setColour(juce::Colours::white);
+                    g.strokePath(v, juce::PathStrokeType(1.8f));
+                }
+                miolo.removeFromLeft(6);
+                g.setColour(l.ativo ? tk.perigo : tk.textoPrimario);
+                g.setFont(fonteUi(tk.tamanhoFonteCorpo, l.ativo ? juce::Font::bold : juce::Font::plain));
+                g.drawText(l.rotulo, miolo, juce::Justification::centredLeft, true);
+                continue;
+            }
             const bool chip = l.tipo != kAtalho;
             if (chip) {
                 auto pilula = b.toFloat().reduced(static_cast<float>(tk.espacoPequeno), 2.0f);
@@ -372,8 +420,10 @@ public:
                 auto ponto = miolo.removeFromLeft(14);
                 g.setColour(l.ponto);
                 g.fillEllipse(juce::Rectangle<float>(ponto.getX() + 2.0f, ponto.getCentreY() - 4.0f, 8.0f, 8.0f));
-            } else if (l.tipo == kMarcados) {
-                desenharSeloI(g, juce::Rectangle<float>(static_cast<float>(miolo.getX()), miolo.getCentreY() - 7.0f, 14, 14));
+            } else if (l.tipo == kMarcados || l.tipo == kRejeitados) {
+                const auto b = juce::Rectangle<float>(static_cast<float>(miolo.getX()), miolo.getCentreY() - 7.0f, 14, 14);
+                if (l.tipo == kMarcados) desenharSeloI(g, b);
+                else desenharSeloR(g, b);
                 miolo.removeFromLeft(20);
             } else if (l.tipo == kAtalho) {
                 desenharIcone(g, IconeUi::Pasta, miolo.removeFromLeft(18).toFloat().withSizeKeepingCentre(15, 15), tk.acento);
@@ -402,7 +452,9 @@ public:
 private:
     void clicar(const Linha& l) {
         if (l.tipo == kTipo) c_.filtro_ = static_cast<Filtro>(l.valor);
-        else if (l.tipo == kMarcados) c_.soMarcados_ = !c_.soMarcados_;
+        else if (l.tipo == kMarcados) { c_.soMarcados_ = !c_.soMarcados_; c_.soRejeitados_ = false; }
+        else if (l.tipo == kRejeitados) { c_.soRejeitados_ = !c_.soRejeitados_; c_.soMarcados_ = false; }
+        else if (l.tipo == kApagarApos) { c_.apagarAposImportar_ = !c_.apagarAposImportar_; reconstruir(); c_.atualizarTudo(); return; }
         else if (l.tipo == kAno) c_.anoFiltro_ = c_.anoFiltro_ == l.valor ? 0 : l.valor;
         else if (l.tipo == kAtalho) { c_.abrirPasta(c_.atalhos_[static_cast<size_t>(l.valor)].cadeia); return; }
         else return;
@@ -520,6 +572,7 @@ public:
         const auto* e = c_.itemVisivel(indice_);
         auto tit = topo;
         if (e != nullptr && c_.estaMarcado(*e)) { desenharSeloI(g, tit.removeFromLeft(20).toFloat().withSizeKeepingCentre(18, 18)); tit.removeFromLeft(8); }
+        if (e != nullptr && c_.estaRejeitado(*e)) { desenharSeloR(g, tit.removeFromLeft(20).toFloat().withSizeKeepingCentre(18, 18)); tit.removeFromLeft(8); }
         g.drawText(nome_ + sep() + juce::String(indice_ + 1) + " / " + juce::String(static_cast<int>(c_.visiveis_.size())), tit,
                    juce::Justification::centredLeft, true);
         g.setColour(juce::Colours::white.withAlpha(0.6f));
@@ -601,6 +654,11 @@ public:
             preview_->repaint();
             return true;
         }
+        if (k.getTextCharacter() == 'r' || k.getTextCharacter() == 'R') {
+            c_.alternarRDaSelecao();
+            preview_->repaint();
+            return true;
+        }
         return DocumentWindow::keyPressed(k);
     }
 
@@ -661,6 +719,11 @@ JanelaAndroidUsb::Conteudo::Conteudo(std::function<ConjuntoExistentes()> existen
         else importar();
     };
     addAndMakeVisible(*btnImportar_);
+    btnRejeitar_ = std::make_unique<BotaoPilula>(t("cel.usb.rejeitar"), BotaoPilula::Estilo::Perigo);
+    btnRejeitar_->setWantsKeyboardFocus(false);
+    btnRejeitar_->setTooltip(t("cel.usb.rejeitar.dica"));
+    btnRejeitar_->onClick = [this] { confirmarApagar(); };
+    addAndMakeVisible(*btnRejeitar_);
     btnTentar_ = std::make_unique<BotaoPilula>(t("cel.usb.tentar"), BotaoPilula::Estilo::Primario);
     btnTentar_->setWantsKeyboardFocus(false);
     btnTentar_->onClick = [this] { conectar(); };
@@ -721,6 +784,7 @@ JanelaAndroidUsb::Conteudo::Conteudo(std::function<ConjuntoExistentes()> existen
 
 JanelaAndroidUsb::Conteudo::~Conteudo() {
     stopTimer();
+    overlay_.reset();
     janelaPreview_.reset();
     arvore_.setRootItem(nullptr);
     raizArvore_.reset();
@@ -874,6 +938,7 @@ void JanelaAndroidUsb::Conteudo::aplicarFiltro() {
         const auto& e = arquivos_[static_cast<size_t>(i)];
         if (anoFiltro_ != 0 && e.modificado.getYear() != anoFiltro_) continue;
         if (soMarcados_ && !estaMarcado(e)) continue;
+        if (soRejeitados_ && !estaRejeitado(e)) continue;
         if (busca.isNotEmpty() && !e.nome.containsIgnoreCase(busca)) continue;
         const auto c = categoriaDe(e);
         const bool passa = filtro_ == Filtro::Todos || (filtro_ == Filtro::Imagem && ehImagem(c)) ||
@@ -943,9 +1008,9 @@ void JanelaAndroidUsb::Conteudo::alternarMarca(std::vector<EntradaAndroid> itens
     for (const auto& e : itens) if (!estaMarcado(e)) { todos = false; break; }
     for (const auto& e : itens) {
         if (todos) marcados_.erase(chaveDe(e));
-        else marcados_[chaveDe(e)] = e;
+        else { marcados_[chaveDe(e)] = e; rejeitados_.erase(chaveDe(e)); }  // I e R não convivem
     }
-    if (soMarcados_) { aplicarFiltro(); return; }
+    if (soMarcados_ || soRejeitados_) { aplicarFiltro(); return; }
     filtros_->reconstruir();
     arvore_.repaint();
     atualizarTudo();
@@ -959,6 +1024,91 @@ void JanelaAndroidUsb::Conteudo::alternarMarcaDaSelecao() {
     std::vector<EntradaAndroid> itens;
     for (int i : selecao_) if (const auto* e = itemVisivel(i)) itens.push_back(*e);
     alternarMarca(std::move(itens));
+}
+
+// R vale como no INTAKE: o item em foco ou a seleção; só arquivos (pasta não vai para o R).
+void JanelaAndroidUsb::Conteudo::alternarRDaSelecao() {
+    if (estado_ != Estado::Pronto || focoNaArvore_) return;
+    std::vector<EntradaAndroid> itens;
+    for (int i : selecao_) if (const auto* e = itemVisivel(i); e != nullptr && !e->pasta) itens.push_back(*e);
+    if (itens.empty()) if (const auto* e = itemVisivel(cursor_)) itens.push_back(*e);
+    if (itens.empty()) return;
+    bool todos = true;
+    for (const auto& e : itens) if (!estaRejeitado(e)) { todos = false; break; }
+    for (const auto& e : itens) {
+        if (todos) rejeitados_.erase(chaveDe(e));
+        else { rejeitados_[chaveDe(e)] = e; marcados_.erase(chaveDe(e)); }  // I e R não convivem
+    }
+    if (soMarcados_ || soRejeitados_) { aplicarFiltro(); return; }
+    filtros_->reconstruir();
+    atualizarTudo();
+}
+
+// Só o que tem R, nunca a seleção (como o REJECT MARKED do INTAKE). Apagar do celular não tem volta: pergunta antes.
+void JanelaAndroidUsb::Conteudo::confirmarApagar() {
+    if (estado_ != Estado::Pronto || rejeitados_.empty() || overlay_ != nullptr) return;
+    std::uint64_t bytes = 0;
+    for (const auto& [k, e] : rejeitados_) bytes += e.tamanho;
+    const int n = static_cast<int>(rejeitados_.size());
+    juce::Component::SafePointer<Conteudo> seguro(this);
+    pedirConfirmacao(t("cel.usb.apagar.titulo").replace("{n}", juce::String(n)),
+                     t("cel.usb.apagar.msg").replace("{n}", juce::String(n)).replace("{tam}", bytesLegiveis(bytes)).replace("{aparelho}", aparelho_.nome),
+                     t("cel.usb.apagar.ok").replace("{n}", juce::String(n)),
+                     [seguro] { if (seguro != nullptr) seguro->apagarRejeitados(); });
+}
+
+// Confirmação de ação que apaga do celular (overlay do app, tom de perigo; Return não confirma).
+void JanelaAndroidUsb::Conteudo::pedirConfirmacao(const juce::String& titulo, const juce::String& msg, const juce::String& ok,
+                                                  std::function<void()> aoConfirmar) {
+    if (overlay_ != nullptr) return;
+    overlay_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlay_);
+    overlay_->setBounds(getLocalBounds());
+    PainelOverlay::Config cfg;
+    cfg.tom = PainelOverlay::Tom::Perigo;
+    cfg.titulo = titulo;
+    cfg.mensagem = msg;
+    cfg.botoes.push_back({t("light.ui.common.cancel"), 0, false, true});
+    cfg.botoes.push_back({ok, 1, false, false});
+    juce::Component::SafePointer<Conteudo> seguro(this);
+    overlay_->mostrar(cfg, [seguro, aoConfirmar](PainelOverlay::Resultado r) {
+        juce::MessageManager::callAsync([seguro, aoConfirmar, sim = r.botaoId == 1] {
+            if (seguro == nullptr) return;
+            seguro->overlay_.reset();
+            seguro->grabKeyboardFocus();
+            if (sim && aoConfirmar) aoConfirmar();
+        });
+    });
+}
+
+void JanelaAndroidUsb::Conteudo::apagarRejeitados() {
+    if (estado_ != Estado::Pronto || rejeitados_.empty()) return;
+    std::vector<EntradaAndroid> itens;
+    for (const auto& [k, e] : rejeitados_) itens.push_back(e);
+    estado_ = Estado::Preparando;
+    progresso_ = -1.0;
+    lblContagem_.setText(t("cel.usb.apagando").replace("{n}", juce::String(static_cast<int>(itens.size()))), juce::dontSendNotification);
+    atualizarTudo();
+    juce::Component::SafePointer<Conteudo> seguro(this);
+    sessao_->apagar(std::move(itens), [seguro](std::vector<std::uint32_t> apagados, int falhas) {
+        if (seguro == nullptr) return;
+        auto& s = *seguro;
+        const std::set<std::uint32_t> ids(apagados.begin(), apagados.end());
+        const auto saiu = [&ids](const EntradaAndroid& e) { return ids.count(e.id) > 0; };
+        for (auto it = s.rejeitados_.begin(); it != s.rejeitados_.end();) {
+            if (saiu(it->second)) {
+                s.arquivoNoCache(it->second).getParentDirectory().deleteRecursively();
+                it = s.rejeitados_.erase(it);
+            } else ++it;
+        }
+        for (auto& [k, lista] : s.cacheListas_) lista.erase(std::remove_if(lista.begin(), lista.end(), saiu), lista.end());
+        s.arquivos_.erase(std::remove_if(s.arquivos_.begin(), s.arquivos_.end(), saiu), s.arquivos_.end());
+        for (auto id : ids) { s.miniaturas_.erase(id); s.metadados_.erase(id); }
+        s.estado_ = Estado::Pronto;
+        s.aviso_ = t("cel.usb.apagados").replace("{n}", juce::String(static_cast<int>(apagados.size())));
+        if (falhas > 0) s.aviso_ += sep() + t("cel.usb.apagarFalhas").replace("{n}", juce::String(falhas));
+        s.aplicarFiltro();
+    });
 }
 
 void JanelaAndroidUsb::Conteudo::baixarParaCache(const EntradaAndroid& e, std::function<void(juce::File)> aoTerminar) {
@@ -1018,6 +1168,9 @@ void JanelaAndroidUsb::Conteudo::abrirMenuGrade() {
     for (int i : selecao_) if (const auto* e = itemVisivel(i); e != nullptr && !estaMarcado(*e)) { todos = false; break; }
     juce::PopupMenu menu;
     menu.addItem(kMenuMarcar, todos ? t("cel.usb.menu.desmarcar") : t("cel.usb.menu.marcar"));
+    bool todosR = true;
+    for (int i : selecao_) if (const auto* e = itemVisivel(i); e != nullptr && !estaRejeitado(*e)) { todosR = false; break; }
+    menu.addItem(kMenuMarcarR, todosR ? t("cel.usb.menu.desmarcarR") : t("cel.usb.menu.marcarR"));
     menu.addItem(kMenuPreview, t("cel.usb.menu.preview"), selecao_.size() == 1);
     menu.addSeparator();
     menu.addItem(kMenuImportar, t("cel.usb.menu.importarSel").replace("{n}", juce::String(static_cast<int>(selecao_.size()))));
@@ -1026,6 +1179,7 @@ void JanelaAndroidUsb::Conteudo::abrirMenuGrade() {
         if (seguro == nullptr || r == 0) return;
         auto& s = *seguro;
         if (r == kMenuMarcar) s.alternarMarcaDaSelecao();
+        else if (r == kMenuMarcarR) s.alternarRDaSelecao();
         else if (r == kMenuPreview) s.abrirPreview(s.cursor_);
         else if (r == kMenuImportar) {
             for (int i : s.selecao_) if (const auto* e = s.itemVisivel(i)) s.marcados_[chaveDe(*e)] = *e;
@@ -1084,11 +1238,21 @@ void JanelaAndroidUsb::Conteudo::importar() {
         });
 }
 
-void JanelaAndroidUsb::Conteudo::copiarParaIntake(std::vector<ItemCopiaAndroid> itens) {
+void JanelaAndroidUsb::Conteudo::copiarParaIntake(std::vector<ItemCopiaAndroid> itens, bool confirmado) {
     // Só o que é novo: o que o projeto já tem (nome + tamanho) não é copiado de novo.
     std::vector<ItemCopiaAndroid> novos;
     for (auto& it : itens) if (!jaNoProjeto(it.entrada)) novos.push_back(std::move(it));
     if (novos.empty()) { aviso_ = t("cel.usb.nadaNovo"); atualizarTudo(); return; }
+    if (apagarAposImportar_ && !confirmado) {  // "mover": pergunta antes, porque apaga do celular
+        const int n = static_cast<int>(novos.size());
+        juce::Component::SafePointer<Conteudo> seguro(this);
+        pedirConfirmacao(t("cel.usb.mover.titulo").replace("{n}", juce::String(n)),
+                         t("cel.usb.mover.msg").replace("{n}", juce::String(n)).replace("{aparelho}", aparelho_.nome),
+                         t("cel.usb.mover.ok").replace("{n}", juce::String(n)),
+                         [seguro, novos] { if (seguro != nullptr) seguro->copiarParaIntake(novos, true); });
+        return;
+    }
+    const auto copiados = novos;  // para conferir no fim o que chegou inteiro (só isso sai do celular)
     janelaPreview_.reset();
     estado_ = Estado::Copiando;
     progresso_ = 0.0;
@@ -1103,7 +1267,7 @@ void JanelaAndroidUsb::Conteudo::copiarParaIntake(std::vector<ItemCopiaAndroid> 
                                              bytesLegiveis(p.bytesFeitos) + " / " + bytesLegiveis(p.bytesTotal) + sep() + p.arquivoAtual,
                                          juce::dontSendNotification);
         },
-        [seguro](ResultadoCopiaAndroid r) {
+        [seguro, copiados](ResultadoCopiaAndroid r) {
             if (seguro == nullptr) return;
             auto& s = *seguro;
             const int recebidos = r.copiados + r.jaExistiam;
@@ -1115,8 +1279,27 @@ void JanelaAndroidUsb::Conteudo::copiarParaIntake(std::vector<ItemCopiaAndroid> 
             }
             if (r.cancelado && recebidos == 0) { s.estado_ = Estado::Pronto; s.atualizarTudo(); return; }
             // cancelado no meio: o que já chegou entra no Intake mesmo assim
-            s.terminou_ = true;
-            if (s.aoImportar_) s.aoImportar_(r.pasta, recebidos);
+            if (!s.apagarAposImportar_) {
+                s.terminou_ = true;
+                if (s.aoImportar_) s.aoImportar_(r.pasta, recebidos);
+                return;
+            }
+            // "Mover": só sai do celular o que está no Mac com o tamanho exato (mesmo caminho que a cópia gravou).
+            std::vector<EntradaAndroid> conferidos;
+            for (const auto& it : copiados) {
+                juce::File alvo = r.pasta;
+                for (const auto& parte : juce::StringArray::fromTokens(it.caminhoRelativo, "/", ""))
+                    if (parte.isNotEmpty()) alvo = alvo.getChildFile(matriz::nomes_seguros::sanitizarComponente(parte));
+                if (alvo.existsAsFile() && static_cast<std::uint64_t>(alvo.getSize()) == it.entrada.tamanho) conferidos.push_back(it.entrada);
+            }
+            s.estado_ = Estado::Preparando;
+            s.lblContagem_.setText(t("cel.usb.apagando").replace("{n}", juce::String(static_cast<int>(conferidos.size()))), juce::dontSendNotification);
+            const juce::File pasta = r.pasta;
+            s.sessao_->apagar(std::move(conferidos), [seguro, pasta, recebidos](std::vector<std::uint32_t>, int) {
+                if (seguro == nullptr) return;
+                seguro->terminou_ = true;
+                if (seguro->aoImportar_) seguro->aoImportar_(pasta, recebidos);
+            });
         });
 }
 
@@ -1138,6 +1321,7 @@ void JanelaAndroidUsb::Conteudo::atualizarTudo() {
         for (const auto& [k, e] : marcados_) bytes += e.tamanho;
         if (!marcados_.empty()) linha += sep() + t("cel.usb.marcados").replace("{n}", juce::String(static_cast<int>(marcados_.size()))) +
                                          (bytes > 0 ? " (" + bytesLegiveis(bytes) + ")" : juce::String());
+        if (!rejeitados_.empty()) linha += sep() + t("cel.usb.rejeitadosN").replace("{n}", juce::String(static_cast<int>(rejeitados_.size())));
         if (aviso_.isNotEmpty()) { linha += sep() + aviso_; aviso_.clear(); }
         lblContagem_.setText(linha, juce::dontSendNotification);
     } else if (estado_ == Estado::Preparando && lblContagem_.getText().isEmpty()) {
@@ -1164,6 +1348,9 @@ void JanelaAndroidUsb::Conteudo::atualizarTudo() {
     barra_.setVisible(ocupado);
     btnVoltar_.setEnabled(pronto && (!historico_.empty() || caminho_.size() > 1));
     btnImportar_->setEnabled(ocupado || (pronto && !marcados_.empty()));
+    btnRejeitar_->setVisible(!rejeitados_.empty());
+    btnRejeitar_->setEnabled(pronto && !rejeitados_.empty());
+    btnRejeitar_->setButtonText(t("cel.usb.rejeitar") + " (" + juce::String(static_cast<int>(rejeitados_.size())) + ")");
     btnImportar_->setButtonText(ocupado ? t("cel.usb.parar")
                                         : (marcados_.empty() ? t("cel.usb.importar")
                                                              : t("cel.usb.importarN").replace("{n}", juce::String(static_cast<int>(marcados_.size())))));
@@ -1174,6 +1361,7 @@ void JanelaAndroidUsb::Conteudo::atualizarTudo() {
 }
 
 bool JanelaAndroidUsb::Conteudo::tratarTecla(const juce::KeyPress& k) {
+    if (overlay_ != nullptr) return false;  // a confirmação trata as próprias teclas
     const auto mods = k.getModifiers();
     const int code = k.getKeyCode();
     if (k == juce::KeyPress::escapeKey) {
@@ -1183,6 +1371,7 @@ bool JanelaAndroidUsb::Conteudo::tratarTecla(const juce::KeyPress& k) {
     }
     if (estado_ != Estado::Pronto) return false;
     if ((k.getTextCharacter() == 'i' || k.getTextCharacter() == 'I') && !mods.isCommandDown()) { alternarMarcaDaSelecao(); return true; }
+    if ((k.getTextCharacter() == 'r' || k.getTextCharacter() == 'R') && !mods.isCommandDown()) { alternarRDaSelecao(); return true; }
     if (k == juce::KeyPress::spaceKey || k == juce::KeyPress::returnKey) { if (cursor_ >= 0) abrirPreview(cursor_); return true; }
     if (code == 'A' && mods.isCommandDown()) {
         focoNaArvore_ = false;
@@ -1240,6 +1429,7 @@ void JanelaAndroidUsb::Conteudo::paint(juce::Graphics& g) {
     g.setColour(tk.textoSobreAcento);
     g.drawText(ext, rs, juce::Justification::centred);
     if (estaMarcado(*e)) desenharSeloI(g, selo.removeFromLeft(28).toFloat().withSizeKeepingCentre(18, 18).translated(6, 0));
+    if (estaRejeitado(*e)) desenharSeloR(g, selo.removeFromLeft(28).toFloat().withSizeKeepingCentre(18, 18).translated(6, 0));
     r.removeFromTop(6);
     g.setColour(tk.textoPrimario);
     g.setFont(fonteUi(tk.fonteCorpoGrande, juce::Font::bold));
@@ -1287,6 +1477,10 @@ void JanelaAndroidUsb::Conteudo::resized() {
     cab.removeFromLeft(10);
     btnImportar_->setBounds(cab.removeFromRight(juce::jmax(240, btnImportar_->larguraIdeal() + 24)));
     cab.removeFromRight(12);
+    if (btnRejeitar_->isVisible()) {
+        btnRejeitar_->setBounds(cab.removeFromRight(juce::jmax(200, btnRejeitar_->larguraIdeal() + 24)));
+        cab.removeFromRight(12);
+    }
     campoBusca_.setBounds(cab.removeFromRight(juce::jmin(300, cab.getWidth() / 3)));
     cab.removeFromRight(12);
     lblTitulo_.setBounds(cab);
@@ -1325,6 +1519,7 @@ void JanelaAndroidUsb::Conteudo::resized() {
     btnTentar_->setBounds(msg.removeFromTop(44).withSizeKeepingCentre(220, 44));
     lblStatus_.toFront(false);
     btnTentar_->toFront(false);
+    if (overlay_ != nullptr) { overlay_->setBounds(getLocalBounds()); overlay_->toFront(true); }
 }
 
 // ── Janela ──────────────────────────────────────────────────────────────────────────────────────

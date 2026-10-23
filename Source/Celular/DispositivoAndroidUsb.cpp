@@ -464,6 +464,28 @@ void SessaoAndroidUsb::copiar(std::vector<ItemCopiaAndroid> itens, juce::File de
     });
 }
 
+void SessaoAndroidUsb::apagar(std::vector<EntradaAndroid> itens, std::function<void(std::vector<std::uint32_t>, int)> aoTerminar) {
+    Nucleo* n = nucleo_.get();
+    n->enfileirar([n, itens = std::move(itens), aoTerminar] {
+        std::vector<std::uint32_t> apagados;
+        int falhas = 0;
+#if MATRIZ_ANDROID_USB
+        for (const auto& e : itens) {
+            if (e.pasta) continue;
+            if (n->aparelho == nullptr) { ++falhas; continue; }
+            LIBMTP_Clear_Errorstack(n->aparelho);
+            if (LIBMTP_Delete_Object(n->aparelho, e.id) == 0) apagados.push_back(e.id);
+            else ++falhas;
+            LIBMTP_Clear_Errorstack(n->aparelho);
+        }
+#else
+        (void) n;
+        falhas = static_cast<int>(itens.size());
+#endif
+        naMessageThread([aoTerminar, apagados, falhas] { if (aoTerminar) aoTerminar(apagados, falhas); });
+    });
+}
+
 // ── Aviso de USB plugado ────────────────────────────────────────────────────────────────────────
 
 #if MATRIZ_ANDROID_USB

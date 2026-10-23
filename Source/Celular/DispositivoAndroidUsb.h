@@ -100,6 +100,11 @@ public:
     // Interrompe a cópia em andamento (o arquivo pela metade é apagado).
     void cancelar();
 
+    // APAGA do celular, sem volta (LIBMTP_Delete_Object). Só arquivos (pastas são ignoradas). Quem chama confirma antes.
+    // `apagados` = ids que saíram do aparelho.
+    void apagar(std::vector<EntradaAndroid> itens,
+                std::function<void(std::vector<std::uint32_t> apagados, int falhas)> aoTerminar);
+
     // Miniaturas que o próprio Android gera (LIBMTP_Get_Thumbnail; fotos, em geral não vídeos). Cada pedido SUBSTITUI
     // o anterior (só o que está na tela agora é buscado), uma por vez e só quando não há outra tarefa na fila.
     // Imagem inválida = o aparelho não tem miniatura para aquele arquivo.
