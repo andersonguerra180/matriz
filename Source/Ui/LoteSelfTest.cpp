@@ -995,6 +995,32 @@ void rodarTestesMerge(const Checar& checar) {
         esperarAte([&] { return ok.has_value(); }, 20000);
         pend = pa.conflitosMergePendentes(c);
         checar(pend.size() == 1 && pend[0].origem == "package Pacote X", "a value from a package names the package as origin");
+
+        // Janela de revisão em lote: grupos item × campo, escolha por grupo numa transação.
+        auto carregar = [&](std::set<std::string> escopo) {
+            std::optional<std::vector<mg::GrupoConflito>> grupos;
+            pa.carregarConflitosMergeEmSegundoPlano(std::move(escopo), [&](std::vector<mg::GrupoConflito> g, std::map<std::string, juce::String>) {
+                grupos = std::move(g);
+            });
+            esperarAte([&] { return grupos.has_value(); }, 20000);
+            return grupos.value_or(std::vector<mg::GrupoConflito>{});
+        };
+        auto grupos = carregar({});
+        checar(grupos.size() == 1 && grupos[0].itemId == c && grupos[0].campo == "dc_description" &&
+                   grupos[0].valorAtual == "daqui" && grupos[0].alternativas.size() == 1 &&
+                   grupos[0].alternativas[0].valor == "do pacote" && grupos[0].codigo == "MRG-3",
+               "batch review: one card per item x field, with the current value, the other value and the item's code");
+        checar(carregar({a}).empty(), "batch review: the scope limits the cards to the chosen items");
+        if (!grupos.empty()) {
+            std::optional<bool> okLote;
+            pa.resolverConflitosMergeEmSegundoPlano({{grupos[0], "do pacote"}}, [&](bool r) { okLote = r; });
+            esperarAte([&] { return okLote.has_value(); }, 20000);
+            checar(okLote.value_or(false) && colunaDoItem(reg, "dc_description", c) == "do pacote" && carregar({}).empty() &&
+                       pa.itensDaColecaoEmbutida("merge_conflitos").count(c) == 0,
+                   "batch review: USE writes the other value and the item leaves \"Merge conflicts\"");
+            checar(pa.desfazer() && colunaDoItem(reg, "dc_description", c) == "daqui" && carregar({}).size() == 1,
+                   "batch review: Undo brings the value and the pending conflict back");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("merge selftest: ") + e.what());
     }

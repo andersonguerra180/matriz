@@ -79,6 +79,26 @@ std::set<std::string> itensComConflitoPendente(matriz::db::Database& registro);
 void revisarConflitos(matriz::db::Database& registro, const std::string& itemId,
                       const std::set<std::string>& trocarHistoricoIds);
 
+// --- Revisão em lote (janela "Merge conflicts") ------------------------------
+// Um card = um item × um campo. valorAtual = o vencedor mais recente no
+// histórico; alternativas = os perdedores distintos (sem o atual), cada um
+// com a origem. Inclui o que a janela mostra do item (uma consulta só).
+struct AlternativaConflito {
+    std::string valor, origem;
+};
+struct GrupoConflito {
+    std::string itemId, campo, valorAtual;
+    std::vector<AlternativaConflito> alternativas;
+    std::vector<std::string> historicoIds;
+    std::string codigo, titulo, caminho, tipoMidia, pasta;
+};
+// itemIds vazio = todos os pendentes do projeto.
+std::vector<GrupoConflito> gruposDeConflitoPendentes(matriz::db::Database& registro, const std::set<std::string>& itemIds);
+// Fica `valorEscolhido` (o atual ou uma das alternativas); o atual, se
+// trocado, vai para o histórico. Marca como revisados só os conflitos do
+// grupo. Quem chama segura a transação.
+void resolverGrupo(matriz::db::Database& registro, const GrupoConflito& grupo, const std::string& valorEscolhido);
+
 // --- Undo -------------------------------------------------------------------
 // Retrato das fichas (item, item_campo, tags, observações, assuntos, geo,
 // histórico de merge) de um conjunto de itens; restaurar() volta tudo como

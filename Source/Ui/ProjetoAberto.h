@@ -193,6 +193,15 @@ public:
     bool temConflitoMergePendente(const std::string& itemId) const;
     std::vector<matriz::model::merge::ConflitoPendente> conflitosMergePendentes(const std::string& itemId) const;
     void revisarConflitosMerge(const std::string& itemId, std::set<std::string> trocarHistoricoIds);
+    // Janela de revisão em lote: lê os grupos (item × campo) e o caminho da
+    // miniatura de cada item no poolMerge_ (escopo vazio = todos); aplica as
+    // escolhas (grupo, valor que fica) numa transação só, com Undo.
+    // aoConcluir na message thread, só se o projeto ainda existir.
+    void carregarConflitosMergeEmSegundoPlano(
+        std::set<std::string> escopo,
+        std::function<void(std::vector<matriz::model::merge::GrupoConflito>, std::map<std::string, juce::String>)> aoConcluir);
+    void resolverConflitosMergeEmSegundoPlano(std::vector<std::pair<matriz::model::merge::GrupoConflito, std::string>> escolhas,
+                                              std::function<void(bool ok)> aoConcluir);
 
     // Move o Project pra fora — usado só ao trocar de idioma (Preferences),
     // que reconstrói a árvore de Component inteira do zero (é o jeito mais
