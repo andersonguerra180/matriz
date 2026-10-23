@@ -43,6 +43,7 @@
 #include "DuplicatesWorkspaceComponent.h"
 #include "LayoutArvoreFolderMap.h"
 #include "ConflitosMergeDialog.h"
+#include "RevisaoConflitosMergeComponent.h"
 #include "EventBus.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
@@ -1020,6 +1021,25 @@ void rodarTestesMerge(const Checar& checar) {
                    "batch review: USE writes the other value and the item leaves \"Merge conflicts\"");
             checar(pa.desfazer() && colunaDoItem(reg, "dc_description", c) == "daqui" && carregar({}).size() == 1,
                    "batch review: Undo brings the value and the pending conflict back");
+
+            // A janela: carrega em background, filtra em memória e aplica o lote nos selecionados visíveis.
+            RevisaoConflitosMergeComponent janela(pa, {});
+            janela.setSize(1200, 800);
+            esperarAte([&] { return !janela.ocupadoParaTeste(); }, 20000);
+            checar(janela.cardsParaTeste() == 1 && janela.visiveisParaTeste() == 1 && janela.opcoesDeCampoParaTeste() == 2,
+                   "merge window: one card, and the field filter lists only the fields in conflict");
+            janela.filtrarParaTeste(3, 1);  // 3 ou mais valores
+            checar(janela.visiveisParaTeste() == 0, "merge window: the \"3 or more values\" filter hides a 2-value conflict");
+            janela.filtrarParaTeste(1, 3);  // origem: pacotes
+            checar(janela.visiveisParaTeste() == 1, "merge window: the origin filter finds the package value");
+            janela.selecionarVisiveisParaTeste();
+            bombear(50);
+            checar(janela.selecionadosParaTeste() == 1 && janela.loteHabilitadoParaTeste(),
+                   "merge window: SELECT ALL SHOWN selects the card and enables the batch actions");
+            janela.usarOutroParaTeste();  // USAR O OUTRO VALOR (1 card: sem confirmação)
+            esperarAte([&] { return janela.cardsParaTeste() == 0 && !janela.ocupadoParaTeste(); }, 20000);
+            checar(colunaDoItem(reg, "dc_description", c) == "do pacote" && carregar({}).empty(),
+                   "merge window: USE THE OTHER VALUE writes it and the card leaves the list");
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("merge selftest: ") + e.what());
