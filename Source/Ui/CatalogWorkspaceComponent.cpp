@@ -1370,6 +1370,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     auto ehDump = [](const ItemResumo& it) -> bool {
         return OriginalSourceMediumVocabulary::itemIsPhoneDump(it.sourceMedia, it.nestOrigem, it.collectionType.value_or(""));
     };
+    auto ehDumpDeContainer = [](const ItemResumo& it) {
+        return OriginalSourceMediumVocabulary::itemIsPhoneDump(std::string(), it.nestOrigem, it.collectionType.value_or(""));
+    };
 
     if (filtroHerdadoIds_ || ocultarComGeo_) anyFilter = true;
     const auto selSubjects = selecaoNomes(subjectsSelecionados_, kSemSubject);
@@ -1406,8 +1409,10 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             } else if (*tipoMidiaSelecionado_ == "projects") {
                 match = ehProjeto(item);  // só os containers PROJECT (a capa de cada um)
             } else {
-                if (ehDump(item) || ehProjeto(item)) {
-                    match = false; // Dump e PROJECT só aparecem na categoria deles (e dentro do container)!
+                // PROJECT e os containers do PHONE DUMP (galeria/WhatsApp) só aparecem na categoria deles; o arquivo com
+                // Original Source Medium = Phone Dump aparece em PHONE DUMP e TAMBÉM no tipo dele (decisão 2026-10-24).
+                if (ehProjeto(item) || ehDumpDeContainer(item)) {
+                    match = false;
                 } else {
                     auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                     auto cat = matriz::ingest::categoriaPorExtensao(ext);
@@ -1777,6 +1782,10 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                 auto cat = matriz::ingest::categoriaPorExtensao(ext);
                 const bool isDump = ehDump(item);
+                // Container do PHONE DUMP (galeria/WhatsApp) só conta em PHONE DUMP; Source Medium = Phone Dump conta
+                // em PHONE DUMP e também no tipo do arquivo (mesma regra da grade, aplicarFiltrosAdicionais).
+                const bool isDumpDeContainer =
+                    OriginalSourceMediumVocabulary::itemIsPhoneDump(std::string(), item.nestOrigem, item.collectionType.value_or(""));
                 const bool isProjeto = ehProjeto(item);
 
                 // Passa por cada filtro ativo? (sem filtro = passa)
@@ -1792,7 +1801,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                         pTipo = isDump;
                     } else if (*filtroTipoMidiaAnos == "projects") {
                         pTipo = isProjeto;
-                    } else if (isDump || isProjeto) {
+                    } else if (isDumpDeContainer || isProjeto) {
                         pTipo = false;
                     } else {
                         if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
@@ -1813,9 +1822,10 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     if (item.aiGenerated) ++res.aiGenerated;
                     if (isProjeto) {
                         ++res.projetos;
-                    } else if (isDump) {
+                    } else if (isDumpDeContainer) {
                         ++res.phoneDump;
                     } else {
+                        if (isDump) ++res.phoneDump;  // e também no tipo do arquivo, logo abaixo
                         switch (cat) {
                             case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
                             case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
