@@ -321,6 +321,34 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
         st.bind(1, matriz::db::Value::of(a));
         checar(st.step() && st.columnInt(0) == 1, "#3 the technical reading survives Clear and Undo, once");
 
+        // #24 Apagar mensagem da conversa do WhatsApp (com mídia)
+        {
+            using matriz::db::Value;
+            const std::string conversa = inserirItem(reg, projetoId, "UND-WA", false, ".txt");
+            const std::string midia = inserirItem(reg, projetoId, "UND-WA-1", false, ".jpg");
+            reg.run("INSERT INTO conversa_whatsapp (item_id, contato, n_mensagens, data_exportacao, pasta_relativa, criado_em) "
+                    "VALUES (?, 'Mae', 5, '2026-10-24', 'wa', '2026-10-24')", {Value::of(conversa)});
+            reg.run("INSERT INTO conversa_midia (conversa_item_id, midia_item_id, ordem, nome_original, nome_arquivo) "
+                    "VALUES (?, ?, 1, 'IMG-1.jpg', 'IMG-1.jpg')", {Value::of(conversa), Value::of(midia)});
+            auto contar = [&](const std::string& sql, const std::string& id) {
+                auto q = reg.prepare(sql);
+                q.bind(1, Value::of(id));
+                return q.step() ? static_cast<int>(q.columnInt(0)) : -1;
+            };
+            checar(pa.apagarMensagemDaConversa(conversa, 3, "assinatura", midia), "#24 deleting a WhatsApp message works");
+            checar(contar("SELECT COUNT(*) FROM item WHERE id = ?", midia) == 0 &&
+                       contar("SELECT n_mensagens FROM conversa_whatsapp WHERE item_id = ?", conversa) == 4,
+                   "#24 the message and its media are gone (before Undo)");
+            checar(pa.descricaoUndoAtual() == "Delete WhatsApp message", "#24 deleting a message is the step Undo will revert");
+            checar(pa.desfazer(), "#24 Undo of the deleted message runs");
+            checar(contar("SELECT COUNT(*) FROM item WHERE id = ?", midia) == 1 &&
+                       contar("SELECT COUNT(*) FROM conversa_midia WHERE midia_item_id = ?", midia) == 1,
+                   "#24 Undo brings the media back, still linked to the conversation");
+            checar(contar("SELECT n_mensagens FROM conversa_whatsapp WHERE item_id = ?", conversa) == 5 &&
+                       contar("SELECT COUNT(*) FROM conversa_mensagem_apagada WHERE conversa_item_id = ?", conversa) == 0,
+                   "#24 Undo brings the message back (counter and deleted mark)");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit selftest: ") + e.what());
     }

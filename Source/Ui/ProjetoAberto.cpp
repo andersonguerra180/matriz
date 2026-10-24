@@ -5014,22 +5014,28 @@ bool ProjetoAberto::apagarMensagemDaConversa(const std::string& conversaItemId, 
     db.exec("CREATE TABLE IF NOT EXISTS conversa_mensagem_apagada ("
             "conversa_item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE, indice INTEGER NOT NULL, "
             "assinatura TEXT NOT NULL, apagada_em TEXT NOT NULL, PRIMARY KEY (conversa_item_id, indice))");
+    // Undo (antes não havia — apagava sem volta): um passo só com a marca de apagada + contador da conversa (retrato)
+    // e a mídia, que sai pelo removerItensDoProjeto (guarda arquivo, conversa_midia, nest_item… para voltar).
+    iniciarGrupoUndo("Delete WhatsApp message");
+    auto retrato = retratar({{"conversa_mensagem_apagada", "conversa_item_id", false}, {"conversa_whatsapp", "item_id", true}},
+                            {conversaItemId});
     db.run("BEGIN TRANSACTION", {});
     try {
         db.run("INSERT OR REPLACE INTO conversa_mensagem_apagada (conversa_item_id, indice, assinatura, apagada_em) VALUES (?, ?, ?, ?)",
                {matriz::db::Value::of(conversaItemId), matriz::db::Value::of(static_cast<int64_t>(indiceOriginal)),
                 matriz::db::Value::of(assinatura.toStdString()), matriz::db::Value::of(matriz::model::agoraIso8601())});
-        if (!midiaItemId.empty()) {
-            // a mídia sai do projeto de vez (sem Undo); o cascade leva conversa_midia, arquivo, nest_item…
-            db.run("DELETE FROM nest_item WHERE item_id = ?", {matriz::db::Value::of(midiaItemId)});
-            db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(midiaItemId)});
-        }
         db.run("UPDATE conversa_whatsapp SET n_mensagens = MAX(0, n_mensagens - 1) WHERE item_id = ?", {matriz::db::Value::of(conversaItemId)});
         db.run("COMMIT", {});
     } catch (...) {
         try { db.run("ROLLBACK", {}); } catch (...) {}
+        finalizarGrupoUndo();
         return false;
     }
+    registrarUndoDeRetrato("Delete WhatsApp message", std::move(retrato), {conversaItemId});
+    if (!midiaItemId.empty()) {
+        try { removerItensDoProjeto({midiaItemId}); } catch (...) {}
+    }
+    finalizarGrupoUndo();
     ultimosItensIngeridosValido_ = false;
     EventBus::obterInstancia().dispararItemAlterado(conversaItemId, "metadado");
     return true;
