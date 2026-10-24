@@ -457,6 +457,58 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
     raiz.deleteRecursively();
 }
 
+// Auditoria do UNDO, itens médios e baixos (docs/auditoria_undo_2026-10-24.md).
+void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
+    using matriz::db::Value;
+    std::cout << "\n-- UNDO audit, medium/low items --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_undo_medios_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "UndoM";
+        params.prefixoNomenclatura = "UNM";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        int n = 0;
+        auto novo = [&] { return inserirItem(reg, projetoId, "UNM-" + std::to_string(++n), false, ".jpg"); };
+        auto contar = [&](const std::string& sql, std::vector<Value> ps) {
+            auto q = reg.prepare(sql);
+            for (size_t i = 0; i < ps.size(); ++i) q.bind(static_cast<int>(i + 1), ps[i]);
+            return q.step() ? static_cast<int>(q.columnInt(0)) : -1;
+        };
+        auto jpeg = [&](const juce::String& nome, int w) {
+            auto f = raiz.getChildFile("imgs").getChildFile(nome);
+            f.getParentDirectory().createDirectory();
+            f.deleteFile();
+            juce::Image im(juce::Image::RGB, w, w, true);
+            juce::FileOutputStream o(f);
+            juce::JPEGImageFormat fmt;
+            fmt.writeImageToStream(im, o);
+            return f;
+        };
+
+        // #5 capa do item
+        {
+            const auto a = novo();
+            const auto capa = jpeg("capa.jpg", 40);
+            pa.definirCapa({a}, capa);
+            checar(pa.temCapa(a), "#5 Set Cover sets the cover (before Undo)");
+            pa.desfazer();
+            checar(!pa.temCapa(a), "#5 Undo of Set Cover removes it");
+            pa.definirCapa({a}, capa);
+            pa.removerCapa({a});
+            pa.desfazer();
+            checar(pa.temCapa(a), "#5 Undo of Remove Cover brings the cover back");
+        }
+
+    } catch (const std::exception& e) {
+        checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesNomesCanonicos(const Checar& checar) {
     namespace nomes = matriz::model::nomes;
     using matriz::db::Value;
@@ -6229,6 +6281,7 @@ int rodarLoteSelfTest() {
     rodarTestesUndoGeo(checar);
     rodarTestesGradeConsistente(checar);
     rodarTestesUndoAuditoria(checar);
+    rodarTestesUndoAuditoriaMedios(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();

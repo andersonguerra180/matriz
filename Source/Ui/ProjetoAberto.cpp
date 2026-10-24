@@ -1389,9 +1389,96 @@ std::vector<std::string> ProjetoAberto::papeisArquivoPresentes(const std::string
     return out;
 }
 
+namespace { std::string colunasDe(matriz::db::Database& db, const std::string& tabela); }  // definida mais abaixo
+
+// Retrato com filtro próprio (Undo de linhas que não se separam só pela chave, ex. só a capa entre os arquivos do item,
+// ou a miniatura que mora no índice): guarda em TEMP, na conexão `d`, as linhas de `tabela` que batem com `onde`.
+static std::string guardarLinhasParaUndo(matriz::db::Database& d, const std::string& tabela,
+                                         const std::string& onde, const std::vector<matriz::db::Value>& params) {
+    static std::atomic<int> contador{0};
+    const std::string t = "undo_ft_" + std::to_string(++contador);
+    d.run("CREATE TEMP TABLE \"" + t + "\" AS SELECT * FROM \"" + tabela + "\" WHERE 0", {});
+    d.run("INSERT INTO temp.\"" + t + "\" SELECT * FROM \"" + tabela + "\" WHERE " + onde, params);
+    return t;
+}
+
+// A volta: apaga o que bate com `onde` hoje e regrava o guardado. Quem chama cuida da transação.
+static void voltarLinhasDoUndo(matriz::db::Database& d, const std::string& t, const std::string& tabela,
+                               const std::string& onde, const std::vector<matriz::db::Value>& params) {
+    const std::string cols = colunasDe(d, tabela);
+    d.run("DELETE FROM \"" + tabela + "\" WHERE " + onde, params);
+    d.run("INSERT INTO \"" + tabela + "\" (" + cols + ") SELECT " + cols + " FROM temp.\"" + t + "\"", {});
+}
+
+// registrarUndo só na message thread (a pilha e aoMudarUndo são dela): de outra thread, vai para ela.
+static void registrarUndoNaMessageThread(ProjetoAberto& pa, const std::string& descricao, std::function<void()> acao) {
+    if (juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        pa.registrarUndo(descricao, std::move(acao));
+        return;
+    }
+    ProjetoAberto* p = &pa;
+    std::weak_ptr<bool> vivo = pa.tokenVida();
+    juce::MessageManager::callAsync([p, vivo, descricao, acao = std::move(acao)]() mutable {
+        if (vivo.lock()) p->registrarUndo(descricao, std::move(acao));
+    });
+}
+
+static std::string idsEmJson(const std::vector<std::string>& ids) {
+    juce::Array<juce::var> lista;
+    for (const auto& id : ids) lista.add(juce::String::fromUTF8(id.c_str()));
+    return juce::JSON::toString(juce::var(lista), true).toStdString();
+}
+
+// Undo da capa do item (Set/Remove Cover): só as linhas 'capa_frente' de `arquivo` e as miniaturas delas no índice.
+// Função livre (API pública do ProjetoAberto) para não mexer no header; chamar ANTES de gravar.
+static void registrarUndoDeCapa(ProjetoAberto& pa, const std::string& descricao, const std::vector<std::string>& itemIds) {
+    if (itemIds.empty()) return;
+    auto& reg = pa.projeto().registro();
+    auto& ind = pa.projeto().indice();
+    const std::string json = idsEmJson(itemIds);
+    const std::string ondeCapa = "item_id IN (SELECT value FROM json_each(?)) AND papel = 'capa_frente'";
+    std::vector<std::string> capas;
+    {
+        auto st = reg.prepare("SELECT id FROM arquivo WHERE " + ondeCapa);
+        st.bind(1, matriz::db::Value::of(json));
+        while (st.step()) capas.push_back(st.columnText(0));
+    }
+    const std::string ondeMini = "arquivo_id IN (SELECT value FROM json_each(?))";
+    const std::string tArq = guardarLinhasParaUndo(reg, "arquivo", ondeCapa, {matriz::db::Value::of(json)});
+    const std::string tMini = guardarLinhasParaUndo(ind, "miniatura", ondeMini, {matriz::db::Value::of(idsEmJson(capas))});
+    ProjetoAberto* p = &pa;
+    registrarUndoNaMessageThread(pa, descricao, [p, itemIds, json, ondeCapa, ondeMini, tArq, tMini] {
+        auto& r = p->projeto().registro();
+        auto& i = p->projeto().indice();
+        std::unique_lock<std::recursive_mutex> lock(p->writeMutex());
+        std::vector<std::string> capasHoje;  // a capa posta depois: a miniatura dela sai do índice também
+        {
+            auto st = r.prepare("SELECT id FROM arquivo WHERE " + ondeCapa);
+            st.bind(1, matriz::db::Value::of(json));
+            while (st.step()) capasHoje.push_back(st.columnText(0));
+        }
+        try {
+            r.run("BEGIN TRANSACTION", {});
+            voltarLinhasDoUndo(r, tArq, "arquivo", ondeCapa, {matriz::db::Value::of(json)});
+            r.run("COMMIT", {});
+        } catch (...) {
+            try { r.run("ROLLBACK", {}); } catch (...) {}
+            return;
+        }
+        try {
+            i.run("DELETE FROM miniatura WHERE " + ondeMini, {matriz::db::Value::of(idsEmJson(capasHoje))});
+            i.run("INSERT OR IGNORE INTO miniatura SELECT * FROM temp.\"" + tMini + "\"", {});
+        } catch (...) {}
+        for (const auto& t : {tArq}) try { r.run("DROP TABLE IF EXISTS temp.\"" + t + "\"", {}); } catch (...) {}
+        try { i.run("DROP TABLE IF EXISTS temp.\"" + tMini + "\"", {}); } catch (...) {}
+        for (const auto& id : itemIds) EventBus::obterInstancia().dispararItemAlterado(id, "miniatura");
+    });
+}
+
 int ProjetoAberto::definirCapa(const std::vector<std::string>& itemIds, const juce::File& imagem) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return 0; }
     if (!projeto_ || !imagem.existsAsFile()) return 0;
+    registrarUndoDeCapa(*this, itemIds.size() == 1 ? "Set Cover" : "Set Cover (" + std::to_string(itemIds.size()) + " items)", itemIds);
 
     int aplicadas = 0;
     auto& db = projeto_->registro();
@@ -1451,6 +1538,7 @@ int ProjetoAberto::definirCapa(const std::vector<std::string>& itemIds, const ju
 void ProjetoAberto::removerCapa(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    registrarUndoDeCapa(*this, itemIds.size() == 1 ? "Remove Cover" : "Remove Cover (" + std::to_string(itemIds.size()) + " items)", itemIds);
     auto& db = projeto_->registro();
     db.run("BEGIN TRANSACTION", {});
     try {
