@@ -577,6 +577,20 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
                    "#12 Undo puts the file back in its folder and removes the new folder");
         }
 
+        // #13 coleção inteligente
+        {
+            ProjetoAberto::ColecaoInteligente c;
+            c.nome = "Shows";
+            const auto id = pa.salvarColecao(c);
+            pa.desfazer();
+            checar(pa.listarColecoes().empty(), "#13 Undo of Save Collection removes it");
+            c.id = pa.salvarColecao(c);
+            pa.apagarColecao(c.id);
+            pa.desfazer();
+            checar(pa.listarColecoes().size() == 1, "#13 Undo of Delete Collection brings it back");
+            juce::ignoreUnused(id);
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }

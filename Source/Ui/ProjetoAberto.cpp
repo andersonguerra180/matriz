@@ -7354,6 +7354,8 @@ std::string ProjetoAberto::salvarColecao(const ColecaoInteligente& colecao) {
     if (!projeto_) return {};
     std::string id = colecao.id.empty() ? matriz::model::novoUuid() : colecao.id;
     std::string agora = matriz::model::agoraIso8601();
+    registrarUndoDeLinhas(*this, colecao.id.empty() ? "Save Collection" : "Edit Collection",
+                          {{"colecao_inteligente", "id = ?", {matriz::db::Value::of(id)}, false}}, {}, "colecao");
     projeto_->registro().run(
         "INSERT INTO colecao_inteligente (id, projeto_id, nome, busca_texto, filtros_tipo_midia, filtros_estado, "
         "filtros_extensao, filtros_origem, filtros_content_type, filtros_collection_type, ano_de, ano_ate, ordem, criado_em) "
@@ -7380,6 +7382,7 @@ std::string ProjetoAberto::salvarColecao(const ColecaoInteligente& colecao) {
 void ProjetoAberto::apagarColecao(const std::string& id) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    registrarUndoDeLinhas(*this, "Delete Collection", {{"colecao_inteligente", "id = ?", {matriz::db::Value::of(id)}, false}}, {}, "colecao");
     projeto_->registro().run("DELETE FROM colecao_inteligente WHERE id = ?", {matriz::db::Value::of(id)});
 }
 
