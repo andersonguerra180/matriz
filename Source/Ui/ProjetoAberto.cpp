@@ -2203,6 +2203,8 @@ bool ProjetoAberto::removerPessoa(const std::string& nome) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || nome.empty()) return false;
     try {
+        // Só sai da lista de PESSOAS do projeto (os itens não mudam); o Undo devolve a linha como estava.
+        registrarUndoDeRetrato("Remove Person", retratar({{"collection_person", "nome", false}}, {nome}), {});
         auto stmt = projeto_->registro().prepare("DELETE FROM collection_person WHERE nome = ?");
         stmt.bind(1, matriz::db::Value::of(nome));
         stmt.step();

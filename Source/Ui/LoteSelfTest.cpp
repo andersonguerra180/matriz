@@ -425,6 +425,13 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
             checar(naPasta(a, pasta) && naPasta(b, pasta), "#16 Undo of Remove from Folder puts both files back");
         }
 
+        // #10 Apagar pessoa da lista de PESSOAS
+        pa.adicionarPessoa("Maria Silva");
+        checar(pa.removerPessoa("Maria Silva") && pa.listarPessoas().empty(), "#10 removing a person empties the list (before Undo)");
+        checar(pa.descricaoUndoAtual() == "Remove Person", "#10 removing a person is the step Undo will revert");
+        pa.desfazer();
+        checar(pa.listarPessoas().size() == 1, "#10 Undo of Remove Person brings the person back");
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit selftest: ") + e.what());
     }
