@@ -625,6 +625,15 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             checar(!pa.nestDoItem(a) && !pa.nestDoItem(b), "#23 Undo of Create Container removes it");
         }
 
+        // #26 restaurar duplicatas
+        {
+            const auto a = novo();
+            reg.run("UPDATE item SET estado = 'duplicata' WHERE id = ?", {Value::of(a)});
+            checar(pa.restaurarDuplicatas({a}) == 1, "#26 Restore Duplicates brings the item back (before Undo)");
+            pa.desfazer();
+            checar(colunaDoItem(reg, "estado", a) == "duplicata", "#26 Undo of Restore Duplicates makes it a duplicate again");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }

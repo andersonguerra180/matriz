@@ -3108,6 +3108,19 @@ int ProjetoAberto::restaurarDuplicatas(const std::vector<std::string>& itemIds) 
     const std::string bloco = "\n\n[RESTORED FROM RESOLVED DUPLICATES] " + agora +
                               " - the user dismissed this duplicate; item returned to the grid. [USER_VERIFIED_NOT_DUPLICATE]";
     int restaurados = 0;
+    {   // Undo: estado e notas de cada item como estavam (o item volta a ser duplicata e sai da grade).
+        std::map<std::string, std::optional<std::string>> estadoAntes, notasAntes;
+        auto st = db.prepare("SELECT id, estado, notas_livres FROM item WHERE id IN (SELECT value FROM json_each(?))");
+        st.bind(1, Value::of(idsEmJson(itemIds)));
+        while (st.step()) {
+            estadoAntes[st.columnText(0)] = st.columnIsNull(1) ? std::nullopt : std::optional<std::string>(st.columnText(1));
+            notasAntes[st.columnText(0)] = st.columnIsNull(2) ? std::nullopt : std::optional<std::string>(st.columnText(2));
+        }
+        iniciarGrupoUndo("Restore Duplicates");
+        registrarUndoDeColunaDoItem("Restore Duplicates", "notas_livres", std::move(notasAntes));
+        registrarUndoDeColunaDoItem("Restore Duplicates", "estado", std::move(estadoAntes));
+        finalizarGrupoUndo();
+    }
     std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
     try {
         db.exec("BEGIN IMMEDIATE");  // N itens = uma transação
