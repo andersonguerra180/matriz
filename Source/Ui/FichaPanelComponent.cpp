@@ -5831,15 +5831,7 @@ private:
                         std::string existing = projeto_.lerMetadado(id, "notas_livres").value_or("");
                         std::string combined = existing.empty() ? txt : (existing + "\n" + txt);
                         projeto_.salvarMetadado(id, "notas_livres", combined);
-                        std::string agora = matriz::model::agoraIso8601();
-                        projeto_.projeto().registro().run(
-                            "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-                            "VALUES (?, ?, 'raiz', 0, 'maquina', ?, 'humano', ?) "
-                            "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
-                            {matriz::db::Value::of(matriz::model::novoUuid()),
-                             matriz::db::Value::of(id),
-                             matriz::db::Value::of(txt),
-                             matriz::db::Value::of(agora)});
+                        projeto_.definirCampoRaiz(id, "maquina", txt);  // com Undo, no mesmo grupo do lote (era SQL direto)
                     }
                 } else if (linha->colunaDb == "collection_type") {
                     juce::String canon = traduzirContent(val, false);
