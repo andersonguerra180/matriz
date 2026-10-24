@@ -486,8 +486,10 @@ OriginalSourceMediumInfo OriginalSourceMediumInfo::deserialize(const std::string
 }
 
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
-OriginalSourceMediumEditorComponent::OriginalSourceMediumEditorComponent() {
-    {
+OriginalSourceMediumEditorComponent::OriginalSourceMediumEditorComponent(bool menuNativo) : menuNativo_(menuNativo) {
+    if (menuNativo_) {
+        comboMedium_ = std::make_unique<juce::ComboBox>();
+    } else {
         auto combo = std::make_unique<ComboDePainel>();  // lista longa em grupos: painel com busca e APPLY/CLOSE
         combo->tituloPainel = matriz::i18n::t("ficha.painel_midia_origem");
         comboMedium_ = std::move(combo);
@@ -590,7 +592,9 @@ void OriginalSourceMediumEditorComponent::addComboField(const juce::String& key,
     sf.label->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*sf.label);
 
-    {
+    if (menuNativo_) {
+        sf.combo = std::make_unique<juce::ComboBox>();
+    } else {
         auto combo = std::make_unique<ComboDePainel>();
         combo->tituloPainel = sf.label->getText().toUpperCase();
         sf.combo = std::move(combo);

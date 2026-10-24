@@ -637,7 +637,7 @@ public:
         lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*lblTitle_);
 
-        editor_ = std::make_unique<OriginalSourceMediumEditorComponent>();
+        editor_ = std::make_unique<OriginalSourceMediumEditorComponent>(/*menuNativo*/ true);  // padrão dos outros do Intake
         editor_->setValueString(initialVal);
         editor_->onChange = [this] {
             if (editor_) {

@@ -85,7 +85,9 @@ void gravarOrigemPhoneDump(matriz::db::Database& registro, const std::vector<std
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
 class OriginalSourceMediumEditorComponent : public juce::Component {
 public:
-    OriginalSourceMediumEditorComponent();
+    // menuNativo: dropdowns com o menu do sistema (Intake, no padrão dos outros campos de lá); sem ele, o painel de
+    // escolha com busca e APPLY/CLOSE (ficha do METADATA).
+    explicit OriginalSourceMediumEditorComponent(bool menuNativo = false);
     ~OriginalSourceMediumEditorComponent() override;
 
     void setValue(const OriginalSourceMediumInfo& info);
@@ -113,6 +115,7 @@ private:
     void fireChange();
 
     bool compactMode_ = false;
+    bool menuNativo_ = false;
     OriginalSourceMediumInfo currentInfo_;
 
     std::unique_ptr<juce::ComboBox> comboMedium_;
