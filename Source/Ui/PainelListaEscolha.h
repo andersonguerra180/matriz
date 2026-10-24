@@ -2,7 +2,9 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <functional>
+#include <utility>
 #include <vector>
 
 #include "BarraLateral.h"
@@ -26,6 +28,7 @@ public:
         juce::String rotulo;   // o que aparece
         int contagem = -1;     // -1 = sem número
         bool ligado = false;   // Multipla: interruptor; Unica: o valor atual
+        bool cabecalho = false;  // título de grupo (não se escolhe); some na busca se o grupo ficar vazio
     };
 
     struct Config {
@@ -186,7 +189,12 @@ private:
 
     static juce::Font fonteLimpar() { return juce::Font(juce::FontOptions(12.5f, juce::Font::bold)); }
 
-    bool temBusca() const { return cfg_.opcoes.size() > 8; }
+    bool temBusca() const {
+        return std::count_if(cfg_.opcoes.begin(), cfg_.opcoes.end(), [](const Opcao& o) { return !o.cabecalho; }) > 10;
+    }
+    bool ehCabecalho(int v) const {
+        return v >= 0 && v < static_cast<int>(visiveis_.size()) && cfg_.opcoes[static_cast<size_t>(visiveis_[static_cast<size_t>(v)])].cabecalho;
+    }
     int alturaFixa() const {
         return kCabecalho + (cfg_.subtitulo.isNotEmpty() ? kSubtitulo : 0) + 6 + (temBusca() ? kBusca + 6 : 0) +
                (cfg_.modo == Modo::Unica ? kRodape : 0);
@@ -199,9 +207,15 @@ private:
     void refiltrar() {
         const auto termo = busca_.getText().trim();
         visiveis_.clear();
-        for (size_t i = 0; i < cfg_.opcoes.size(); ++i)
-            if (termo.isEmpty() || cfg_.opcoes[i].rotulo.containsIgnoreCase(termo)) visiveis_.push_back(static_cast<int>(i));
+        int cabecalhoPendente = -1;  // o título do grupo só entra se algum item dele entrar
+        for (size_t i = 0; i < cfg_.opcoes.size(); ++i) {
+            if (cfg_.opcoes[i].cabecalho) { cabecalhoPendente = static_cast<int>(i); continue; }
+            if (termo.isNotEmpty() && !cfg_.opcoes[i].rotulo.containsIgnoreCase(termo)) continue;
+            if (cabecalhoPendente >= 0) visiveis_.push_back(std::exchange(cabecalhoPendente, -1));
+            visiveis_.push_back(static_cast<int>(i));
+        }
         cursor_ = visiveis_.empty() ? -1 : juce::jlimit(0, static_cast<int>(visiveis_.size()) - 1, juce::jmax(0, cursor_));
+        while (ehCabecalho(cursor_)) ++cursor_;  // o grupo sempre tem um item logo depois do título
         if (termo.isEmpty() && cfg_.modo == Modo::Unica && destacado_ >= 0)
             for (size_t v = 0; v < visiveis_.size(); ++v)
                 if (visiveis_[v] == destacado_) cursor_ = static_cast<int>(v);
@@ -221,6 +235,12 @@ private:
         for (size_t v = 0; v < visiveis_.size(); ++v) {
             const auto& o = cfg_.opcoes[static_cast<size_t>(visiveis_[v])];
             auto linha = juce::Rectangle<int>(0, static_cast<int>(v) * kLinha, w, kLinha);
+            if (o.cabecalho) {
+                g.setColour(tk.textoTerciario);
+                g.setFont(barra::fonteTitulo());
+                g.drawText(o.rotulo, linha.reduced(8, 0).withTrimmedTop(8), juce::Justification::centredLeft, true);
+                continue;
+            }
             const bool destacada = cfg_.modo == Modo::Unica && visiveis_[v] == destacado_;
             if (destacada || static_cast<int>(v) == lista_.sobre || static_cast<int>(v) == cursor_) {
                 g.setColour(destacada ? tk.acento.withAlpha(0.18f) : tk.painelAlt);
@@ -252,7 +272,7 @@ private:
     }
 
     void clicarLinha(int v, bool duplo) {
-        if (v < 0 || v >= static_cast<int>(visiveis_.size())) return;
+        if (v < 0 || v >= static_cast<int>(visiveis_.size()) || ehCabecalho(v)) return;
         cursor_ = v;
         const int i = visiveis_[static_cast<size_t>(v)];
         auto& o = cfg_.opcoes[static_cast<size_t>(i)];
@@ -279,7 +299,7 @@ private:
     }
 
     void confirmarCursor() {
-        if (cursor_ < 0 || cursor_ >= static_cast<int>(visiveis_.size())) return;
+        if (cursor_ < 0 || cursor_ >= static_cast<int>(visiveis_.size()) || ehCabecalho(cursor_)) return;
         if (cfg_.modo == Modo::Multipla) {
             clicarLinha(cursor_, false);
             return;
@@ -302,7 +322,10 @@ private:
 
     void moverCursor(int delta) {
         if (visiveis_.empty()) return;
-        cursor_ = juce::jlimit(0, static_cast<int>(visiveis_.size()) - 1, cursor_ + delta);
+        int novo = cursor_ + delta;
+        while (ehCabecalho(novo)) novo += delta;  // pula os títulos de grupo
+        if (novo < 0 || novo >= static_cast<int>(visiveis_.size())) return;
+        cursor_ = novo;
         if (cfg_.modo == Modo::Unica) destacado_ = visiveis_[static_cast<size_t>(cursor_)];
         const int topo = cursor_ * kLinha;
         auto pos = viewport_.getViewPosition();
@@ -341,14 +364,45 @@ private:
     juce::Rectangle<int> limparTudo_;
 };
 
-// Dropdown que, em vez do menu nativo, abre um PainelListaEscolha (aoAbrir). Mesmo desenho e tamanho do
-// juce::ComboBox — o texto mostrado é posto por quem usa (setText), sem itens no combo.
+// Dropdown que, em vez do menu nativo, abre um PainelListaEscolha. Mesmo desenho e tamanho do juce::ComboBox.
+//   Com aoAbrir (filtros): quem usa monta o painel e põe o texto (setText), sem itens no combo.
+//   Sem aoAbrir (escolha única, ex. metadados da ficha): o painel lista os itens do próprio combo (com os títulos de
+//   grupo); APPLY faz o mesmo setSelectedId que o menu nativo faria, então onChange/getSelectedId seguem iguais.
 class ComboDePainel : public juce::ComboBox {
 public:
     std::function<void()> aoAbrir;
+    juce::String tituloPainel;  // escolha única; vazio = "CHOOSE"
+
     void showPopup() override {
         hidePopup();  // o ComboBox marcou o menu como ativo ao clicar; sem isto o próximo clique não abriria nada
         if (aoAbrir) aoAbrir();
+        else abrirEscolhaUnica();
+    }
+
+private:
+    void abrirEscolhaUnica() {
+        if (!isEnabled()) return;
+        PainelListaEscolha::Config c;
+        c.titulo = tituloPainel.isNotEmpty() ? tituloPainel : i18n::t("painel_lista.escolher");
+        c.modo = PainelListaEscolha::Modo::Unica;
+        const int atual = getSelectedId();
+        for (juce::PopupMenu::MenuItemIterator it(*getRootMenu(), false); it.next();) {
+            const auto& item = it.getItem();
+            PainelListaEscolha::Opcao o;
+            o.rotulo = item.text;
+            if (item.isSectionHeader) o.cabecalho = true;
+            else if (item.isSeparator || item.itemID == 0 || !item.isEnabled) continue;
+            else {
+                o.valor = juce::String(item.itemID);
+                o.ligado = item.itemID == atual;
+            }
+            c.opcoes.push_back(std::move(o));
+        }
+        juce::Component::SafePointer<ComboDePainel> seguro(this);
+        c.aoAplicar = [seguro](const juce::String& valor) {
+            if (seguro != nullptr) seguro->setSelectedId(valor.getIntValue());  // assíncrono, como o menu nativo
+        };
+        PainelListaEscolha::abrir(*this, std::move(c));
     }
 };
 

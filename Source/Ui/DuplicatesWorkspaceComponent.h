@@ -9,6 +9,7 @@
 #include <optional>
 
 #include "ColunaCardsLayout.h"
+#include "PainelListaEscolha.h"
 
 namespace matriz::ui {
 
@@ -114,7 +115,7 @@ private:
     struct ScanFilters {
         int scope = 1;
         std::set<std::string> selecionadosNoGrid;
-        int fileType = 1;
+        std::set<int> fileTypes;  // vazio = todos (ver tiposSelecionados_)
         int sizeFilter = 1;
         juce::int64 sizeLimitBytes = 0;
         // item: filtro por ano — 0 em qualquer um dos dois = sem limite
@@ -178,7 +179,10 @@ private:
     std::unique_ptr<juce::Label> lblScope_;
     std::unique_ptr<juce::ComboBox> cbScope_;
     std::unique_ptr<juce::Label> lblFileType_;
-    std::unique_ptr<juce::ComboBox> cbFileType_;
+    std::unique_ptr<ComboDePainel> cbFileType_;  // abre os interruptores de tipo (múltipla escolha)
+    std::set<int> tiposSelecionados_;            // vazio = todos; 2..7 = Image, Video, Audio, Docs, Sessions, Other
+    void abrirPainelTipos();
+    void atualizarTextoTipos();
     std::unique_ptr<juce::Label> lblFileSize_;
     std::unique_ptr<juce::ComboBox> cbSizeFilter_;
     std::unique_ptr<juce::TextEditor> txtSizeValue_;

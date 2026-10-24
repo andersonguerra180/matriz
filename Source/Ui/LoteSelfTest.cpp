@@ -4471,7 +4471,7 @@ int rodarLoteSelfTest() {
                 const auto selUm = varrer([](DuplicatesWorkspaceComponent& d) { d.cbScope_->setSelectedId(2); }, {rOrig});
                 checar(selUm.empty(), "SELECTED FILES with a single file: its copies outside the selection are NOT compared");
                 // Tipo de arquivo
-                checar(varrer([](DuplicatesWorkspaceComponent& d) { d.cbFileType_->setSelectedId(4); }, {}).empty(),
+                checar(varrer([](DuplicatesWorkspaceComponent& d) { d.tiposSelecionados_ = {4}; }  /* o interruptor Audio no painel FILE TYPE */, {}).empty(),
                        "file type = Audio: no image pair appears");
                 checar(!varrer([](DuplicatesWorkspaceComponent& d) { d.cbFileType_->setSelectedId(2); }, {}).empty(),
                        "file type = Image: the image pairs appear");

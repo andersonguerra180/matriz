@@ -489,7 +489,11 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (btnLimparBusca_) btnLimparBusca_->setVisible(campoBusca_->getText().isNotEmpty() || temChips);
     };
     campoBusca_->onReturnKey = [this] { executarBusca(); };
-    comboEscopoBusca_ = std::make_unique<juce::ComboBox>();
+    {
+        auto combo = std::make_unique<ComboDePainel>();  // escolha única: painel com APPLY/CLOSE, não o menu nativo
+        combo->tituloPainel = matriz::i18n::t("catwork.painel_busca_em");
+        comboEscopoBusca_ = std::move(combo);
+    }
     comboEscopoBusca_->setTooltip(matriz::i18n::t("busca.escopo_dica"));
     {
         static const char* const kEscopos[] = {"busca.escopo_todos", "busca.escopo_nome", "busca.escopo_criador",

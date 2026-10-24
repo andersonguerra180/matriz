@@ -1025,15 +1025,10 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     lblFileType_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblFileType_);
 
-    cbFileType_ = std::make_unique<juce::ComboBox>("cbFileType");
-    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_all"), 1);
-    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_image"), 2);
-    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_video"), 3);
-    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_audio"), 4);
-    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_docs"), 5);
-    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_sessions"), 6);
-    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_other"), 7);
-    cbFileType_->setSelectedId(1);
+    cbFileType_ = std::make_unique<ComboDePainel>();
+    cbFileType_->setName("cbFileType");
+    cbFileType_->aoAbrir = [this] { abrirPainelTipos(); };
+    atualizarTextoTipos();
     cbFileType_->setTooltip("Filter candidates by media type");
     addAndMakeVisible(*cbFileType_);
 
@@ -1339,6 +1334,55 @@ void DuplicatesWorkspaceComponent::abrirResolvidas() {
     moldura::lancar(opts);
 }
 
+namespace {
+// FILE TYPE: os mesmos ids de antes (1 era "All", hoje = nenhum ligado).
+const std::pair<int, const char*> kTiposArquivo[] = {{2, "duplicatas.type_image"}, {3, "duplicatas.type_video"},
+                                                     {4, "duplicatas.type_audio"}, {5, "duplicatas.type_docs"},
+                                                     {6, "duplicatas.type_sessions"}, {7, "duplicatas.type_other"}};
+} // namespace
+
+void DuplicatesWorkspaceComponent::atualizarTextoTipos() {
+    if (!cbFileType_) return;
+    juce::String texto = matriz::i18n::t("duplicatas.type_all");
+    if (tiposSelecionados_.size() > 2) {
+        texto = matriz::i18n::t("catwork.n_selecionados").replace("{n}", juce::String(static_cast<int>(tiposSelecionados_.size())));
+    } else if (!tiposSelecionados_.empty()) {
+        juce::StringArray rotulos;
+        for (const auto& [id, chave] : kTiposArquivo)
+            if (tiposSelecionados_.count(id)) rotulos.add(matriz::i18n::t(chave));
+        texto = rotulos.joinIntoString(", ");
+    }
+    cbFileType_->setText(texto, juce::dontSendNotification);
+}
+
+void DuplicatesWorkspaceComponent::abrirPainelTipos() {
+    if (!cbFileType_) return;
+    PainelListaEscolha::Config c;
+    c.titulo = matriz::i18n::t("duplicatas.painel_tipo");
+    c.modo = PainelListaEscolha::Modo::Multipla;
+    for (const auto& [id, chave] : kTiposArquivo) {
+        PainelListaEscolha::Opcao o;
+        o.valor = juce::String(id);
+        o.rotulo = matriz::i18n::t(chave);
+        o.ligado = tiposSelecionados_.count(id) > 0;
+        c.opcoes.push_back(std::move(o));
+    }
+    // Vale para o próximo SCAN, como o dropdown de antes.
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> seguro(this);
+    c.aoAlternar = [seguro](const juce::String& valor, bool ligado) {
+        if (seguro == nullptr) return;
+        if (ligado) seguro->tiposSelecionados_.insert(valor.getIntValue());
+        else seguro->tiposSelecionados_.erase(valor.getIntValue());
+        seguro->atualizarTextoTipos();
+    };
+    c.aoLimparTudo = [seguro] {
+        if (seguro == nullptr) return;
+        seguro->tiposSelecionados_.clear();
+        seguro->atualizarTextoTipos();
+    };
+    PainelListaEscolha::abrir(*cbFileType_, std::move(c));
+}
+
 void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (lblStatus_) {
@@ -1367,16 +1411,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         lblFileType_->setText(matriz::i18n::t("duplicatas.lbl_type"), juce::dontSendNotification);
     }
     if (cbFileType_) {
-        int sel = cbFileType_->getSelectedId();
-        cbFileType_->clear(juce::dontSendNotification);
-        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_all"), 1);
-        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_image"), 2);
-        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_video"), 3);
-        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_audio"), 4);
-        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_docs"), 5);
-        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_sessions"), 6);
-        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_other"), 7);
-        cbFileType_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
+        atualizarTextoTipos();
         cbFileType_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
         cbFileType_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         cbFileType_->setColour(juce::ComboBox::outlineColourId, tk.borda);
@@ -1523,7 +1558,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
                : juce::String("No files are selected in the grid. Select files in the METADATA tab or choose \"All\" as the scope."));
         return;
     }
-    activeFilters_.fileType = cbFileType_->getSelectedId();
+    activeFilters_.fileTypes = tiposSelecionados_;
     activeFilters_.sizeFilter = cbSizeFilter_->getSelectedId();
     
     double userValue = txtSizeValue_->getText().getDoubleValue();
@@ -1674,23 +1709,25 @@ void DuplicatesWorkspaceComponent::run() {
                 }
 
                 // Filter 2: File Type
-                if (activeFilters_.fileType > 1) {
+                if (!activeFilters_.fileTypes.empty()) {  // passa se bater com QUALQUER um dos tipos ligados
                     auto cat = matriz::ingest::categoriaPorExtensao(info.ext);
-                    bool match = false;
-                    switch (activeFilters_.fileType) {
-                        case 2: match = (cat == matriz::ingest::CategoriaMidia::Imagem); break;
-                        case 3: match = (cat == matriz::ingest::CategoriaMidia::Video); break;
-                        case 4: match = (cat == matriz::ingest::CategoriaMidia::Audio); break;
-                        case 5: match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto); break;
-                        case 6: match = (cat == matriz::ingest::CategoriaMidia::Sessao); break;
-                        case 7: match = (cat != matriz::ingest::CategoriaMidia::Imagem &&
-                                         cat != matriz::ingest::CategoriaMidia::Video &&
-                                         cat != matriz::ingest::CategoriaMidia::Audio &&
-                                         cat != matriz::ingest::CategoriaMidia::Documento &&
-                                         cat != matriz::ingest::CategoriaMidia::Texto &&
-                                         cat != matriz::ingest::CategoriaMidia::Sessao); break;
-                    }
-                    if (!match) continue;
+                    auto bate = [cat](int tipo) {
+                        switch (tipo) {
+                            case 2: return cat == matriz::ingest::CategoriaMidia::Imagem;
+                            case 3: return cat == matriz::ingest::CategoriaMidia::Video;
+                            case 4: return cat == matriz::ingest::CategoriaMidia::Audio;
+                            case 5: return cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto;
+                            case 6: return cat == matriz::ingest::CategoriaMidia::Sessao;
+                            case 7: return cat != matriz::ingest::CategoriaMidia::Imagem &&
+                                           cat != matriz::ingest::CategoriaMidia::Video &&
+                                           cat != matriz::ingest::CategoriaMidia::Audio &&
+                                           cat != matriz::ingest::CategoriaMidia::Documento &&
+                                           cat != matriz::ingest::CategoriaMidia::Texto &&
+                                           cat != matriz::ingest::CategoriaMidia::Sessao;
+                            default: return false;
+                        }
+                    };
+                    if (std::none_of(activeFilters_.fileTypes.begin(), activeFilters_.fileTypes.end(), bate)) continue;
                 }
 
                 // Filter 3: File Size
@@ -1878,7 +1915,7 @@ void DuplicatesWorkspaceComponent::run() {
     } else {
         // Com qualquer filtro ativo (escopo, tipo, tamanho, ano) o "original" também tem que passar pelos filtros:
         // só se comparam arquivos que estão dentro do que o usuário escolheu.
-        const bool filtrosAtivos = activeFilters_.scope == 2 || activeFilters_.fileType > 1 || activeFilters_.sizeFilter > 1 ||
+        const bool filtrosAtivos = activeFilters_.scope == 2 || !activeFilters_.fileTypes.empty() || activeFilters_.sizeFilter > 1 ||
                                    activeFilters_.anoDe > 0 || activeFilters_.anoAte > 0;
         std::set<std::string> idsFiltrados;
         if (filtrosAtivos) for (const auto& it : items) idsFiltrados.insert(it.itemId);
