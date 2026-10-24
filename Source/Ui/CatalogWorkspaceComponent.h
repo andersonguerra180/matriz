@@ -327,6 +327,9 @@ private:
     bool contagensAguardandoSnapshot_ = false;
     bool filtrosAguardandoSnapshot_ = false;
     bool reaplicandoFiltrosAposSnapshot_ = false;
+    // versaoSnapshot() do catálogo de onde saiu o conjunto de IDs que aplicarFiltrosAdicionais() pôs na grade;
+    // -1 = a grade não está com esse conjunto. Snapshot novo = conjunto velho, refeito ao chegar.
+    int versaoSnapshotDoFunil_ = -1;
     int loteMetadadosProfundidade_ = 0;
     bool listasAdiadasDuranteLote_ = false;
     bool filtrosAdiadosDuranteLote_ = false;

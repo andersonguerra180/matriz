@@ -245,7 +245,10 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     // (em vez de uma listarItens() própria) e são refeitos quando chega.
     mosaico_->aoMudarConteudoVisivel = [this] {
         if (!mosaico_ || mosaico_->snapshotPendente()) return;
-        if (filtrosAguardandoSnapshot_) {
+        // Catálogo novo (recarga, ingest, recarregar_tudo...): os IDs do funil (CONTENT TYPE/SUBJECT/LIST/...)
+        // foram tirados do catálogo anterior — itens que passaram a bater ficavam de fora, e os que deixaram, dentro.
+        const bool funilDeSnapshotVelho = versaoSnapshotDoFunil_ >= 0 && mosaico_->versaoSnapshot() != versaoSnapshotDoFunil_;
+        if (filtrosAguardandoSnapshot_ || funilDeSnapshotVelho) {
             filtrosAguardandoSnapshot_ = false;
             reaplicandoFiltrosAposSnapshot_ = true;
             aplicarFiltrosAdicionais();
@@ -1284,7 +1287,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
     const auto& libChave = (categoriaSelecionada_ >= 0 && categoriaSelecionada_ < static_cast<int>(categorias_.size()))
         ? categorias_[static_cast<size_t>(categoriaSelecionada_)].chave : std::string();
-    if (libChave == "folders") return;
+    if (libChave == "folders") { versaoSnapshotDoFunil_ = -1; return; }
 
     // Mosaico vazio (abertura, snapshot não chegou): não lista na message
     // thread — carrega e reaplica os filtros quando o snapshot chegar.
@@ -1458,6 +1461,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     if (anyFilter && filteredIds.empty() && !(mostrarApenasRecentes_ && recentesIds.empty()))
         mosaico_->definirMensagemVazia(matriz::i18n::t("catwork.sem_resultados_filtros"));
 
+    versaoSnapshotDoFunil_ = anyFilter ? mosaico_->versaoSnapshot() : -1;  // antes: definirFiltroItens reentra em aoMudarConteudoVisivel
     if (anyFilter) {
         mosaico_->definirFiltroItens(std::move(filteredIds));
     } else {
@@ -2131,6 +2135,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
 
     // Seleção herdada da árvore / SOURCE (definirFiltroItens) também cai.
     filtroHerdadoIds_.reset();
+    versaoSnapshotDoFunil_ = -1;
     if (mosaico_) mosaico_->definirFiltroItens(std::nullopt);
     // Contagens cruzadas (DATE por MEDIA TYPE e vice-versa) sem filtro agora.
     atualizarContagens();
@@ -2283,6 +2288,7 @@ void CatalogWorkspaceComponent::navegarParaPastaOrigem(std::optional<std::string
         }
     };
 
+    versaoSnapshotDoFunil_ = -1;
     mosaico_->definirFiltroItens(alvo->itemIdsDiretos);
     mosaico_->recarregar();
     resized();
@@ -2519,6 +2525,7 @@ void CatalogWorkspaceComponent::filtrarPorChave(const std::string& chave) {
         auto ids = projeto_.itensDaColecaoEmbutida(chave);
         // A coleção já é aplicada sobre o snapshot atual; recarregar aqui
         // relia o índice inteiro a cada troca de coleção.
+        versaoSnapshotDoFunil_ = -1;
         mosaico_->definirFiltroItens(std::move(ids));
     }
 }
@@ -2527,6 +2534,7 @@ void CatalogWorkspaceComponent::filtrarPorIds(std::set<std::string> ids) {
     if (mosaico_) {
         // A seleção por IDs também é um filtro em memória; o snapshot só
         // precisa ser recarregado quando o catálogo realmente muda.
+        versaoSnapshotDoFunil_ = -1;
         mosaico_->definirFiltroItens(std::move(ids));
     }
 }
