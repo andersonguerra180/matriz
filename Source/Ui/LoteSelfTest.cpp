@@ -553,6 +553,15 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             checar(obs(id) == 1, "#8 Undo of Delete Note brings the note back");
         }
 
+        // #9 Preview: Etapa de produção / Versão escolhida
+        {
+            const auto a = novo();
+            pa.definirCampoRaiz(a, "etapa_producao", "mix");
+            checar(pa.descricaoUndoAtual() == "Edit etapa_producao", "#9 a Preview field is the step Undo will revert");
+            pa.desfazer();
+            checar(pa.valorCampo(a, "raiz", 0, "etapa_producao").value_or("").empty(), "#9 Undo of a Preview field clears it again");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }

@@ -1372,9 +1372,11 @@ std::optional<std::string> ProjetoAberto::valorCampo(const std::string& itemId, 
 struct ParteUndoLinhas;
 static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descricao, std::vector<ParteUndoLinhas> partes,
                                   std::vector<std::string> itensAvisar, const std::string& tipoEvento);
+static void registrarUndoDeCampoRaiz(ProjetoAberto& pa, const std::string& itemId, const std::string& campoId);
 
 void ProjetoAberto::definirCampoRaiz(const std::string& itemId, const std::string& campoId, const std::string& valor) {
     if (somenteLeitura_ || !projeto_ || itemId.empty()) return;
+    registrarUndoDeCampoRaiz(*this, itemId, campoId);  // Versão escolhida / Etapa de produção (Preview)
     projeto_->registro().run(
         "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
         "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
@@ -1474,6 +1476,13 @@ static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descrica
         for (const auto& id : itensAvisar) bus.dispararItemAlterado(id, tipoEvento);
         bus.finalizarLote();
     });
+}
+
+static void registrarUndoDeCampoRaiz(ProjetoAberto& pa, const std::string& itemId, const std::string& campoId) {
+    registrarUndoDeLinhas(pa, "Edit " + campoId,
+                          {{"item_campo", "item_id = ? AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = ?",
+                            {matriz::db::Value::of(itemId), matriz::db::Value::of(campoId)}, false}},
+                          {itemId}, "campo");
 }
 
 // Undo da capa do item (Set/Remove Cover): só as linhas 'capa_frente' de `arquivo` e as miniaturas delas no índice.
