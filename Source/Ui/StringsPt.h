@@ -1714,6 +1714,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"filtro_opcoes.titulo", "OPÇÕES DE FILTRO"},
         {"painel_lista.buscar", "Buscar..."},
         {"painel_lista.escolher", "ESCOLHER"},
+        {"ficha.painel_midia_origem", "MÍDIA DE ORIGEM"},
         {"catwork.painel_busca_em", "BUSCAR EM"},
         {"duplicatas.painel_tipo", "TIPO DE ARQUIVO"},
         {"painel_lista.aplicar", "APLICAR"},

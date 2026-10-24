@@ -1702,6 +1702,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"filtro_opcoes.titulo", "FILTER OPTIONS"},
         {"painel_lista.buscar", "Search..."},
         {"painel_lista.escolher", "CHOOSE"},
+        {"ficha.painel_midia_origem", "ORIGINAL SOURCE MEDIUM"},
         {"catwork.painel_busca_em", "SEARCH IN"},
         {"duplicatas.painel_tipo", "FILE TYPE"},
         {"painel_lista.aplicar", "APPLY"},

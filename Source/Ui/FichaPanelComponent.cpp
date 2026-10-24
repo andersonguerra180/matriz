@@ -5,6 +5,7 @@
 #include "GeoFavoritosGerenciar.h"
 #include "MetadadosOriginaisComponent.h"
 #include "OriginalSourceMedium.h"
+#include "PainelListaEscolha.h"
 #include "TagChipsEditor.h"
 #include "PeoplePickerComponent.h"
 #include "NotesEstruturadasComponent.h"
@@ -2845,7 +2846,8 @@ private:
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
 
-            auto combo = std::make_unique<juce::ComboBox>();
+            auto combo = std::make_unique<ComboDePainel>();  // escolha única: painel com APPLY/CLOSE
+            combo->tituloPainel = rotulo.toUpperCase();
             int selId = 0;
             for (size_t i = 0; i < opcoes.size(); ++i) {
                 combo->addItem(opcoes[i], static_cast<int>(i + 1));
@@ -3653,7 +3655,8 @@ private:
                 // YAML — lerValorEditor() lê de volta pelo índice
                 // selecionado, nunca por getText(), senão o dado já salvo
                 // mudaria de significado ao trocar de idioma.
-                auto combo = std::make_unique<juce::ComboBox>();
+                auto combo = std::make_unique<ComboDePainel>();  // escolha única: painel com APPLY/CLOSE
+                combo->tituloPainel = matriz::ficha::rotuloCampo(tipoAtual_, campo).toUpperCase();
                 int idSelecionado = 0;
                 for (size_t i = 0; i < campo.opcoes.size(); ++i) {
                     combo->addItem(matriz::ficha::rotuloOpcao(tipoAtual_, campo, static_cast<int>(i), campo.opcoes[i]),
@@ -3665,7 +3668,8 @@ private:
                 return combo;
             }
             case CampoTipo::OpcaoLivre: {
-                auto combo = std::make_unique<juce::ComboBox>();
+                auto combo = std::make_unique<ComboDePainel>();  // a seta abre o painel; o texto continua editável
+                combo->tituloPainel = matriz::ficha::rotuloCampo(tipoAtual_, campo).toUpperCase();
                 combo->setEditableText(true); // "opção livre (autocompletar + criar)" — texto digitado vira o valor direto
                 std::set<std::string> jaListados;
                 for (size_t i = 0; i < campo.opcoes.size(); ++i) {
@@ -4957,7 +4961,8 @@ private:
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
 
-            auto cb = std::make_unique<juce::ComboBox>();
+            auto cb = std::make_unique<ComboDePainel>();  // escolha única: painel com APPLY/CLOSE
+            cb->tituloPainel = rotulo.toUpperCase();
             cb->setColour(juce::ComboBox::textColourId, juce::Colours::black);
             cb->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
             cb->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);

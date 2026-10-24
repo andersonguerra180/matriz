@@ -11,6 +11,7 @@
 
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
 #include "AutoCompleteTextEditor.h"
+#include "PainelListaEscolha.h"
 #endif
 
 namespace matriz::ui {
@@ -486,7 +487,11 @@ OriginalSourceMediumInfo OriginalSourceMediumInfo::deserialize(const std::string
 
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
 OriginalSourceMediumEditorComponent::OriginalSourceMediumEditorComponent() {
-    comboMedium_ = std::make_unique<juce::ComboBox>();
+    {
+        auto combo = std::make_unique<ComboDePainel>();  // lista longa em grupos: painel com busca e APPLY/CLOSE
+        combo->tituloPainel = matriz::i18n::t("ficha.painel_midia_origem");
+        comboMedium_ = std::move(combo);
+    }
     OriginalSourceMediumVocabulary::populateMediumCombo(*comboMedium_, true);
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     comboMedium_->setText(OriginalSourceMediumVocabulary::translateMedium("None / Unknown", isPt), juce::dontSendNotification);
@@ -585,7 +590,11 @@ void OriginalSourceMediumEditorComponent::addComboField(const juce::String& key,
     sf.label->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*sf.label);
 
-    sf.combo = std::make_unique<juce::ComboBox>();
+    {
+        auto combo = std::make_unique<ComboDePainel>();
+        combo->tituloPainel = sf.label->getText().toUpperCase();
+        sf.combo = std::move(combo);
+    }
     int id = 1;
     for (const auto& opt : options) {
         sf.combo->addItem(traduzirOpcaoSubcampo(opt, isPt), id++);
