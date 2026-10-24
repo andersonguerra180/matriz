@@ -1298,6 +1298,9 @@ public:
     // Operações sobre conjuntos de marcação de sessão
     void alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds);
     void definirMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds, bool marcado);
+    // Undo das marcas H/K/P/W/B/R: `marcados` = quem tinha a marca ANTES, entre `itemIds`. A volta deixa cada item
+    // como estava (memória e banco, pela mesma fila serial das marcas). Message thread.
+    void registrarUndoMarcacao(TipoMarcacao tipo, std::vector<std::string> itemIds, std::set<std::string> marcados);
     bool contemMarcacao(TipoMarcacao tipo, const std::string& itemId) const;
     size_t contarMarcacoes(TipoMarcacao tipo) const;
     void limparMarcacoes(TipoMarcacao tipo);

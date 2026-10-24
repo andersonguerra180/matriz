@@ -8150,12 +8150,27 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
 // obterConjuntoMarcacao() não tranca sozinha -- quem chama precisa segurar
 // marcacoesMutex_ (ver comentário no membro, ProjetoAberto.h). É privada e
 // só usada pelas funções abaixo, cada uma já tranca a sua parte.
+void ProjetoAberto::registrarUndoMarcacao(TipoMarcacao tipo, std::vector<std::string> itemIds, std::set<std::string> marcados) {
+    if (itemIds.empty() || desfazendo_ || !juce::MessageManager::getInstance()->isThisTheMessageThread()) return;
+    const char* letra = tipo == TipoMarcacao::Html ? "H" : tipo == TipoMarcacao::Zip ? "K" : tipo == TipoMarcacao::Print ? "P"
+                      : tipo == TipoMarcacao::Watermark ? "W" : tipo == TipoMarcacao::Bounce ? "B" : "R";
+    registrarUndo(std::string("Mark ") + letra + (itemIds.size() == 1 ? "" : " (" + std::to_string(itemIds.size()) + " items)"),
+                  [this, tipo, itemIds = std::move(itemIds), marcados = std::move(marcados)] {
+                      std::vector<std::string> ligar, desligar;
+                      for (const auto& id : itemIds) (marcados.count(id) ? ligar : desligar).push_back(id);
+                      if (!ligar.empty()) definirMarcacao(tipo, ligar, true);
+                      if (!desligar.empty()) definirMarcacao(tipo, desligar, false);
+                  });
+}
+
 void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds) {
     if (itemIds.empty()) return;
     bool remover = true;
+    std::set<std::string> marcadosAntes;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         auto& s = obterConjuntoMarcacao(tipo);
+        for (const auto& id : itemIds) if (s.count(id)) marcadosAntes.insert(id);
         for (const auto& id : itemIds) {
             if (s.find(id) == s.end()) {
                 remover = false;
@@ -8169,14 +8184,17 @@ void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::s
         ++versaoMarcacoes_;
     }
     enfileirarGravacaoMarcacao(remover ? OpMarcacao::Remover : OpMarcacao::Inserir, tipo, itemIds);
+    registrarUndoMarcacao(tipo, itemIds, std::move(marcadosAntes));
     EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
 void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds, bool marcado) {
     if (itemIds.empty()) return;
+    std::set<std::string> marcadosAntes;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         auto& s = obterConjuntoMarcacao(tipo);
+        for (const auto& id : itemIds) if (s.count(id)) marcadosAntes.insert(id);
         for (const auto& id : itemIds) {
             if (marcado) s.insert(id);
             else s.erase(id);
@@ -8184,6 +8202,7 @@ void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::st
         ++versaoMarcacoes_;
     }
     enfileirarGravacaoMarcacao(marcado ? OpMarcacao::Inserir : OpMarcacao::Remover, tipo, itemIds);
+    registrarUndoMarcacao(tipo, itemIds, std::move(marcadosAntes));
     EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
@@ -8210,6 +8229,7 @@ void ProjetoAberto::limparMarcacoes(TipoMarcacao tipo) {
         ++versaoMarcacoes_;
     }
     enfileirarGravacaoMarcacao(OpMarcacao::LimparTipo, tipo, {});
+    registrarUndoMarcacao(tipo, afetados, std::set<std::string>(afetados.begin(), afetados.end()));
     EventBus::obterInstancia().dispararItensAlterados(afetados, "marcacao");
 }
 

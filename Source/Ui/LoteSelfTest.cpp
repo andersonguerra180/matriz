@@ -349,6 +349,24 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
                    "#24 Undo brings the message back (counter and deleted mark)");
         }
 
+        // #1 Marcas H/K/P/W/B/R
+        {
+            using T = ProjetoAberto::TipoMarcacao;
+            pa.definirMarcacao(T::Html, {a}, true);
+            pa.alternarMarcacao(T::Html, {a, b});  // b não tinha: liga nos dois
+            checar(pa.contemMarcacao(T::Html, a) && pa.contemMarcacao(T::Html, b), "#1 toggling H on a mixed selection marks both");
+            checar(pa.descricaoUndoAtual().rfind("Mark H", 0) == 0, "#1 a mark is the step Undo will revert");
+            pa.desfazer();
+            checar(pa.contemMarcacao(T::Html, a) && !pa.contemMarcacao(T::Html, b),
+                   "#1 Undo of a mark brings each item back exactly (a still H, b without)");
+            pa.desfazer();  // o definirMarcacao do começo
+            checar(!pa.contemMarcacao(T::Html, a), "#1 Undo of set-mark removes it");
+            pa.definirMarcacao(T::Bounce, {a, b}, true);
+            pa.limparMarcacoes(T::Bounce);
+            pa.desfazer();
+            checar(pa.contemMarcacao(T::Bounce, a) && pa.contemMarcacao(T::Bounce, b), "#1 Undo of clear-all-B brings every B back");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit selftest: ") + e.what());
     }
