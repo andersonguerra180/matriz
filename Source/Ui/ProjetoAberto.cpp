@@ -2056,6 +2056,20 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
 void ProjetoAberto::definirOrigemPhoneDump(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_ || !projeto_ || itemIds.empty()) return;
     auto& db = projeto_->registro();
+    {   // Undo: o Original Source Medium de cada item (campo da ficha e coluna do item) como estava.
+        const std::string json = idsEmJson(itemIds);
+        std::map<std::string, std::optional<std::string>> colunaAntes;
+        auto st = db.prepare("SELECT id, source_media FROM item WHERE id IN (SELECT value FROM json_each(?))");
+        st.bind(1, matriz::db::Value::of(json));
+        while (st.step()) colunaAntes[st.columnText(0)] = st.columnIsNull(1) ? std::nullopt : std::optional<std::string>(st.columnText(1));
+        iniciarGrupoUndo("Mark as Phone Dump");
+        registrarUndoDeLinhas(*this, "Mark as Phone Dump",
+                              {{"item_campo", "item_id IN (SELECT value FROM json_each(?)) AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = 'source_media'",
+                                {matriz::db::Value::of(json)}, false}},
+                              itemIds, "metadado");
+        registrarUndoDeColunaDoItem("Mark as Phone Dump", "source_media", std::move(colunaAntes));
+        finalizarGrupoUndo();
+    }
     std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
     try {
         db.exec("BEGIN IMMEDIATE");

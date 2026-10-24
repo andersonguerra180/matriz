@@ -602,6 +602,16 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             checar(pa.semMarcadosR({a, b}) == std::vector<std::string>{b}, "#20 Undo of R brings each item back exactly");
         }
 
+        // #22 marcar Phone Dump
+        {
+            const auto a = novo();
+            pa.definirOrigemPhoneDump({a});
+            checar(colunaDoItem(reg, "source_media", a).find("Phone Dump") != std::string::npos, "#22 Mark as Phone Dump writes it (before Undo)");
+            pa.desfazer();
+            checar(colunaDoItem(reg, "source_media", a).empty() && pa.valorCampo(a, "raiz", 0, "source_media").value_or("").empty(),
+                   "#22 Undo of Mark as Phone Dump brings the Source Medium back");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }
