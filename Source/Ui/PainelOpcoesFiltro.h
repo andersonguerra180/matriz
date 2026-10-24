@@ -101,6 +101,8 @@ public:
     }
 
 private:
+    friend class PainelListaEscolha;  // mesmo interruptor e mesmo cartão (desenharChave, lfCaixa)
+
     static constexpr int kPadX = 16, kCabecalho = 44, kSecao = 26, kLinha = 48, kPadBaixo = 10;
 
     static juce::Font fonteLimpar() { return juce::Font(juce::FontOptions(12.5f, juce::Font::bold)); }
