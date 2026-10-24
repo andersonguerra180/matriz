@@ -2781,6 +2781,7 @@ std::string ProjetoAberto::adicionarObservacao(const std::string& itemId, const 
     if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
     if (!projeto_) return {};
     std::string id = matriz::model::novoUuid();
+    registrarUndoDeLinhas(*this, "Add Note", {{"item_observacao", "id = ?", {matriz::db::Value::of(id)}, false}}, {itemId}, "metadado");
     projeto_->registro().run(
         "INSERT INTO item_observacao (id, item_id, texto, autor, criado_em, minutagem_ms) VALUES (?, ?, ?, ?, ?, ?)",
         {matriz::db::Value::of(id), matriz::db::Value::of(itemId), matriz::db::Value::of(texto),
@@ -2793,6 +2794,7 @@ void ProjetoAberto::atualizarObservacao(const std::string& observacaoId, const s
                                          std::optional<int64_t> minutagemMs) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    registrarUndoDeLinhas(*this, "Edit Note", {{"item_observacao", "id = ?", {matriz::db::Value::of(observacaoId)}, false}}, {}, "metadado");
     projeto_->registro().run(
         "UPDATE item_observacao SET texto = ?, minutagem_ms = ? WHERE id = ?",
         {matriz::db::Value::of(texto),
@@ -2803,6 +2805,7 @@ void ProjetoAberto::atualizarObservacao(const std::string& observacaoId, const s
 void ProjetoAberto::removerObservacao(const std::string& observacaoId) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    registrarUndoDeLinhas(*this, "Delete Note", {{"item_observacao", "id = ?", {matriz::db::Value::of(observacaoId)}, false}}, {}, "metadado");
     projeto_->registro().run("DELETE FROM item_observacao WHERE id = ?", {matriz::db::Value::of(observacaoId)});
 }
 

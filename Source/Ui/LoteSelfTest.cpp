@@ -535,6 +535,24 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
                    "#7 Undo of Confirm: field empty, suggestion pending again, no history line");
         }
 
+        // #8 observações
+        {
+            const auto a = novo();
+            auto obs = [&](const std::string& id) { return contar("SELECT COUNT(*) FROM item_observacao WHERE id = ?", {Value::of(id)}); };
+            auto id = pa.adicionarObservacao(a, "first", std::nullopt, "user");
+            pa.desfazer();
+            checar(obs(id) == 0, "#8 Undo of Add Note removes it");
+            id = pa.adicionarObservacao(a, "first", std::nullopt, "user");
+            pa.atualizarObservacao(id, "second", std::nullopt);
+            pa.desfazer();
+            auto t = reg.prepare("SELECT texto FROM item_observacao WHERE id = ?");
+            t.bind(1, Value::of(id));
+            checar(t.step() && t.columnText(0) == "first", "#8 Undo of Edit Note brings the old text back");
+            pa.removerObservacao(id);
+            pa.desfazer();
+            checar(obs(id) == 1, "#8 Undo of Delete Note brings the note back");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }
