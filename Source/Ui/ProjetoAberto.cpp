@@ -6133,12 +6133,44 @@ std::shared_ptr<matriz::vault::ResolvedorEmLote> ProjetoAberto::criarResolvedorE
     return std::make_shared<matriz::vault::ResolvedorEmLote>(projeto_->registro(), projeto_->pasta());
 }
 
+void ProjetoAberto::registrarUndoDeColunaDoItem(const std::string& descricao, const std::string& coluna,
+                                                std::map<std::string, std::optional<std::string>> antes) {
+    if (antes.empty() || desfazendo_) return;
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        std::weak_ptr<bool> vivo = vivo_;
+        juce::MessageManager::callAsync([this, vivo, descricao, coluna, antes = std::move(antes)]() mutable {
+            if (vivo.lock()) registrarUndoDeColunaDoItem(descricao, coluna, std::move(antes));
+        });
+        return;
+    }
+    registrarUndo(descricao, [this, coluna, antes = std::move(antes)] {
+        if (!projeto_) return;
+        auto& db = projeto_->registro();
+        std::unique_lock<std::recursive_mutex> lock(writeMutex());
+        try {
+            db.run("BEGIN TRANSACTION", {});
+            for (const auto& [id, valor] : antes)
+                db.run("UPDATE item SET \"" + coluna + "\" = ? WHERE id = ?",
+                       {valor ? matriz::db::Value::of(*valor) : matriz::db::Value::null(), matriz::db::Value::of(id)});
+            db.run("COMMIT", {});
+        } catch (...) {
+            try { db.run("ROLLBACK", {}); } catch (...) {}
+            return;
+        }
+        auto& bus = EventBus::obterInstancia();
+        bus.iniciarLote();
+        for (const auto& [id, valor] : antes) bus.dispararItemAlterado(id, "metadado");
+        bus.finalizarLote();
+    });
+}
+
 int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::string>& textoPorItem) {
     if (!projeto_ || textoPorItem.empty()) return 0;
     auto& db = projeto_->registro();
     const std::string agora = matriz::model::agoraIso8601();
     std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
     int gravados = 0;
+    std::map<std::string, std::optional<std::string>> notasAntes;  // Undo
     try {
         db.exec("BEGIN IMMEDIATE");
         auto ler = db.prepare("SELECT notas_livres FROM item WHERE id = ?");
@@ -6146,7 +6178,9 @@ int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::st
             ler.reset();
             ler.bind(1, matriz::db::Value::of(itemId));
             std::string atual;
-            if (ler.step() && !ler.columnIsNull(0)) atual = ler.columnText(0);
+            const bool achou = ler.step();
+            if (achou && !ler.columnIsNull(0)) atual = ler.columnText(0);
+            notasAntes[itemId] = achou && !ler.columnIsNull(0) ? std::optional<std::string>(atual) : std::nullopt;
             // A automática vai sempre primeiro (como no ingest); as seções do
             // usuário ficam como estavam.
             std::vector<matriz::model::SecaoNota> secoes = {{matriz::model::kOutraMetadataTitulo, texto, true}};
@@ -6162,6 +6196,8 @@ int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::st
         try { db.exec("ROLLBACK"); } catch (...) {}
         return 0;
     }
+    registrarUndoDeColunaDoItem(gravados == 1 ? "Other Metadata" : "Other Metadata (" + std::to_string(gravados) + " items)",
+                                "notas_livres", std::move(notasAntes));
     return gravados;
 }
 

@@ -381,6 +381,10 @@ public:
         bool soAtualizar = false;
     };
     Retrato retratar(const std::vector<TabelaDoRetrato>& tabelas, const std::vector<std::string>& ids);
+    // Undo de UMA coluna do item (ex. notas_livres do "Other metadata" em lote): `antes` = valor de cada item ANTES
+    // (nullopt = NULL). Só essa coluna volta. Pode ser chamado de outra thread (vai para a message thread).
+    void registrarUndoDeColunaDoItem(const std::string& descricao, const std::string& coluna,
+                                     std::map<std::string, std::optional<std::string>> antes);
     // Undo da marca E (marcado_revisado): só essa coluna volta ao que cada item tinha. Chamar ANTES de gravar.
     void registrarUndoRevisado(const std::vector<std::string>& itemIds);
     // Undo de Trash / tirar de pasta: vínculos item<->pasta e lixeira DESTES itens (todos os mapas) voltam como estavam,

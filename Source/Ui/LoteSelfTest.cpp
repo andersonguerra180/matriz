@@ -432,6 +432,14 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
         pa.desfazer();
         checar(pa.listarPessoas().size() == 1, "#10 Undo of Remove Person brings the person back");
 
+        // #4 Other metadata em lote
+        pa.salvarMetadado(a, "notas_livres", "old note");
+        checar(pa.gravarOutraMetadataEmLote({{a, "Camera: X"}, {b, "Camera: Y"}}) == 2, "#4 Other Metadata in batch writes both items");
+        checar(pa.descricaoUndoAtual().rfind("Other Metadata", 0) == 0, "#4 Other Metadata is the step Undo will revert");
+        pa.desfazer();
+        checar(pa.lerMetadado(a, "notas_livres").value_or("") == "old note" && pa.lerMetadado(b, "notas_livres").value_or("").empty(),
+               "#4 Undo of Other Metadata brings each note back exactly");
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit selftest: ") + e.what());
     }
