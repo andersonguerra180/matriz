@@ -458,6 +458,29 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     ItemResumo* it = itemEmTodos(itemId);
     if (it == nullptr) return;
 
+    // Saiu do catálogo (Duplicates: o lado descartado vira 'duplicata'; quarentena; apagado): o snapshot completo já
+    // não o traria (listarItensDeProjeto exclui os dois). Atualizar só os campos deixava o arquivo no mosaico.
+    if (!modoQuarentena_) {
+        bool saiu = false;
+        try {
+            auto st = projeto_.projeto().registro().prepare(
+                "SELECT COALESCE(em_quarentena, 0), COALESCE(estado, '') FROM item WHERE id = ?");
+            st.bind(1, matriz::db::Value::of(itemId));
+            saiu = !st.step() || st.columnInt(0) != 0 || st.columnText(1) == "duplicata";
+        } catch (...) {}
+        if (saiu) {
+            const auto pos = static_cast<size_t>(it - itensTodos_.data());
+            itensFiltrados_.limpar();  // os índices apontam para itensTodos_
+            itensTodos_.erase(itensTodos_.begin() + static_cast<std::ptrdiff_t>(pos));
+            if (pos < textosTodos_.size()) textosTodos_.erase(textosTodos_.begin() + static_cast<std::ptrdiff_t>(pos));
+            invalidarIndiceTodos();
+            selecionados_.erase(itemId);
+            if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
+            else aplicarFiltrosEOrdenacao();
+            return;
+        }
+    }
+
     auto tit = projeto_.lerMetadado(itemId, "titulo");
     if (tit.has_value() && !(it->nestCapa && !it->nestOrigem.empty())) {  // a capa do container mostra o nome do container
         it->titulo = *tit;

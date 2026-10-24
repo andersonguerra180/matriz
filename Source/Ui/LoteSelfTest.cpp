@@ -239,6 +239,49 @@ void rodarTestesUndoGeo(const Checar& checar) {
     raiz.deleteRecursively();
 }
 
+// Grade x releitura de um item: o snapshot não lia o Source Medium (a foto Phone Dump mudava de categoria e sumia
+// depois de um GET) e a atualização por item não tirava da grade o lado descartado de uma duplicata resolvida.
+void rodarTestesGradeConsistente(const Checar& checar) {
+    std::cout << "\n-- METADATA grid: snapshot and per-item refresh agree --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_grade_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Grade";
+        params.prefixoNomenclatura = "GRD";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string dump = inserirItem(reg, projetoId, "GRD-1", false, ".jpg");
+        const std::string dup = inserirItem(reg, projetoId, "GRD-2", false, ".jpg");
+        reg.run("UPDATE item SET source_media = ? WHERE id = ?",
+                {matriz::db::Value::of(std::string("{\"medium\": \"Phone Dump\"}")), matriz::db::Value::of(dump)});
+
+        MosaicoComponent mosaico(pa);
+        mosaico.recarregarSincrono();
+        auto noSnapshot = [&](const std::string& id) -> const ItemResumo* {
+            for (const auto& it : mosaico.todosItensEmMemoria()) if (it.id == id) return &it;
+            return nullptr;
+        };
+        const auto* d = noSnapshot(dump);
+        checar(d != nullptr && OriginalSourceMediumVocabulary::itemIsPhoneDump(d->sourceMedia, d->nestOrigem, ""),
+               "the grid snapshot reads the Original Source Medium (Phone Dump is known before any edit)");
+        mosaico.atualizarItemEmMemoria(dump);
+        d = noSnapshot(dump);
+        checar(d != nullptr && OriginalSourceMediumVocabulary::itemIsPhoneDump(d->sourceMedia, d->nestOrigem, ""),
+               "refreshing the item after an edit keeps the same Source Medium (it does not change category)");
+
+        reg.run("UPDATE item SET estado = 'duplicata' WHERE id = ?", {matriz::db::Value::of(dup)});
+        mosaico.atualizarItemEmMemoria(dup);
+        checar(noSnapshot(dup) == nullptr, "a duplicate resolved as discarded leaves the grid right away");
+        checar(noSnapshot(dump) != nullptr, "the other items stay in the grid");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("grid consistency selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesNomesCanonicos(const Checar& checar) {
     namespace nomes = matriz::model::nomes;
     using matriz::db::Value;
@@ -6009,6 +6052,7 @@ int rodarLoteSelfTest() {
 
     rodarTesteReloadArquivo(checar);
     rodarTestesUndoGeo(checar);
+    rodarTestesGradeConsistente(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();
