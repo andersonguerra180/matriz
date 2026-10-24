@@ -367,6 +367,21 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
             checar(pa.contemMarcacao(T::Bounce, a) && pa.contemMarcacao(T::Bounce, b), "#1 Undo of clear-all-B brings every B back");
         }
 
+        // #2 E (revisado) e limpar E
+        {
+            auto e = [&](const std::string& id) { return pa.itemMarcadoRevisado(id); };
+            pa.alternarMarcadoRevisado({a});
+            pa.alternarMarcadoRevisado({a, b});  // a já tinha: liga nos dois
+            checar(e(a) && e(b), "#2 E on a mixed selection marks both");
+            pa.desfazer();
+            checar(e(a) && !e(b), "#2 Undo of E brings each item back exactly");
+            pa.limparMarcadoRevisadoDe({a});
+            checar(!e(a), "#2 clear E removes it (before Undo)");
+            checar(pa.descricaoUndoAtual().rfind("Mark E", 0) == 0, "#2 clear E is the step Undo will revert");
+            pa.desfazer();
+            checar(e(a), "#2 Undo of clear E brings the E back");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit selftest: ") + e.what());
     }

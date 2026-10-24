@@ -5988,9 +5988,38 @@ void ProjetoAberto::renomearItensComTitulos(const std::vector<std::pair<std::str
     EventBus::obterInstancia().dispararItensAlterados(ids, "titulo");
 }
 
+void ProjetoAberto::registrarUndoRevisado(const std::vector<std::string>& itemIds) {
+    if (!projeto_ || itemIds.empty() || desfazendo_) return;
+    std::set<std::string> marcados;
+    auto st = projeto_->registro().prepare("SELECT COALESCE(marcado_revisado, 0) FROM item WHERE id = ?");
+    for (const auto& id : itemIds) {
+        st.reset();
+        st.bind(1, matriz::db::Value::of(id));
+        if (st.step() && st.columnInt(0) != 0) marcados.insert(id);
+    }
+    registrarUndo(itemIds.size() == 1 ? "Mark E" : "Mark E (" + std::to_string(itemIds.size()) + " items)",
+                  [this, ids = itemIds, marcados = std::move(marcados)] {
+                      if (!projeto_) return;
+                      auto& db = projeto_->registro();
+                      std::unique_lock<std::recursive_mutex> lock(writeMutex());
+                      try {
+                          db.run("BEGIN TRANSACTION", {});
+                          for (const auto& id : ids)
+                              db.run("UPDATE item SET marcado_revisado = ? WHERE id = ?",
+                                     {matriz::db::Value::of(marcados.count(id) ? 1 : 0), matriz::db::Value::of(id)});
+                          db.run("COMMIT", {});
+                      } catch (...) {
+                          try { db.run("ROLLBACK", {}); } catch (...) {}
+                          return;
+                      }
+                      for (const auto& id : ids) EventBus::obterInstancia().dispararItemAlterado(id, "marcado_revisado");
+                  });
+}
+
 void ProjetoAberto::alternarMarcadoRevisado(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemIds.empty()) return;
+    registrarUndoRevisado(itemIds);
     bool todosMarcados = true;
     for (const auto& id : itemIds) {
         auto stmt = projeto_->registro().prepare("SELECT marcado_revisado FROM item WHERE id = ?");
@@ -6031,6 +6060,7 @@ bool ProjetoAberto::itemMarcadoRevisado(const std::string& itemId) const {
 void ProjetoAberto::limparMarcadoRevisadoDe(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemIds.empty()) return;
+    registrarUndoRevisado(itemIds);
     auto& db = projeto_->registro();
     db.run("BEGIN TRANSACTION", {});
     try {
