@@ -26,6 +26,9 @@ public:
 
     void recarregar();
 
+    // Fundo que paint() pinta (as sub-abas STORAGE/SPACE MAP emendam a aba ativa nele).
+    static juce::Colour corDeFundo();
+
 private:
     void timerCallback() override;
 

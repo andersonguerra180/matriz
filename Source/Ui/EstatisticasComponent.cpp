@@ -369,11 +369,15 @@ void EstatisticasComponent::carregarMetricasCatalogo() {
     catalogTotalKpi_.backupHealthPercentage = 100.0;
 }
 
-void EstatisticasComponent::paint(juce::Graphics& g) {
+juce::Colour EstatisticasComponent::corDeFundo() {
     const auto& tk = tema();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
-    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
-    g.fillAll(bg);
+    return (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+}
+
+void EstatisticasComponent::paint(juce::Graphics& g) {
+    const auto& tk = tema();
+    g.fillAll(corDeFundo());
 
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
     if (isCatalogMode) {

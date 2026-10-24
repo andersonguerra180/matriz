@@ -58,7 +58,7 @@ void BarraNavegacaoComponent::reconstruirTabs() {
         tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 5 });
     } else {
         // As 5 abas principais pedidas: (1) Intake, (2) Structure, (3) Metadata, (4) Storage, (5) Backup.
-        // Duplicates agora vive como sub-aba dentro de Structure (Folder Map, Space Map, Duplicates).
+        // Duplicates é uma janela (Find duplicates, no METADATA); o Space Map é sub-aba do Storage.
         tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("Ingestão") : "Intake", {}, {}, false, 1 });
         tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Estrutura") : "Structure", {}, {}, false, 2 });
         tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("Metadados") : "Metadata", {}, {}, false, 3 });
@@ -348,10 +348,10 @@ juce::String BarraNavegacaoComponent::getTooltip() {
                 case Tab::Intake: return isPt ? juce::String::fromUTF8("Gerenciar arquivos recém-ingeridos aguardando verificação para METADADOS") : "Manage recently ingested files awaiting verification to METADATA";
                 case Tab::Grid: return isPt ? juce::String::fromUTF8("Navegar, filtrar e editar metadados de todos os arquivos") : "Browse, filter, and edit metadata of all assets";
                 case Tab::Duplicates: return isPt ? juce::String::fromUTF8("Escanear e resolver arquivos duplicados no projeto ativo") : "Scan and resolve duplicate files in active project";
-                case Tab::Analytics: return isPt ? juce::String::fromUTF8("Navegar pela estrutura do projeto: Folder Map, Space Map e Duplicates") : "Explore project structure: Folder Map, Space Map, and Duplicates";
+                case Tab::Analytics: return isPt ? juce::String::fromUTF8("Navegar pela estrutura do projeto no Folder Map") : "Explore project structure in the Folder Map";
                 case Tab::Tree: return isPt ? juce::String::fromUTF8("Explorar estrutura de arquivos através do mapa visual de diretórios") : "Explore assets structure via vault directories treemap";
                 case Tab::Backup: return isPt ? juce::String::fromUTF8("Planejar, verificar conflitos e consolidar pacote de publicação do backup") : "Plan, check conflicts, and consolidate backup publication package";
-                case Tab::Storage: return isPt ? juce::String::fromUTF8("Inspecionar e gerenciar dispositivos físicos de disco e histórico") : "Inspect and manage physical disk devices and history";
+                case Tab::Storage: return isPt ? juce::String::fromUTF8("Inspecionar e gerenciar dispositivos físicos de disco e histórico, e o Space Map") : "Inspect and manage physical disk devices and history, and the Space Map";
             }
         }
     }

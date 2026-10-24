@@ -326,6 +326,79 @@ struct FiltroOpcoesLf : public MatrizLookAndFeel {
     }
 };
 
+// "Find duplicates" do card FILTERS: pílula clara (fundo dos campos), duas folhas sobrepostas à esquerda e, à direita,
+// conforme a propriedade "dup": < 0 (nunca verificado) = setinha de "abre janela"; 0 = check verde; n > 0 = selo laranja
+// com o número de grupos.
+struct FindDuplicatasLf : public MatrizLookAndFeel {
+    void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool sobre, bool apertado) override {
+        const auto& tk = tema();
+        const auto r = b.getLocalBounds().toFloat().reduced(0.5f);
+        juce::Colour fundo = tk.campoFundo;
+        if (apertado) fundo = fundo.darker(0.08f);
+        else if (sobre) fundo = fundo.darker(0.03f);
+        g.setColour(fundo);
+        g.fillRoundedRectangle(r, r.getHeight() * 0.5f);
+        g.setColour(tk.borda.withAlpha(0.6f));
+        g.drawRoundedRectangle(r, r.getHeight() * 0.5f, 1.0f);
+    }
+    void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override {
+        const auto& tk = tema();
+        const int dup = b.getProperties().contains("dup") ? static_cast<int>(b.getProperties()["dup"]) : -1;
+        auto r = b.getLocalBounds().toFloat().reduced(10.0f, 0.0f);
+        const float cy = r.getCentreY();
+
+        // Duas folhas sobrepostas.
+        g.setColour(tk.textoPrimario);
+        const float x0 = r.getX();
+        g.drawRoundedRectangle(x0 + 4.0f, cy - 6.0f, 9.0f, 9.0f, 1.5f, 1.3f);
+        g.setColour(tk.campoFundo);
+        g.fillRoundedRectangle(x0, cy - 2.5f, 9.0f, 9.0f, 1.5f);
+        g.setColour(tk.textoPrimario);
+        g.drawRoundedRectangle(x0, cy - 2.5f, 9.0f, 9.0f, 1.5f, 1.3f);
+        r.removeFromLeft(20.0f);
+
+        if (dup < 0) {  // setinha de "abre janela": quadrado aberto no canto + seta saindo
+            const float s = 10.0f, x = r.getRight() - s, y = cy - s * 0.5f;
+            g.setColour(tk.textoSecundario);
+            juce::Path p;
+            p.startNewSubPath(x + 4.5f, y);
+            p.lineTo(x, y);
+            p.lineTo(x, y + s);
+            p.lineTo(x + s, y + s);
+            p.lineTo(x + s, y + 5.5f);
+            g.strokePath(p, juce::PathStrokeType(1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.drawLine(x + 4.5f, y + 5.5f, x + s, y, 1.2f);
+            g.drawLine(x + 6.5f, y, x + s, y, 1.2f);
+            g.drawLine(x + s, y, x + s, y + 3.5f, 1.2f);
+            r.removeFromRight(s + 6.0f);
+        } else {
+            const juce::String num = dup > 0 ? juce::String(dup) : juce::String();
+            const float w = dup > 0 ? juce::jmax(26.0f, juce::GlyphArrangement::getStringWidth(fonteContagem(), num) + 16.0f) : 30.0f;
+            const auto selo = r.removeFromRight(w).withSizeKeepingCentre(w, juce::jmin(18.0f, r.getHeight() - 8.0f));
+            const auto cor = dup > 0 ? tk.estadoAlerta : tk.estadoQcOk;
+            g.setColour(cor.withAlpha(0.18f));
+            g.fillRoundedRectangle(selo, selo.getHeight() * 0.5f);
+            g.setColour(dup > 0 ? cor.darker(0.35f) : cor.darker(0.2f));
+            if (dup > 0) {
+                g.setFont(fonteChipNegrito());
+                g.drawText(num, selo, juce::Justification::centred, false);
+            } else {
+                juce::Path check;
+                const float cx = selo.getCentreX(), cyy = selo.getCentreY();
+                check.startNewSubPath(cx - 4.0f, cyy);
+                check.lineTo(cx - 1.2f, cyy + 3.0f);
+                check.lineTo(cx + 4.0f, cyy - 3.0f);
+                g.strokePath(check, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+            r.removeFromRight(6.0f);
+        }
+
+        g.setFont(fonteChip());
+        g.setColour(tk.textoPrimario);
+        g.drawFittedText(b.getButtonText(), r.toNearestInt(), juce::Justification::centredLeft, 1, 0.85f);
+    }
+};
+
 // Ponto de cor de cada tipo de mídia — o mesmo nas barras do METADATA e do INTAKE.
 inline juce::Colour corDoTipo(const juce::String& chave) {
     if (chave == "audio") return juce::Colour(0xff2a9d8f);

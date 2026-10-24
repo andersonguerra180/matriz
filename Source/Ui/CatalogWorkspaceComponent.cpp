@@ -787,6 +787,13 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnFiltroOpcoes_);
     sincronizarFiltroOpcoesDropdown();
 
+    btnFindDuplicatas_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.find_duplicates"));
+    btnFindDuplicatas_->setLookAndFeel(&findDuplicatasLf_);
+    btnFindDuplicatas_->setTooltip(matriz::i18n::t("catwork.find_duplicates_tip"));
+    btnFindDuplicatas_->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    btnFindDuplicatas_->onClick = [this] { if (aoAbrirDuplicatas) aoAbrirDuplicatas(); };
+    addAndMakeVisible(*btnFindDuplicatas_);
+
     lblCaminhoNavegacao_ = std::make_unique<juce::Label>("", "");
     lblCaminhoNavegacao_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
     lblCaminhoNavegacao_->setColour(juce::Label::textColourId, tema().textoSecundario);
@@ -864,6 +871,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     if (btnSelecionarTodos_) btnSelecionarTodos_->setLookAndFeel(nullptr);
     if (btnLimparSelecao_) btnLimparSelecao_->setLookAndFeel(nullptr);
     if (btnFiltroOpcoes_) btnFiltroOpcoes_->setLookAndFeel(nullptr);
+    if (btnFindDuplicatas_) btnFindDuplicatas_->setLookAndFeel(nullptr);
     if (btnOcultarEditados_) btnOcultarEditados_->setLookAndFeel(nullptr);
     if (btnOcultarNaoSelecionados_) btnOcultarNaoSelecionados_->setLookAndFeel(nullptr);
     if (btnMostrarRecentes_) btnMostrarRecentes_->setLookAndFeel(nullptr);
@@ -2598,6 +2606,12 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
     }
 }
 
+void CatalogWorkspaceComponent::definirResultadoDuplicatas(int grupos) {
+    if (!btnFindDuplicatas_) return;
+    btnFindDuplicatas_->getProperties().set("dup", grupos);
+    btnFindDuplicatas_->repaint();
+}
+
 void CatalogWorkspaceComponent::atualizarBarraPaginacao() {
     if (!mosaico_ || !btnPagAnterior_) return;
     const bool ativa = mosaico_->paginacaoListaAtiva();
@@ -2680,6 +2694,11 @@ void CatalogWorkspaceComponent::resized() {
             linha.removeFromRight(8);
         }
         if (!botoesCategorias_.empty()) botoesCategorias_[0]->setBounds(linha);
+    }
+    // Find duplicates logo abaixo do Reset (30 px); o card DATE, o último, absorve a diferença.
+    if (btnFindDuplicatas_) {
+        corpo.removeFromTop(6);
+        btnFindDuplicatas_->setBounds(corpo.removeFromTop(30));
     }
     barra_.finalizarCard();
 

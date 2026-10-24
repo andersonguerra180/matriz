@@ -1569,13 +1569,17 @@ void StorageWorkspaceComponent::lookAndFeelChanged() {
     repaint();
 }
 
-void StorageWorkspaceComponent::paint(juce::Graphics& g) {
+juce::Colour StorageWorkspaceComponent::corDeFundo() {
     const auto& tk = tema();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
     juce::Colour warmBase = isLight ? tk.fundo.darker(0.15f) : juce::Colour(0xff3a332a);
     juce::Colour baseBg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
-    juce::Colour bg = baseBg.interpolatedWith(warmBase, 0.35f).brighter(0.50f);
-    g.fillAll(bg);
+    return baseBg.interpolatedWith(warmBase, 0.35f).brighter(0.50f);
+}
+
+void StorageWorkspaceComponent::paint(juce::Graphics& g) {
+    const auto& tk = tema();
+    g.fillAll(corDeFundo());
 
     if (!sourceBounds_.isEmpty()) {
         auto sb = sourceBounds_.toFloat().expanded(4.0f, 4.0f);

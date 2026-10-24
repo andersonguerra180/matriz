@@ -4,6 +4,28 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Duplicates em janela + Space Map no Storage — `main` (fast-forward de `feat/phone-dump-usb`), 2026-10-24
+
+- A `feat/phone-dump-usb` virou a `main` oficial (fast-forward, sem merge: a `main` era ancestral dela).
+- **DUPLICATES saiu da STRUCTURE.** Agora é uma janela independente (`JanelaDuplicatas.h`, DocumentWindow com
+  `moldura::JanelaMoldura`, não modal) aberta pelo botão **Find duplicates** do card FILTERS do METADATA, logo abaixo do
+  Reset (`CatalogWorkspaceComponent`, `barra::FindDuplicatasLf`). Selo do botão: setinha (nunca verificado), ✓ verde
+  (nenhuma) ou número laranja de grupos — vem de `DuplicatesWorkspaceComponent::aoConcluirScan` e fica em
+  `MainComponent::resultadoDuplicatas_`. O workspace é o mesmo de antes, ainda dono `MainComponent::duplicatesWorkspace_`;
+  a janela só o hospeda (`possuir = false`) e fechar só esconde. **A janela tem que ser destruída antes do workspace**
+  (`janelaDuplicatas_` é declarada depois e resetada antes nos dois resets: tema e fechar projeto). As trocas de aba não
+  chamam mais `duplicatesWorkspace_->setVisible(false)` — isso esconderia o conteúdo dentro da janela.
+- **SPACE MAP saiu da STRUCTURE para a aba STORAGE**, que tem duas sub-abas: STORAGE (padrão) e SPACE MAP
+  (`SubAbasStorageComponent.h`: abas com ícone + painel arredondado; fica atrás do workspace, que vai em `areaConteudo()`).
+  A aba ativa usa a cor de fundo do workspace (`StorageWorkspaceComponent::corDeFundo()` / `EstatisticasComponent::corDeFundo()`,
+  mesmas fórmulas de antes, só extraídas do paint). `mostrarStorage()` lembra a sub-aba (`subTabStorageAtual_`);
+  `mostrarAnalytics()` = STORAGE › SPACE MAP; o Space Map continua abrindo focado na pasta selecionada no Folder Map.
+- STRUCTURE ficou só com o FOLDER MAP, sem faixa de sub-abas (`SubAbasEstruturaComponent.h` removido). No modo catálogo a
+  aba Structure também abre no Folder Map (antes abria no Space Map).
+- Strings novas em `Strings.h`/`StringsPt.h`: `catwork.find_duplicates(_tip)`, `duplicatas.janela_titulo`,
+  `storage.subaba_storage`, `storage.subaba_space_map`.
+- Verificado: build Release ok (`build-release`). Não verificado: clique no app por mim, tema escuro, ASan/TSan, CI Windows.
+
 ## `_no folder` — branch `feat/no-folder-virtual`, 2026-10-23
 
 - Worktree `../BKR Matriz-wt-nofolder`, criada do HEAD de `feat/phone-dump-usb` (`6a4a4c5`) para não brigar com as mudanças

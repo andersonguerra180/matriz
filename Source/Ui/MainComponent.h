@@ -23,7 +23,8 @@
 #include "HomePanelComponent.h"
 #include "IngestWizardComponent.h"
 #include "BarraNavegacaoComponent.h"
-#include "SubAbasEstruturaComponent.h"
+#include "SubAbasStorageComponent.h"
+#include "JanelaDuplicatas.h"
 #include "CartoesAnalyticsComponent.h"
 #include "BackupWorkspaceComponent.h"
 #include "PreservationWorkspaceComponent.h"
@@ -70,10 +71,11 @@ class MainComponent : public juce::Component,
                        private juce::Timer {
 public:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
-    // Item 4: sub-abas da aba combinada "Structure" (FOLDER MAP, SPACE MAP, DUPLICATES).
-    // FolderMap = ArvoreBackupComponent, SpaceMap = EstatisticasComponent,
-    // Duplicates = DuplicatesWorkspaceComponent — ver mostrarStructure().
-    enum class SubTabEstrutura { FolderMap, SpaceMap, Duplicates };
+    // Aba "Structure": só o FOLDER MAP (ArvoreBackupComponent). O SPACE MAP foi para a aba STORAGE e o DUPLICATES
+    // virou janela independente (botão Find duplicates do METADATA) — ver mostrarStructure()/mostrarStorage().
+    enum class SubTabEstrutura { FolderMap };
+    // Sub-abas da aba STORAGE: STORAGE (StorageWorkspaceComponent, padrão) e SPACE MAP (EstatisticasComponent).
+    enum class SubTabStorage { Storage, SpaceMap };
 
     MainComponent();
     ~MainComponent() override;
@@ -117,14 +119,14 @@ public:
     void mostrarIntake();
     void mostrarCatalog();
     void mostrarGrid();
+    // Abre (ou traz para a frente) a janela independente de duplicatas; a aba atual não muda.
     void mostrarDuplicates();
-    void mostrarAnalytics();
+    void mostrarAnalytics();  // STORAGE > SPACE MAP
     void mostrarTree();
     void mostrarBackup();
-    void mostrarStorage();
-    // Implementação comum das duas acima (item 4, nova lista): mostra a aba
-    // "Structure", com a barra de sub-abas FOLDER MAP/SPACE MAP por cima do
-    // workspace escolhido.
+    void mostrarStorage();  // STORAGE, na sub-aba em que o operador estava (padrão: STORAGE)
+    void mostrarStorage(SubTabStorage subTab);
+    // Aba "Structure" (FOLDER MAP).
     void mostrarStructure(SubTabEstrutura subTab);
     void garantirCartoesAnalytics();
 
@@ -377,6 +379,9 @@ private:
     TelaAtiva telaAtiva_ = TelaAtiva::Inicial;
 
     SubTabEstrutura subTabEstruturaAtual_ = SubTabEstrutura::FolderMap;
+    SubTabStorage subTabStorageAtual_ = SubTabStorage::Storage;
+    // Grupos achados na última verificação de duplicatas (-1 = nunca verificado): selo do Find duplicates do METADATA.
+    int resultadoDuplicatas_ = -1;
 
     std::unique_ptr<ProjetoAberto> projetoAberto_;
     juce::File catalogoPai_;
@@ -551,11 +556,13 @@ private:
     std::unique_ptr<matriz::celular::SessaoAndroidUsb> sondaUsb_;
     void aoUsbPlugado();
     std::unique_ptr<CatalogWorkspaceComponent> catalogWorkspace_; // GRID
-    std::unique_ptr<DuplicatesWorkspaceComponent> duplicatesWorkspace_; // DUPLICATES
-    std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // STRUCTURE > SPACE MAP (ex-ANALYTICS/Storage)
+    std::unique_ptr<DuplicatesWorkspaceComponent> duplicatesWorkspace_; // DUPLICATES (hospedado em janelaDuplicatas_)
+    // Janela independente que hospeda duplicatesWorkspace_ sem ser dona dele; declarada depois para morrer antes.
+    std::unique_ptr<JanelaDuplicatas> janelaDuplicatas_;
+    std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // STORAGE > SPACE MAP (ex-ANALYTICS/Storage)
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // STRUCTURE > FOLDER MAP (ex-TREE/Treemap)
-    // Item 4 (nova lista): sub-abas FOLDER MAP/SPACE MAP da aba "Structure".
-    std::unique_ptr<SubAbasEstruturaComponent> subAbasEstrutura_;
+    // Sub-abas STORAGE/SPACE MAP da aba STORAGE (abas + painel; fica atrás do workspace ativo).
+    std::unique_ptr<SubAbasStorageComponent> subAbasStorage_;
     std::unique_ptr<CartoesAnalyticsComponent> cartoesAnalytics_;  // 6 cards acima das sub-abas FOLDER MAP / SPACE MAP
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
     // Faixa de aviso no topo: "EDITANDO O MAIN" (Fase 4) / clone somente leitura (Fase 5).

@@ -29,6 +29,9 @@ public:
     void lookAndFeelChanged() override;
     void mouseDown(const juce::MouseEvent& e) override;
 
+    // Fundo que paint() pinta (as sub-abas STORAGE/SPACE MAP emendam a aba ativa nele).
+    static juce::Colour corDeFundo();
+
 private:
     ProjetoAberto& projeto_;
     AnalyticsTreemapComponent treemapComponent_;

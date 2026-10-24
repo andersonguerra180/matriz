@@ -727,8 +727,10 @@ void MainComponent::atualizarIdioma() {
 
     auto tabAtual = barraNavegacao_ ? barraNavegacao_->getSelectedTab() : BarraNavegacaoComponent::Tab::Grid;
 
+    const bool duplicatasAbertas = janelaDuplicatas_ && janelaDuplicatas_->isVisible();
     intakeWorkspace_.reset();
     catalogWorkspace_.reset();
+    janelaDuplicatas_.reset();  // antes do workspace que ela hospeda
     duplicatesWorkspace_.reset();
     analyticsWorkspace_.reset();
     cartoesAnalytics_.reset();
@@ -760,6 +762,7 @@ void MainComponent::atualizarIdioma() {
         else if (tabAtual == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
         else if (tabAtual == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
     }
+    if (duplicatasAbertas) mostrarDuplicates();
 
     sendLookAndFeelChange();
     resized();
@@ -834,12 +837,15 @@ void MainComponent::reconstruirTelaInicial() {
     ingestWizard_.reset();
     intakeWorkspace_.reset();
     catalogWorkspace_.reset();
+    janelaDuplicatas_.reset();  // antes do workspace que ela hospeda
     duplicatesWorkspace_.reset();
+    resultadoDuplicatas_ = -1;
     analyticsWorkspace_.reset();
     cartoesAnalytics_.reset();
     treeWorkspace_.reset();
     backupWorkspace_.reset();
     storageWorkspace_.reset();
+    subTabStorageAtual_ = SubTabStorage::Storage;
     preservationWorkspace_.reset();
     activePreviewWindow_.reset();
     barraProgressoGlobal_.reset();
@@ -1668,14 +1674,7 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
         else if (tab == BarraNavegacaoComponent::Tab::Intake) mostrarIntake();
         else if (tab == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
         else if (tab == BarraNavegacaoComponent::Tab::Duplicates) mostrarDuplicates();
-        else if (tab == BarraNavegacaoComponent::Tab::Analytics) {
-            // STRUCTURE abre sempre no FOLDER MAP; no modo catálogo esta aba
-            // é "Storage" e continua no SPACE MAP.
-            if (projetoAberto_ && projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo)
-                mostrarAnalytics();
-            else
-                mostrarStructure(SubTabEstrutura::FolderMap);
-        }
+        else if (tab == BarraNavegacaoComponent::Tab::Analytics) mostrarStructure(SubTabEstrutura::FolderMap);
         else if (tab == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
         else if (tab == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
         else if (tab == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
@@ -1776,7 +1775,6 @@ void MainComponent::mostrarCatalogHub() {
     if (homePanel_) homePanel_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
-    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1818,7 +1816,6 @@ void MainComponent::mostrarIntake() {
     if (homePanel_) homePanel_->setVisible(false);
     if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
-    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1894,7 +1891,6 @@ void MainComponent::mostrarGrid() {
     if (homePanel_) homePanel_->setVisible(false);
     if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
-    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1904,6 +1900,8 @@ void MainComponent::mostrarGrid() {
         catalogWorkspace_ = std::make_unique<CatalogWorkspaceComponent>(*projetoAberto_);
         catalogWorkspace_->aoEditarProjeto = [this](const std::string& nestId, const std::string& origem) { editarProjetoDoContainer(nestId, origem); };
         catalogWorkspace_->obterOverlay = [this]() -> PainelOverlay* { return overlay_.estaAberto() ? nullptr : &overlay_; };
+        catalogWorkspace_->aoAbrirDuplicatas = [this] { mostrarDuplicates(); };
+        catalogWorkspace_->definirResultadoDuplicatas(resultadoDuplicatas_);
         catalogWorkspace_->aoAgruparEIrParaTree = [this](std::string folderId) {
             mostrarTree();
             if (treeWorkspace_) {
@@ -1935,16 +1933,34 @@ void MainComponent::mostrarGrid() {
     repaint();
 }
 
+// DUPLICATES é uma janela independente (botão Find duplicates do card FILTERS, no METADATA): o mesmo
+// DuplicatesWorkspaceComponent de antes, criado uma vez por projeto; a janela só o hospeda e fechar só esconde.
 void MainComponent::mostrarDuplicates() {
-    mostrarStructure(SubTabEstrutura::Duplicates);
+    if (!projetoAberto_) return;
+    const bool novo = !duplicatesWorkspace_;
+    if (novo) {
+        duplicatesWorkspace_ = std::make_unique<DuplicatesWorkspaceComponent>(*projetoAberto_);
+        duplicatesWorkspace_->fornecerSelecaoDoGrid = [this]() -> std::set<std::string> {
+            if (catalogWorkspace_) return catalogWorkspace_->itensSelecionados();
+            if (mosaico_) return mosaico_->itensSelecionados();
+            return {};
+        };
+        duplicatesWorkspace_->aoConcluirScan = [this](int grupos) {
+            resultadoDuplicatas_ = grupos;
+            if (catalogWorkspace_) catalogWorkspace_->definirResultadoDuplicatas(grupos);
+        };
+        duplicatesWorkspace_->setSize(1280, 800);
+    }
+    if (!janelaDuplicatas_)
+        janelaDuplicatas_ = std::make_unique<JanelaDuplicatas>(*duplicatesWorkspace_, matriz::i18n::t("duplicatas.janela_titulo"));
+    duplicatesWorkspace_->setVisible(true);
+    if (!novo) duplicatesWorkspace_->recarregar();
+    janelaDuplicatas_->mostrar();
 }
 
-// Item 4 (nova lista): STORAGE (Analytics/EstatisticasComponent) e TREEMAP
-// (Tree/ArvoreBackupComponent) viraram uma aba só, "Structure", com duas
-// sub-abas por cima do workspace escolhido — FOLDER MAP (ex-treemap, default)
-// e SPACE MAP (ex-storage). mostrarAnalytics()/mostrarTree() continuam
-// existindo como atalhos finos pra esta função, pra todo call site antigo
-// (ex.: "group and go to tree" do grid) continuar funcionando sem mudança.
+// Aba "Structure": o FOLDER MAP (ArvoreBackupComponent). O SPACE MAP mudou para a aba STORAGE (mostrarStorage) e o
+// DUPLICATES virou janela (mostrarDuplicates). mostrarTree() continua como atalho fino pra esta função, pra todo call
+// site antigo (ex.: "group and go to tree" do grid) continuar funcionando sem mudança.
 // Os 6 cards de analytics (TOTAL ASSETS ... NO FOLDER) ficam fixos no mesmo lugar, logo abaixo da barra de abas, de
 // INTAKE a BACKUP. Criados uma vez por projeto aberto.
 void MainComponent::garantirCartoesAnalytics() {
@@ -1982,38 +1998,17 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
     if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
-    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
     if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
-    bool folderAtivo = (subTab == SubTabEstrutura::FolderMap);
-    bool spaceAtivo = (subTab == SubTabEstrutura::SpaceMap);
-    bool duplicatesAtivo = (subTab == SubTabEstrutura::Duplicates);
-
-    if (!subAbasEstrutura_) {
-        // Cores de identidade de cada sub-aba (FOLDER MAP = indigo, SPACE MAP = teal, DUPLICATES = amber).
-        subAbasEstrutura_ = std::make_unique<SubAbasEstruturaComponent>();
-        subAbasEstrutura_->definirAbas({{"FOLDER MAP", juce::Colour(0xff6366f1)},
-                                        {"SPACE MAP", juce::Colour(0xff14b8a6)},
-                                        {"DUPLICATES", juce::Colour(0xfff59e0b)}});
-        subAbasEstrutura_->aoTrocar = [this](int indice) {
-            if (indice == 0) mostrarStructure(SubTabEstrutura::FolderMap);
-            else if (indice == 1) mostrarStructure(SubTabEstrutura::SpaceMap);
-            else if (indice == 2) mostrarStructure(SubTabEstrutura::Duplicates);
-        };
-        addAndMakeVisible(*subAbasEstrutura_);
-    }
-    subAbasEstrutura_->setVisible(true);
-    subAbasEstrutura_->selecionar(folderAtivo ? 0 : (spaceAtivo ? 1 : 2));
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
 
     // Os 6 cards de analytics são globais (todas as abas, mesmo lugar): ver garantirCartoesAnalytics().
     garantirCartoesAnalytics();
     cartoesAnalytics_->setVisible(true);
     cartoesAnalytics_->recarregar();
 
-    if (folderAtivo) {
-        if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
-        if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
+    {
         if (!treeWorkspace_) {
             treeWorkspace_ = std::make_unique<ArvoreBackupComponent>(*projetoAberto_);
             treeWorkspace_->aoMostrarConteudoNaGrade = [this](const std::set<std::string>& itemIds) {
@@ -2049,68 +2044,13 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
         }
         // Arquivo(s) selecionado(s) no grid: o Folder Map abre com a pasta deles selecionada e centralizada.
         if (catalogWorkspace_) treeWorkspace_->definirFocoNosItens(catalogWorkspace_->itensSelecionados());
-    } else if (spaceAtivo) {
-        std::string pastaSel;
-        if (treeWorkspace_) {
-            pastaSel = treeWorkspace_->pastaSelecionadaId();
-            treeWorkspace_->setVisible(false);
-        }
-        if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
-        if (!analyticsWorkspace_) {
-            analyticsWorkspace_ = std::make_unique<EstatisticasComponent>(*projetoAberto_);
-            analyticsWorkspace_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
-                mostrarGrid();
-                if (catalogWorkspace_) {
-                    catalogWorkspace_->filtrarPorIds(ids);
-                }
-            };
-            // Fase 3: mesmo caminho do clique no nó SEM PASTA do Folder Map
-            // (atualiza a ficha e escopa as contagens de MEDIA TYPE/ano).
-            analyticsWorkspace_->aoAbrirSemPasta = [this](const std::set<std::string>& itemIds) {
-                mostrarGrid();
-                if (catalogWorkspace_) {
-                    catalogWorkspace_->definirSelecaoItens(itemIds);
-                } else if (mosaico_) {
-                    mosaico_->definirFiltroItens(itemIds);
-                    mosaico_->definirSelecao(itemIds);
-                }
-            };
-            analyticsWorkspace_->aoClicarNeedsAttention = [this](const std::set<std::string>& ids) {
-                mostrarGrid();
-                if (catalogWorkspace_) {
-                    catalogWorkspace_->filtrarPorIds(ids);
-                }
-            };
-            addAndMakeVisible(*analyticsWorkspace_);
-        } else {
-            analyticsWorkspace_->setVisible(true);
-            analyticsWorkspace_->recarregar();
-        }
-        if (!pastaSel.empty()) {
-            analyticsWorkspace_->definirPastaSelecionada(pastaSel);
-        }
-    } else if (duplicatesAtivo) {
-        if (treeWorkspace_) treeWorkspace_->setVisible(false);
-        if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
-        if (!duplicatesWorkspace_) {
-            duplicatesWorkspace_ = std::make_unique<DuplicatesWorkspaceComponent>(*projetoAberto_);
-            duplicatesWorkspace_->fornecerSelecaoDoGrid = [this]() -> std::set<std::string> {
-                if (catalogWorkspace_) return catalogWorkspace_->itensSelecionados();
-                if (mosaico_) return mosaico_->itensSelecionados();
-                return {};
-            };
-            addAndMakeVisible(*duplicatesWorkspace_);
-        } else {
-            duplicatesWorkspace_->setVisible(true);
-            duplicatesWorkspace_->recarregar();
-        }
     }
 
     resized();
     repaint();
 }
 
-void MainComponent::mostrarAnalytics() { mostrarStructure(SubTabEstrutura::SpaceMap); }
+void MainComponent::mostrarAnalytics() { mostrarStorage(SubTabStorage::SpaceMap); }
 void MainComponent::mostrarTree() { mostrarStructure(SubTabEstrutura::FolderMap); }
 
 void MainComponent::mostrarIngestWizard() {
@@ -2151,7 +2091,6 @@ void MainComponent::mostrarBackup() {
     if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
-    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (storageWorkspace_) storageWorkspace_->setVisible(false);
@@ -2216,9 +2155,14 @@ void MainComponent::mostrarBackup() {
     repaint();
 }
 
-void MainComponent::mostrarStorage() {
+void MainComponent::mostrarStorage() { mostrarStorage(subTabStorageAtual_); }
+
+// Aba STORAGE com duas sub-abas (abas + painel no desenho do anexo): STORAGE (padrão, StorageWorkspaceComponent) e
+// SPACE MAP (EstatisticasComponent, que antes ficava na Structure). subAbasStorage_ fica atrás do workspace ativo.
+void MainComponent::mostrarStorage(SubTabStorage subTab) {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Backup;
+    subTabStorageAtual_ = subTab;
 
     if (barraNavegacao_) {
         barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Storage);
@@ -2229,18 +2173,73 @@ void MainComponent::mostrarStorage() {
     if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
-    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
-    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
 
-    if (!storageWorkspace_) {
-        storageWorkspace_ = std::make_unique<StorageWorkspaceComponent>(*projetoAberto_);
-        addAndMakeVisible(*storageWorkspace_);
-    } else {
-        storageWorkspace_->setVisible(true);
-        storageWorkspace_->recarregar();
+    if (!subAbasStorage_) {
+        subAbasStorage_ = std::make_unique<SubAbasStorageComponent>();
+        subAbasStorage_->definirAbas({{matriz::i18n::t("storage.subaba_storage"), SubAbasStorageComponent::Icone::Disco},
+                                      {matriz::i18n::t("storage.subaba_space_map"), SubAbasStorageComponent::Icone::Mapa}});
+        subAbasStorage_->aoTrocar = [this](int indice) {
+            mostrarStorage(indice == 1 ? SubTabStorage::SpaceMap : SubTabStorage::Storage);
+        };
+        addAndMakeVisible(*subAbasStorage_);
     }
+    subAbasStorage_->setVisible(true);
+    subAbasStorage_->selecionar(subTab == SubTabStorage::SpaceMap ? 1 : 0);
+
+    if (subTab == SubTabStorage::Storage) {
+        if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+        if (!storageWorkspace_) {
+            storageWorkspace_ = std::make_unique<StorageWorkspaceComponent>(*projetoAberto_);
+            addAndMakeVisible(*storageWorkspace_);
+        } else {
+            storageWorkspace_->setVisible(true);
+            storageWorkspace_->recarregar();
+        }
+        subAbasStorage_->definirCorConteudo(StorageWorkspaceComponent::corDeFundo());
+    } else {
+        if (storageWorkspace_) storageWorkspace_->setVisible(false);
+        // Pasta selecionada no Folder Map: o Space Map abre focado nela (como quando os dois eram sub-abas da Structure).
+        const std::string pastaSel = treeWorkspace_ ? treeWorkspace_->pastaSelecionadaId() : std::string();
+        if (!analyticsWorkspace_) {
+            analyticsWorkspace_ = std::make_unique<EstatisticasComponent>(*projetoAberto_);
+            analyticsWorkspace_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
+                mostrarGrid();
+                if (catalogWorkspace_) {
+                    catalogWorkspace_->filtrarPorIds(ids);
+                }
+            };
+            // Fase 3: mesmo caminho do clique no nó SEM PASTA do Folder Map
+            // (atualiza a ficha e escopa as contagens de MEDIA TYPE/ano).
+            analyticsWorkspace_->aoAbrirSemPasta = [this](const std::set<std::string>& itemIds) {
+                mostrarGrid();
+                if (catalogWorkspace_) {
+                    catalogWorkspace_->definirSelecaoItens(itemIds);
+                } else if (mosaico_) {
+                    mosaico_->definirFiltroItens(itemIds);
+                    mosaico_->definirSelecao(itemIds);
+                }
+            };
+            analyticsWorkspace_->aoClicarNeedsAttention = [this](const std::set<std::string>& ids) {
+                mostrarGrid();
+                if (catalogWorkspace_) {
+                    catalogWorkspace_->filtrarPorIds(ids);
+                }
+            };
+            addAndMakeVisible(*analyticsWorkspace_);
+        } else {
+            analyticsWorkspace_->setVisible(true);
+            analyticsWorkspace_->recarregar();
+        }
+        if (!pastaSel.empty()) {
+            analyticsWorkspace_->definirPastaSelecionada(pastaSel);
+        }
+        subAbasStorage_->definirCorConteudo(EstatisticasComponent::corDeFundo());
+    }
+    // Abas + painel ficam atrás do workspace (ele é posto dentro do painel em resized()).
+    subAbasStorage_->toBehind(subTab == SubTabStorage::Storage ? static_cast<juce::Component*>(storageWorkspace_.get())
+                                                                : static_cast<juce::Component*>(analyticsWorkspace_.get()));
 
     resized();
     repaint();
@@ -5331,17 +5330,16 @@ void MainComponent::resized() {
     // abaixo retornam cedo assim que acham a aba visível certa, e por isso
     // nunca chegavam a esconder esta barra quando a aba ativa era outra
     // (bug: ela ficava grudada por cima de Grid/Duplicates/etc).
-    bool estruturaVisivel = (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) ||
-                            (treeWorkspace_ && treeWorkspace_->isVisible()) ||
-                            (duplicatesWorkspace_ && duplicatesWorkspace_->isVisible());
-    if (subAbasEstrutura_) subAbasEstrutura_->setVisible(estruturaVisivel);
+    bool estruturaVisivel = (treeWorkspace_ && treeWorkspace_->isVisible());
+    const bool storageVisivel = (storageWorkspace_ && storageWorkspace_->isVisible()) ||
+                                (analyticsWorkspace_ && analyticsWorkspace_->isVisible());
+    if (subAbasStorage_) subAbasStorage_->setVisible(storageVisivel);
     // Cards de analytics: constantes de CATALOG a BACKUP. Fora da tela inicial, do Home, do hub e do INTAKE (que usa a
     // altura toda e já tem os próprios contadores).
     const bool cartoesVisiveis = projetoAberto_ && telaAtiva_ != TelaAtiva::Inicial &&
         !(intakeWorkspace_ && intakeWorkspace_->isVisible()) &&
-        ((catalogWorkspace_ && catalogWorkspace_->isVisible()) ||
-         (duplicatesWorkspace_ && duplicatesWorkspace_->isVisible()) || estruturaVisivel ||
-         (backupWorkspace_ && backupWorkspace_->isVisible()) || (storageWorkspace_ && storageWorkspace_->isVisible()));
+        ((catalogWorkspace_ && catalogWorkspace_->isVisible()) || estruturaVisivel ||
+         (backupWorkspace_ && backupWorkspace_->isVisible()) || storageVisivel);
     if (cartoesVisiveis) {
         garantirCartoesAnalytics();
         if (cartoesAnalytics_ && !cartoesAnalytics_->isVisible()) {
@@ -5415,23 +5413,10 @@ void MainComponent::resized() {
         return;
     }
 
-    // Item 4: aba "Structure" — sub-abas FOLDER MAP/SPACE MAP/DUPLICATES
-    // numa faixa fixa acima de qual dos workspaces estiver visível.
+    // Aba "Structure": só o FOLDER MAP.
     if (estruturaVisivel) {
-        if (subAbasEstrutura_) subAbasEstrutura_->setBounds(area.removeFromTop(SubAbasEstruturaComponent::kAltura));
-
-        if (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) {
-            analyticsWorkspace_->setBounds(area);
-            return;
-        }
-        if (treeWorkspace_ && treeWorkspace_->isVisible()) {
-            treeWorkspace_->setBounds(area);
-            return;
-        }
-        if (duplicatesWorkspace_ && duplicatesWorkspace_->isVisible()) {
-            duplicatesWorkspace_->setBounds(area);
-            return;
-        }
+        treeWorkspace_->setBounds(area);
+        return;
     }
 
     if (backupWorkspace_ && backupWorkspace_->isVisible()) {
@@ -5439,8 +5424,15 @@ void MainComponent::resized() {
         return;
     }
 
-    if (storageWorkspace_ && storageWorkspace_->isVisible()) {
-        storageWorkspace_->setBounds(area);
+    // Aba STORAGE: abas STORAGE/SPACE MAP + painel ocupam a área; o workspace ativo vai dentro do painel.
+    if (storageVisivel) {
+        juce::Rectangle<int> conteudo = area;
+        if (subAbasStorage_) {
+            subAbasStorage_->setBounds(area);
+            conteudo = subAbasStorage_->areaConteudo().translated(area.getX(), area.getY());
+        }
+        if (storageWorkspace_ && storageWorkspace_->isVisible()) storageWorkspace_->setBounds(conteudo);
+        else if (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) analyticsWorkspace_->setBounds(conteudo);
         return;
     }
 

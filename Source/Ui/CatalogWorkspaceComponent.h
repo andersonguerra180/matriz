@@ -55,6 +55,10 @@ public:
     // Overlay da tela principal (dialogo de tipo do Project Container). nullptr = ja ha um aberto.
     std::function<PainelOverlay*()> obterOverlay;
     std::function<void(const std::string& itemId)> aoItemAlterado;
+    // "Find duplicates" do card FILTERS: quem hospeda abre a janela de duplicatas.
+    std::function<void()> aoAbrirDuplicatas;
+    // Resultado da última verificação de duplicatas no selo do botão: < 0 nunca verificado, 0 nenhuma, n grupos.
+    void definirResultadoDuplicatas(int grupos);
 
 private:
     struct CategoriaItem {
@@ -254,6 +258,7 @@ private:
 
     std::unique_ptr<juce::TextButton> btnFiltroOpcoes_;
     void sincronizarFiltroOpcoesDropdown();
+    std::unique_ptr<juce::TextButton> btnFindDuplicatas_;
 
     struct SecaoSidebar { int indicePrimeiro; juce::String titulo; };
     std::vector<SecaoSidebar> secoesSidebar_;
@@ -273,6 +278,7 @@ private:
     barra::PilulaLf pilulaLf_;
     barra::PrimariaLf primariaLf_;
     barra::FiltroOpcoesLf filtroOpcoesLf_;
+    barra::FindDuplicatasLf findDuplicatasLf_;
     juce::Rectangle<int> trilhoVisao_;  // trilho do seletor lista/grade
     juce::Rectangle<int> tituloFiltros_;  // linha do título FILTERS ("N active" é pintado à direita)
     // Quantos filtros estão escondendo arquivos agora ("1 active" no título do card FILTERS).

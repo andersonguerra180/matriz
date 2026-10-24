@@ -109,8 +109,9 @@ tools/ingest_selftest/  self-test headless do motor de ingestão/backup, sobre m
 | `MainWindow` / `MainComponent` | janela, menu nativo (File/Edit/Preferences), layout, drag-and-drop na janela inteira, Cmd+Z/S/Shift+S |
 | `MosaicoComponent` | grade virtualizada; agrupa por tipo de mídia, artista/lançamento ou **ano** |
 | `ArvoreComponent` | árvore EXPLORER (origem em disco, intocada) / BACKUP (estrutura virtual) |
-| `ArvoreBackupComponent` | TREE workspace n8n-style: grafo de nós, zoom/pan/minimap, edição inline, conexão por arrasto |
-| `CatalogWorkspaceComponent` | aba METADATA: sidebar com contagens cruzadas (MEDIA TYPE × DATE × CONTENT TYPE × SUBJECT) + grid + ficha; "Show Recently Ingested" = última leva promovida INTAKE → GRID (persistida em `item.lote_grid_id`) |
+| `ArvoreBackupComponent` | aba STRUCTURE (FOLDER MAP) n8n-style: grafo de nós, zoom/pan/minimap, edição inline, conexão por arrasto |
+| `CatalogWorkspaceComponent` | aba METADATA: sidebar com contagens cruzadas (MEDIA TYPE × DATE × CONTENT TYPE × SUBJECT) + grid + ficha; "Show Recently Ingested" = última leva promovida INTAKE → GRID (persistida em `item.lote_grid_id`); botão **Find duplicates** no card FILTERS (abre a janela de duplicatas, com selo do resultado da última verificação) |
+| `DuplicatesWorkspaceComponent` / `JanelaDuplicatas` | verificação e resolução de duplicatas (SHA-256, pHash, critérios de sempre) numa janela independente, aberta pelo Find duplicates do METADATA |
 | `FichaPanelComponent` | ficha genérica sobre `FichaDefinition`; edição em tempo real (sem botão Apply), modo lote de N itens numa transação, undo via Cmd+Z, "Needs review" |
 | `IntakeWorkspaceComponent` | aba INTAKE (quarentena): grid/lista, batch assignment (Source Medium, Creator, Content, Subject, Event Date, Geo) gravado em background numa transação |
 | `FiltrosComponent` | chips de tipo/estado/extensão/**origem**, faixa de ano, coleções inteligentes |
@@ -120,7 +121,9 @@ tools/ingest_selftest/  self-test headless do motor de ingestão/backup, sobre m
 | `BarraMetricasComponent` | barra fixa no rodapé: LUFS-I, LRA, FPS, VU e formato, adaptando-se ao tipo |
 | `ConsolidacaoDialogo` | backup: hierarquia de níveis arrastáveis com prévia da árvore ao vivo |
 | `BackupWorkspaceComponent` | workspace de consolidação e exportação de backup/catálogo limpo e focado |
-| `StorageWorkspaceComponent` | STORAGE workspace: detecção IOKit/SMART (SOURCE DRIVES / BACKUP DRIVES), Device Inspector compacto, timeline de uso e relatórios diários em Markdown (`/log/disk/<Disk>/`) |
+| `StorageWorkspaceComponent` | aba STORAGE › sub-aba STORAGE (padrão): detecção IOKit/SMART (SOURCE DRIVES / BACKUP DRIVES), Device Inspector compacto, timeline de uso e relatórios diários em Markdown (`/log/disk/<Disk>/`) |
+| `EstatisticasComponent` | aba STORAGE › sub-aba SPACE MAP: treemap de espaço por pasta/tipo (antes ficava na STRUCTURE) |
+| `SubAbasStorageComponent` | sub-abas STORAGE / SPACE MAP da aba STORAGE (abas com ícone + painel) |
 | `CatalogoComponent` | consulta ao catálogo de proxies sem o volume original |
 | `ProjetoAberto` | estado central do projeto aberto: undo stack (10 níveis), leitura/gravação de metadado, tags |
 | `Tokens.h` | design tokens (BKR Dark é o padrão; nenhuma cor literal fora deste arquivo) |
@@ -330,6 +333,11 @@ e ele some da grade do Catalog; escolha "Hidden" em CONTENT TYPE (coluna esquerd
 Limitação conhecida: a consolidação de backup roda na message thread — a janela fica sem
 responder (beachball) enquanto copia/verifica arquivos grandes (medido: ~43 MB/s num HD
 externo, bloqueios de até 59 s). Detalhes e pendências em [`HANDOFF.md`](HANDOFF.md).
+
+## Abas principais (24 de outubro de 2026)
+
+INTAKE · STRUCTURE (Folder Map) · METADATA (grade, filtros, ficha; **Find duplicates** abre a janela de duplicatas) ·
+STORAGE (sub-abas STORAGE e SPACE MAP) · BACKUP.
 
 ## Como se usa (fluxo real)
 

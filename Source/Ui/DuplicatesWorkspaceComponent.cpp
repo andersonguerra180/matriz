@@ -2417,6 +2417,7 @@ void DuplicatesWorkspaceComponent::timerCallback() {
                 listaComponent_->updateList(gruposDetectados_);
             }
             ProgressoGlobal::obterInstancia().concluirTarefa("duplicates_scan", msgFinal);
+            if (aoConcluirScan) aoConcluirScan(static_cast<int>(gruposDetectados_.size()));
             resized();
             repaint();
         } else {
