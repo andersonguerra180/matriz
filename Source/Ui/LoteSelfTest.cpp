@@ -634,6 +634,15 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             checar(colunaDoItem(reg, "estado", a) == "duplicata", "#26 Undo of Restore Duplicates makes it a duplicate again");
         }
 
+        // #27 estado do item no painel de duplicatas
+        {
+            const auto a = novo();
+            const auto antes = colunaDoItem(reg, "estado", a);
+            pa.atualizarEstadoItem(a, "catalogado");
+            pa.desfazer();
+            checar(colunaDoItem(reg, "estado", a) == antes, "#27 Undo of Change State brings the old state back");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }

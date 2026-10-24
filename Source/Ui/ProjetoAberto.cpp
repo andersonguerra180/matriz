@@ -6717,6 +6717,13 @@ std::vector<ProjetoAberto::ParDuplicatas> ProjetoAberto::listarGruposDuplicados(
 void ProjetoAberto::atualizarEstadoItem(const std::string& itemId, const std::string& novoEstado) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    {
+        std::map<std::string, std::optional<std::string>> antes;
+        auto st = projeto_->registro().prepare("SELECT estado FROM item WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        if (st.step()) antes[itemId] = st.columnIsNull(0) ? std::nullopt : std::optional<std::string>(st.columnText(0));
+        registrarUndoDeColunaDoItem("Change State", "estado", std::move(antes));
+    }
     std::string agora = matriz::model::agoraIso8601();
     projeto_->registro().run("UPDATE item SET estado = ?, atualizado_em = ? WHERE id = ?",
                              {matriz::db::Value::of(novoEstado), matriz::db::Value::of(agora),
