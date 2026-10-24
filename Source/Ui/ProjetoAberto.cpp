@@ -6649,6 +6649,14 @@ void ProjetoAberto::atualizarEstadoItem(const std::string& itemId, const std::st
 int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::string& pastaPaiId,
                                               bool manterEstrutura, const std::string& mapaId) {
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return 0;
+    // Um passo de Undo para a cópia inteira: o retrato do mapa (pastas + vínculos) cobre as pastas novas, a cor
+    // copiada e os itens ligados; os Undos de criarPastaAcervo/adicionarItensAPasta entram no mesmo grupo.
+    iniciarGrupoUndo("Copy Folder Structure");
+    struct FimDoGrupo {
+        ProjetoAberto* p;
+        ~FimDoGrupo() { p->finalizarGrupoUndo(); }
+    } fimDoGrupo{this};
+    registrarUndoSnapshotMapa("Copy Folder Structure", mapaId);
     if (!manterEstrutura) {
         std::vector<std::string> ids(origem.itemIds.begin(), origem.itemIds.end());
         if (ids.empty()) return 0;
