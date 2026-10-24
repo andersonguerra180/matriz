@@ -12,6 +12,7 @@
 #include "../Vault/Reconciliacao.h"
 #include "../Model/NotasEstruturadas.h"
 #include "../Vault/Resolucao.h"
+#include "../Vault/Volume.h"
 #include "../Consolidacao/Consolidacao.h"
 #include "../Model/ProjectLog.h"
 #include "../Model/NomesCanonicos.h"
@@ -2150,14 +2151,22 @@ bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, con
 
     auto& db = projeto_->registro();
 
-    std::string masterId, masterPapel;
+    std::string masterId, masterPapel, masterCaminhoRelativo;
     {
-        auto stmt = db.prepare("SELECT id, papel FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+        auto stmt = db.prepare("SELECT id, papel, caminho_relativo FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
         stmt.bind(1, matriz::db::Value::of(itemId));
         if (!stmt.step()) { erro = "Este item nao tem um arquivo master."; return false; }
         masterId = stmt.columnText(0);
         masterPapel = stmt.columnText(1);
+        masterCaminhoRelativo = stmt.columnText(2);
     }
+    // Reload do próprio master (o original, ou a cópia que o resolve): uma derivada com o mesmo caminho batia em
+    // UNIQUE(item_id, caminho_relativo), o ROLLBACK desfazia tudo e nada recarregava. Relê no lugar: tamanho, cache e
+    // miniatura do master (checksums e caminho continuam travados — arquivo_master_travado).
+    // Mesmo critério do UNIQUE (o caminho relativo que gravarArquivoAnalisado gravaria), não comparação de caminho
+    // absoluto (/var x /private/var, volume remontado...); ou o arquivo que o master resolve hoje (MAIN/CLONE).
+    const bool noLugar = matriz::vault::caminhoRelativoAoVolume(novoCaminho) == masterCaminhoRelativo ||
+                         matriz::vault::caminhoEsperadoArquivo(db, masterId, projeto_->pasta()) == novoCaminho;
 
     try {
         auto analise = matriz::ingest::analisarArquivo(novoCaminho);
@@ -2167,6 +2176,34 @@ bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, con
         if (!analise.ehPlaceholderNuvem)
             cache = matriz::ingest::calcularCache(novoCaminho, categoria, projeto_->pasta(),
                                                    analise.leitura.duracaoSegundos);
+
+        if (noLugar) {
+            db.run("BEGIN TRANSACTION", {});
+            try {
+                // O original volta a ser o conteúdo do item: derivada de um Replace anterior sai.
+                std::vector<std::string> derivadas;
+                auto stmtDerivadas = db.prepare("SELECT id FROM arquivo WHERE item_id = ? AND derivada_de_arquivo_id IS NOT NULL");
+                stmtDerivadas.bind(1, matriz::db::Value::of(itemId));
+                while (stmtDerivadas.step()) derivadas.push_back(stmtDerivadas.columnText(0));
+                for (auto& id : derivadas)
+                    projeto_->indice().run("DELETE FROM miniatura WHERE arquivo_id = ?", {matriz::db::Value::of(id)});
+                db.run("DELETE FROM arquivo WHERE item_id = ? AND derivada_de_arquivo_id IS NOT NULL", {matriz::db::Value::of(itemId)});
+                db.run("UPDATE arquivo SET tamanho_bytes = ?, atualizado_em = ? WHERE id = ?",
+                       {matriz::db::Value::of(static_cast<long long>(novoCaminho.getSize())),
+                        matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(masterId)});
+                matriz::ingest::gravarCache(db, masterId, cache);
+                db.run("COMMIT", {});
+            } catch (...) {
+                db.run("ROLLBACK", {});
+                throw;
+            }
+            // Miniatura refeita do zero (o arquivo da miniatura antiga sai antes, senão poderia ficar a velha).
+            projeto_->indice().run("DELETE FROM miniatura WHERE arquivo_id = ?", {matriz::db::Value::of(masterId)});
+            projeto_->pasta().getChildFile(".miniaturas").getChildFile(masterId + ".jpg").deleteFile();
+            matriz::ingest::gerarEGravarMiniaturaPrincipal(projeto_->indice(), projeto_->pasta(), itemId, masterId, novoCaminho,
+                                                             categoria, analise.leitura.duracaoSegundos);
+            return true;
+        }
 
         db.run("BEGIN TRANSACTION", {});
         std::string novoArquivoId;

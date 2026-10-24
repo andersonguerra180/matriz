@@ -117,6 +117,22 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
     // Evento de LOTE: itemId vazio e os ids em e.itemIds (um evento por operação em lote).
     const bool lote = !e.itemIds.empty();
 
+    // Reload/Replace File: a miniatura foi refeita a partir do arquivo — a imagem guardada em memória é a velha.
+    if (e.tipoAlteracao == "miniatura") {
+        {
+            const juce::ScopedLock sl(cacheLock_);
+            auto esquecer = [this](const std::string& id) {
+                cacheMiniaturas_.erase(id);
+                semMiniatura_.erase(id);
+                ordemCache_.erase(std::remove(ordemCache_.begin(), ordemCache_.end(), id), ordemCache_.end());
+            };
+            if (lote) for (const auto& id : e.itemIds) esquecer(id);
+            else esquecer(e.itemId);
+        }
+        repaint();
+        return;
+    }
+
     // Mudança em muitos itens de uma vez (ex. Duplicates > Validate All):
     // uma recarga completa em background, não N atualizações por item.
     if (e.tipoAlteracao == "recarregar_tudo") {

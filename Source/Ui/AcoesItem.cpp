@@ -413,6 +413,7 @@ void recarregarArquivo(ProjetoAberto& projeto, const std::string& itemId, Gancho
         avisarErroArquivo(erro);
         return;
     }
+    EventBus::obterInstancia().dispararItemAlterado(itemId, "miniatura");  // a grade descarta a miniatura guardada
     if (ganchos.aoMudarDados) ganchos.aoMudarDados();
 }
 
@@ -430,6 +431,7 @@ void substituirArquivo(ProjetoAberto& projeto, const std::string& itemId, Gancho
                                   avisarErroArquivo(erro);
                                   return;
                               }
+                              EventBus::obterInstancia().dispararItemAlterado(id, "miniatura");
                               if (ganchos.aoMudarDados) ganchos.aoMudarDados();
                           });
 }

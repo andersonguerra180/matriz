@@ -28,6 +28,7 @@
 #include "BackupWorkspaceComponent.h"
 #include "ArvoreBackupComponent.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Ingest/IngestArquivo.h"
 #include "../Audio/FormatoAudioQuickTime.h"
 #include "../Model/CompactacaoRegistro.h"
 #include "../Model/NotasEstruturadas.h"
@@ -113,6 +114,53 @@ juce::AlertWindow* alertaModalComTitulo(const juce::String& titulo) {
         if (auto* aw = dynamic_cast<juce::AlertWindow*>(mcm->getModalComponent(i)))
             if (aw->getName() == titulo) return aw;
     return nullptr;
+}
+
+// Reload File do próprio original (sem MAIN): a derivada com o mesmo caminho batia em UNIQUE(item_id, caminho_relativo),
+// o ROLLBACK desfazia tudo e nada recarregava.
+void rodarTesteReloadArquivo(const Checar& checar) {
+    std::cout << "\n-- Reload File of the original --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_reload_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Reload";
+        params.prefixoNomenclatura = "REL";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string item = inserirItem(reg, projetoId, "REL-1", false, ".jpg");
+        const auto foto = raiz.getChildFile("orig/foto.jpg");
+        auto escrever = [&](int w, int h) {
+            foto.deleteFile();
+            foto.getParentDirectory().createDirectory();
+            juce::Image im(juce::Image::RGB, w, h, true);
+            juce::FileOutputStream o(foto);
+            juce::JPEGImageFormat fmt;
+            fmt.writeImageToStream(im, o);
+        };
+        escrever(32, 24);
+        reg.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(item)});  // inserirItem já põe um master fictício
+        matriz::ingest::ingerirArquivo(reg, pa.projeto().pasta(), item, foto, "preservation_master", true);
+        escrever(640, 480);  // o original mudou no disco
+        auto conferir = [&](const juce::String& quando) {
+            juce::String erro;
+            checar(pa.recarregarOuSubstituirArquivo(item, foto, erro), "Reload File of the original succeeds " + quando + " (" + erro + ")");
+            auto st = reg.prepare("SELECT tamanho_bytes, (SELECT COUNT(*) FROM arquivo WHERE item_id = ?) FROM arquivo "
+                                  "WHERE item_id = ? AND eh_master = 1");
+            st.bind(1, matriz::db::Value::of(item));
+            st.bind(2, matriz::db::Value::of(item));
+            checar(st.step() && st.columnInt(0) == foto.getSize() && st.columnInt(1) == 1,
+                   "... " + quando + ": the master takes the size on disk and no second file row is created");
+        };
+        conferir("the first time");
+        escrever(800, 600);
+        conferir("again");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("reload selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
 }
 
 void rodarTestesNomesCanonicos(const Checar& checar) {
@@ -5883,6 +5931,7 @@ int rodarLoteSelfTest() {
     }
     raizSetas.deleteRecursively();
 
+    rodarTesteReloadArquivo(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();
