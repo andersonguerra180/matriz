@@ -612,6 +612,19 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
                    "#22 Undo of Mark as Phone Dump brings the Source Medium back");
         }
 
+        // #23 container
+        {
+            const auto a = novo();
+            const auto b = novo();
+            const auto nest = pa.criarContainerDeTipo({a, b}, "audio.album", "project_audio", "Album");
+            checar(!nest.empty() && pa.nestDoItem(a).has_value(), "#23 Create Container works");
+            pa.definirNomeDoContainer(nest, "Renamed");
+            pa.desfazer();
+            checar(pa.nestDoItem(a) && pa.nestDoItem(a)->nome == "Album", "#23 Undo of Rename Container brings the old name back");
+            pa.desfazer();
+            checar(!pa.nestDoItem(a) && !pa.nestDoItem(b), "#23 Undo of Create Container removes it");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }

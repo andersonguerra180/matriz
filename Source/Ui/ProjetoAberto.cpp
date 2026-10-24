@@ -1373,6 +1373,7 @@ struct ParteUndoLinhas;
 static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descricao, std::vector<ParteUndoLinhas> partes,
                                   std::vector<std::string> itensAvisar, const std::string& tipoEvento);
 static void registrarUndoDeCampoRaiz(ProjetoAberto& pa, const std::string& itemId, const std::string& campoId);
+static void registrarUndoDoContainer(ProjetoAberto& pa, const std::string& descricao, const std::string& nestId, bool capa);
 
 void ProjetoAberto::definirCampoRaiz(const std::string& itemId, const std::string& campoId, const std::string& valor) {
     if (somenteLeitura_ || !projeto_ || itemId.empty()) return;
@@ -1476,6 +1477,28 @@ static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descrica
         for (const auto& id : itensAvisar) bus.dispararItemAlterado(id, tipoEvento);
         bus.finalizarLote();
     });
+}
+
+// Undo de container (NEST): a linha do nest e os membros voltam como estavam (o nest se apaga com cascata, por isso
+// os dois juntos) e, com `capa`, também a imagem de capa no disco (caminho fixo, sobrescrito/apagado na operação).
+static void registrarUndoDoContainer(ProjetoAberto& pa, const std::string& descricao, const std::string& nestId, bool capa) {
+    if (nestId.empty()) return;
+    pa.iniciarGrupoUndo(descricao);
+    registrarUndoDeLinhas(pa, descricao,
+                          {{"nest", "id = ?", {matriz::db::Value::of(nestId)}, false},
+                           {"nest_item", "nest_id = ?", {matriz::db::Value::of(nestId)}, false}},
+                          {""}, "nest");
+    if (capa) {
+        const juce::File atual = pa.projeto().pasta().getChildFile(".miniaturas/capa_container_" + juce::String(nestId) + ".jpg");
+        const bool tinha = atual.existsAsFile();
+        const juce::File copia = pa.projeto().pasta().getChildFile(".miniaturas/undo_capa_" + juce::Uuid().toString() + ".jpg");
+        if (tinha) atual.copyFileTo(copia);
+        registrarUndoNaMessageThread(pa, descricao, [atual, copia, tinha] {
+            if (tinha) copia.copyFileTo(atual);
+            else atual.deleteFile();
+        });
+    }
+    pa.finalizarGrupoUndo();
 }
 
 static void registrarUndoDeCampoRaiz(ProjetoAberto& pa, const std::string& itemId, const std::string& campoId) {
@@ -5359,6 +5382,7 @@ std::string ProjetoAberto::criarContainerDeTipo(const std::vector<std::string>& 
     const std::string capa = ordenarPorDataDeCriacao(itemIds).front();
     const std::string nestId = matriz::model::novoUuid();
     const std::string agora = matriz::model::agoraIso8601();
+    registrarUndoDoContainer(*this, "Create Container", nestId, false);  // retrato vazio: o Undo apaga o container novo
     std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
     db.run("BEGIN TRANSACTION", {});
     try {
@@ -5379,6 +5403,7 @@ std::string ProjetoAberto::criarContainerDeTipo(const std::vector<std::string>& 
 
 bool ProjetoAberto::trocarTipoDoContainer(const std::string& nestId, const std::string& tipo, const std::string& origem) {
     if (somenteLeitura_ || !projeto_ || nestId.empty() || tipo.empty() || origem.empty()) return false;
+    registrarUndoDoContainer(*this, "Change Container Type", nestId, false);
     auto& db = projeto_->registro();
     const std::string json = questionarioDoContainer(nestId);
     const std::string folhaAtual = json.empty() ? std::string() : juce::JSON::parse(juce::String::fromUTF8(json.c_str()))["folha"].toString().toStdString();
@@ -5426,6 +5451,7 @@ int ProjetoAberto::aplicarContextoDeImportacao(const std::vector<std::string>& i
 
 int ProjetoAberto::definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor) {
     if (somenteLeitura_ || !projeto_ || itemIds.empty() || valor.empty()) return 0;
+    registrarUndoDeRetrato("Set Content", retratar({{"item", "id", true}, {"item_campo", "item_id", false}}, itemIds), itemIds);
     auto& db = projeto_->registro();
     const std::string agora = matriz::model::agoraIso8601();
     std::vector<std::string> gravados;
@@ -5462,6 +5488,7 @@ bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce
     if (somenteLeitura_ || !projeto_ || nestId.empty() || !imagem.existsAsFile()) return false;
     juce::Image img = juce::ImageFileFormat::loadFrom(imagem);
     if (!img.isValid()) return false;
+    registrarUndoDoContainer(*this, "Set Container Cover", nestId, true);
     constexpr int kLado = 512;
     if (img.getWidth() > kLado || img.getHeight() > kLado) {
         const float escala = static_cast<float>(kLado) / static_cast<float>(juce::jmax(img.getWidth(), img.getHeight()));
@@ -5488,6 +5515,7 @@ bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce
 
 bool ProjetoAberto::definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso) {
     if (somenteLeitura_ || !projeto_ || nestId.empty() || nomeDoRecurso.empty()) return false;
+    registrarUndoDoContainer(*this, "Set Container Icon", nestId, false);
     try {
         projeto_->registro().run("UPDATE nest SET icone = ? WHERE id = ?", {matriz::db::Value::of(nomeDoRecurso), matriz::db::Value::of(nestId)});
     } catch (...) { return false; }
@@ -5526,6 +5554,7 @@ std::string ProjetoAberto::tipoDoContainer(const std::string& nestId) const {
 
 void ProjetoAberto::definirQuestionarioDoContainer(const std::string& nestId, const std::string& json) {
     if (somenteLeitura_ || !projeto_ || nestId.empty() || json.empty()) return;
+    registrarUndoDoContainer(*this, "Edit Container Questionnaire", nestId, false);
     try {
         projeto_->registro().run("UPDATE nest SET questionario = ? WHERE id = ?", {matriz::db::Value::of(json), matriz::db::Value::of(nestId)});
     } catch (...) {}
@@ -5564,6 +5593,7 @@ bool ProjetoAberto::reaplicarQuestionarioDoContainer(const std::string& nestId, 
 
 bool ProjetoAberto::definirNomeDoContainer(const std::string& nestId, const std::string& nome) {
     if (somenteLeitura_ || !projeto_ || nestId.empty() || nome.empty()) return false;
+    registrarUndoDoContainer(*this, "Rename Container", nestId, false);
     try {
         projeto_->registro().run("UPDATE nest SET nome = ? WHERE id = ?", {matriz::db::Value::of(nome), matriz::db::Value::of(nestId)});
     } catch (...) { return false; }
@@ -5572,6 +5602,7 @@ bool ProjetoAberto::definirNomeDoContainer(const std::string& nestId, const std:
 
 bool ProjetoAberto::removerCapaDoContainer(const std::string& nestId) {
     if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
+    registrarUndoDoContainer(*this, "Remove Container Cover", nestId, true);
     try {
         projeto_->registro().run("UPDATE nest SET capa_imagem = NULL WHERE id = ?", {matriz::db::Value::of(nestId)});
     } catch (...) { return false; }
@@ -5596,6 +5627,7 @@ void ProjetoAberto::definirRespostaDoQuestionario(const std::string& nestId, con
 
 bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame) {
     if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
+    registrarUndoDoContainer(*this, "Set Container Cover", nestId, true);
     juce::File video;
     double duracao = 0.0;
     juce::int64 maior = -1;
