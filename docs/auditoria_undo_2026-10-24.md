@@ -4,6 +4,22 @@ Leitura de código, sem mudanças. O app tem uma pilha de Undo (`ProjetoAberto::
 nela o que chama `registrarUndo`/`iniciarGrupoUndo` (direta ou indiretamente, ex. `salvarMetadado`). Tudo abaixo grava no
 banco **sem** entrar na pilha: o Undo não desfaz e, pior, desfaz a ação ANTERIOR que estava na pilha.
 
+## Situação (2026-10-24, fim do dia)
+
+Corrigidos (um commit `Fix(Undo #N)` cada): 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 18, 20, 21, 22, 23, 24, 26,
+27, 28 — com testes no `--selftest-lote` ("UNDO audit").
+
+Fora, de propósito:
+- **#14** ano padrão: gravado sozinho ao abrir a ficha, "sem marcar o item como editado e sem entrar no Undo" (decisão
+  registrada no código, `FichaPanelComponent`, EVENT DATE).
+- **#17** mover cards no mapa Original: o Original é calculado na hora a partir dos caminhos e não tem pastas no banco
+  (`acervo_pasta` vazio para ele) — mover não grava nada, não há o que desfazer.
+- **#19** zerar posições: migração automática ao abrir um mapa gravado por uma versão antiga, não é ação do usuário.
+- **#6 Reload File**: o Undo devolve o que o banco tinha (tamanho, cache, derivada), mas o arquivo no disco é o que ele é.
+
+Pendentes: #25 (ingest, decisão), F (backup/configuração, decisão) e H (defeitos do mecanismo).
+Decisão do usuário: Clear Metadata continua mantendo os campos Dublin Core.
+
 Já cobertos (têm Undo): campos da ficha via `salvarMetadado`/`salvarMetadadoEmLote` (individual, lote, Intake), tags,
 tipo de mídia, renomear, Send to Grid, Reject (R em lote), remover do projeto/backup, Folder Map (criar/renomear/apagar
 mapa, criar/renomear/mover/apagar/mesclar pasta, ativar, cor, mover e redimensionar cards no mapa não-Original,
