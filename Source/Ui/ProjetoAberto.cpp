@@ -2316,6 +2316,65 @@ const std::vector<std::string>& ProjetoAberto::ultimosItensIngeridos() const {
     return ultimosItensIngeridos_;
 }
 
+// Undo de Reload/Replace File: a derivada (o "arquivo atual" de um Replace), o cache técnico e as miniaturas dos
+// arquivos do item, e o tamanho do master, como estavam. O arquivo no disco não volta (um Reload relê o que está lá).
+static void registrarUndoDeArquivoAtual(ProjetoAberto& pa, const std::string& descricao, const std::string& itemId,
+                                        const std::string& masterId) {
+    auto& reg = pa.projeto().registro();
+    auto& ind = pa.projeto().indice();
+    std::vector<std::string> arquivos;
+    {
+        auto st = reg.prepare("SELECT id FROM arquivo WHERE item_id = ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        while (st.step()) arquivos.push_back(st.columnText(0));
+    }
+    std::optional<long long> tamanhoMaster;
+    {
+        auto st = reg.prepare("SELECT tamanho_bytes FROM arquivo WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(masterId));
+        if (st.step() && !st.columnIsNull(0)) tamanhoMaster = st.columnInt(0);
+    }
+    const std::string ondeDerivada = "item_id = ? AND derivada_de_arquivo_id IS NOT NULL";
+    const std::string ondeDoItem = "arquivo_id IN (SELECT value FROM json_each(?))";
+    const std::string jsonArquivos = idsEmJson(arquivos);
+    const std::string tDer = guardarLinhasParaUndo(reg, "arquivo", ondeDerivada, {matriz::db::Value::of(itemId)});
+    const std::string tCache = guardarLinhasParaUndo(reg, "cache_arquivo", ondeDoItem, {matriz::db::Value::of(jsonArquivos)});
+    const std::string tMini = guardarLinhasParaUndo(ind, "miniatura", ondeDoItem, {matriz::db::Value::of(jsonArquivos)});
+    ProjetoAberto* p = &pa;
+    registrarUndoNaMessageThread(pa, descricao, [p, itemId, masterId, tamanhoMaster, ondeDerivada, ondeDoItem, tDer, tCache, tMini] {
+        auto& r = p->projeto().registro();
+        auto& i = p->projeto().indice();
+        std::unique_lock<std::recursive_mutex> lock(p->writeMutex());
+        std::vector<std::string> hoje;  // arquivos do item agora (inclui a derivada nova, que sai)
+        {
+            auto st = r.prepare("SELECT id FROM arquivo WHERE item_id = ?");
+            st.bind(1, matriz::db::Value::of(itemId));
+            while (st.step()) hoje.push_back(st.columnText(0));
+        }
+        const std::string jsonHoje = idsEmJson(hoje);
+        try {
+            r.run("BEGIN TRANSACTION", {});
+            r.run("DELETE FROM cache_arquivo WHERE " + ondeDoItem, {matriz::db::Value::of(jsonHoje)});
+            voltarLinhasDoUndo(r, tDer, "arquivo", ondeDerivada, {matriz::db::Value::of(itemId)});
+            r.run("INSERT OR REPLACE INTO cache_arquivo SELECT * FROM temp.\"" + tCache + "\"", {});
+            r.run("UPDATE arquivo SET tamanho_bytes = ? WHERE id = ?",
+                  {tamanhoMaster ? matriz::db::Value::of(*tamanhoMaster) : matriz::db::Value::null(), matriz::db::Value::of(masterId)});
+            r.run("COMMIT", {});
+        } catch (...) {
+            try { r.run("ROLLBACK", {}); } catch (...) {}
+            return;
+        }
+        try {
+            i.run("DELETE FROM miniatura WHERE " + ondeDoItem, {matriz::db::Value::of(jsonHoje)});
+            i.run("INSERT OR IGNORE INTO miniatura SELECT * FROM temp.\"" + tMini + "\"", {});
+        } catch (...) {}
+        for (const auto& t : {tDer, tCache}) try { r.run("DROP TABLE IF EXISTS temp.\"" + t + "\"", {}); } catch (...) {}
+        try { i.run("DROP TABLE IF EXISTS temp.\"" + tMini + "\"", {}); } catch (...) {}
+        EventBus::obterInstancia().dispararItemAlterado(itemId, "miniatura");
+        EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
+    });
+}
+
 bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, const juce::File& novoCaminho,
                                                    juce::String& erro) {
     if (!projeto_) { erro = "Nenhum projeto aberto."; return false; }
@@ -2343,6 +2402,7 @@ bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, con
     // absoluto (/var x /private/var, volume remontado...); ou o arquivo que o master resolve hoje (MAIN/CLONE).
     const bool noLugar = matriz::vault::caminhoRelativoAoVolume(novoCaminho) == masterCaminhoRelativo ||
                          matriz::vault::caminhoEsperadoArquivo(db, masterId, projeto_->pasta()) == novoCaminho;
+    registrarUndoDeArquivoAtual(*this, noLugar ? "Reload File" : "Replace File", itemId, masterId);
 
     try {
         auto analise = matriz::ingest::analisarArquivo(novoCaminho);

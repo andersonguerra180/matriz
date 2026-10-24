@@ -503,6 +503,22 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             checar(pa.temCapa(a), "#5 Undo of Remove Cover brings the cover back");
         }
 
+        // #6 Replace File
+        {
+            const auto a = novo();
+            reg.run("DELETE FROM arquivo WHERE item_id = ?", {Value::of(a)});
+            matriz::ingest::ingerirArquivo(reg, pa.projeto().pasta(), a, jpeg("orig.jpg", 30), "preservation_master", true);
+            juce::String erro;
+            checar(pa.recarregarOuSubstituirArquivo(a, jpeg("nova.jpg", 50), erro), "#6 Replace File works (" + erro + ")");
+            checar(contar("SELECT COUNT(*) FROM arquivo WHERE item_id = ? AND derivada_de_arquivo_id IS NOT NULL", {Value::of(a)}) == 1,
+                   "#6 Replace File creates the current file (before Undo)");
+            checar(pa.descricaoUndoAtual() == "Replace File", "#6 Replace File is the step Undo will revert");
+            pa.desfazer();
+            checar(contar("SELECT COUNT(*) FROM arquivo WHERE item_id = ? AND derivada_de_arquivo_id IS NOT NULL", {Value::of(a)}) == 0 &&
+                       contar("SELECT COUNT(*) FROM arquivo WHERE item_id = ?", {Value::of(a)}) == 1,
+                   "#6 Undo of Replace File goes back to the original only");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }
