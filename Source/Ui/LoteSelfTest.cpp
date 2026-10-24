@@ -282,6 +282,51 @@ void rodarTestesGradeConsistente(const Checar& checar) {
     raiz.deleteRecursively();
 }
 
+// Auditoria do UNDO (docs/auditoria_undo_2026-10-24.md): cada ação que gravava sem entrar na pilha agora volta.
+void rodarTestesUndoAuditoria(const Checar& checar) {
+    std::cout << "\n-- UNDO audit: actions that used to write without Undo --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_undo_auditoria_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Undo";
+        params.prefixoNomenclatura = "UND";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string a = inserirItem(reg, projetoId, "UND-1", false, ".jpg");
+        const std::string b = inserirItem(reg, projetoId, "UND-2", false, ".jpg");
+
+        // #3 Clear Metadata (C)
+        pa.salvarMetadado(a, "dc_title", "Show in Lisbon");
+        pa.salvarMetadado(a, "collection_type", "Music");
+        pa.salvarMetadado(b, "dc_title", "Backstage");
+        pa.definirTags(a, {"Tour", "Live"});
+        reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                "VALUES (?, ?, 'raiz', 0, 'formato_tecnico', 'JPEG', 'leitura_tecnica', '2026-01-01T00:00:00Z')",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(a)});
+        pa.redefinirMetadadosItens({a, b});
+        checar(pa.lerMetadado(a, "collection_type").value_or("").empty() && pa.lerTags(a).empty(),
+               "#3 Clear Metadata clears the record (before Undo)");
+        checar(pa.descricaoUndoAtual().rfind("Clear Metadata", 0) == 0, "#3 Clear Metadata is the step Undo will revert");
+        checar(pa.desfazer(), "#3 Undo of Clear Metadata runs");
+        checar(pa.lerMetadado(a, "dc_title").value_or("") == "Show in Lisbon" &&
+                   pa.lerMetadado(a, "collection_type").value_or("") == "Music" &&
+                   pa.lerMetadado(b, "dc_title").value_or("") == "Backstage",
+               "#3 Undo of Clear Metadata brings back the fields of every item");
+        const auto tags = pa.lerTags(a);
+        checar(tags.size() == 2, "#3 Undo of Clear Metadata brings back the tags (" + juce::String((int) tags.size()) + ")");
+        auto st = reg.prepare("SELECT COUNT(*) FROM item_campo WHERE item_id = ? AND fonte = 'leitura_tecnica'");
+        st.bind(1, matriz::db::Value::of(a));
+        checar(st.step() && st.columnInt(0) == 1, "#3 the technical reading survives Clear and Undo, once");
+
+    } catch (const std::exception& e) {
+        checar(false, juce::String("undo audit selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesNomesCanonicos(const Checar& checar) {
     namespace nomes = matriz::model::nomes;
     using matriz::db::Value;
@@ -6053,6 +6098,7 @@ int rodarLoteSelfTest() {
     rodarTesteReloadArquivo(checar);
     rodarTestesUndoGeo(checar);
     rodarTestesGradeConsistente(checar);
+    rodarTestesUndoAuditoria(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();

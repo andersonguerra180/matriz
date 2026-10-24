@@ -1951,6 +1951,11 @@ void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& item
     auto& db = projeto_->registro();
     std::string agora = matriz::model::agoraIso8601();
 
+    // Undo: a ficha inteira como estava (colunas do item e TODOS os campos — a volta regrava o conjunto) e as tags.
+    auto retrato = retratar({{"item", "id", true}, {"item_campo", "item_id", false}}, itemIds);
+    std::vector<std::pair<std::string, std::vector<std::string>>> tagsAntes;
+    for (const auto& id : itemIds) tagsAntes.emplace_back(id, lerTags(id));
+
     for (const auto& itemId : itemIds) {
         if (itemId.empty()) continue;
 
@@ -1998,6 +2003,11 @@ void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& item
             EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
         } catch (...) {}
     }
+    registrarUndoDeRetrato(itemIds.size() == 1 ? "Clear Metadata" : "Clear Metadata (" + std::to_string(itemIds.size()) + " items)",
+                           std::move(retrato), itemIds, [this, tagsAntes] {
+                               for (const auto& [id, tags] : tagsAntes)
+                                   if (!tags.empty()) definirTags(id, tags);
+                           });
 }
 
 std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const {
@@ -4734,6 +4744,73 @@ void ProjetoAberto::registrarUndoDeRemocao(const std::string& token, std::vector
             return;
         }
         for (const auto& id : ids) EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
+    });
+}
+
+ProjetoAberto::Retrato ProjetoAberto::retratar(const std::vector<TabelaDoRetrato>& tabelas,
+                                               const std::vector<std::string>& ids) {
+    Retrato r;
+    if (!projeto_ || ids.empty() || desfazendo_) return r;
+    juce::Array<juce::var> lista;
+    for (const auto& id : ids) lista.add(juce::String::fromUTF8(id.c_str()));
+    const std::string json = juce::JSON::toString(juce::var(lista), true).toStdString();
+    auto& d = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> lock(writeMutex());
+    for (const auto& t : tabelas) {
+        ParteRetrato p{t.tabela, t.chave, "undo_rt_" + std::to_string(++contadorSnapUndo_), json, t.soAtualizar};
+        d.run("CREATE TEMP TABLE \"" + p.temp + "\" AS SELECT * FROM \"" + p.tabela + "\" WHERE 0", {});
+        d.run("INSERT INTO temp.\"" + p.temp + "\" SELECT * FROM \"" + p.tabela + "\" WHERE \"" + p.chave +
+                  "\" IN (SELECT value FROM json_each(?))",
+              {matriz::db::Value::of(json)});
+        r.push_back(std::move(p));
+    }
+    return r;
+}
+
+void ProjetoAberto::registrarUndoDeRetrato(const std::string& descricao, Retrato retrato, std::vector<std::string> idsAvisar,
+                                           std::function<void()> depois) {
+    if (retrato.empty()) return;
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        std::weak_ptr<bool> vivo = vivo_;
+        juce::MessageManager::callAsync([this, vivo, descricao, retrato = std::move(retrato), idsAvisar = std::move(idsAvisar),
+                                         depois = std::move(depois)]() mutable {
+            if (vivo.lock()) registrarUndoDeRetrato(descricao, std::move(retrato), std::move(idsAvisar), std::move(depois));
+        });
+        return;
+    }
+    registrarUndo(descricao, [this, retrato = std::move(retrato), idsAvisar = std::move(idsAvisar), depois = std::move(depois)] {
+        if (!projeto_) return;
+        auto& d = projeto_->registro();
+        std::unique_lock<std::recursive_mutex> lock(writeMutex());
+        bool voltou = false;
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            for (const auto& p : retrato) {
+                const std::string cols = colunasDe(d, p.tabela);
+                const std::string t = "\"" + p.tabela + "\"", k = "\"" + p.chave + "\"", tmp = "temp.\"" + p.temp + "\"";
+                if (p.soAtualizar) {
+                    d.run("UPDATE " + t + " SET (" + cols + ") = (SELECT " + cols + " FROM " + tmp + " AS r WHERE r." + k + " = " +
+                              t + "." + k + ") WHERE " + k + " IN (SELECT " + k + " FROM " + tmp + ")",
+                          {});
+                } else {
+                    d.run("DELETE FROM " + t + " WHERE " + k + " IN (SELECT value FROM json_each(?))",
+                          {matriz::db::Value::of(p.chavesJson)});
+                    d.run("INSERT INTO " + t + " (" + cols + ") SELECT " + cols + " FROM " + tmp, {});
+                }
+            }
+            d.run("COMMIT", {});
+            voltou = true;
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+        }
+        for (const auto& p : retrato)
+            try { d.run("DROP TABLE IF EXISTS temp.\"" + p.temp + "\"", {}); } catch (...) {}
+        if (!voltou) return;
+        if (depois) depois();
+        auto& bus = EventBus::obterInstancia();
+        bus.iniciarLote();
+        for (const auto& id : idsAvisar) bus.dispararItemAlterado(id, "metadado");
+        bus.finalizarLote();
     });
 }
 

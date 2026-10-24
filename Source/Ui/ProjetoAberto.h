@@ -366,6 +366,23 @@ public:
     // GET em lote: endereço/cidade/estado/país achados pelas coordenadas de cada item entram só onde o campo está
     // vazio; coordenadas e fonte nunca mudam. Uma transação, um Undo. Devolve quantos itens mudaram.
     int completarEnderecosGeo(const std::vector<matriz::analytics::AssetGeolocation>& achados);
+    // Undo genérico por RETRATO de tabelas (TEMP na conexão do registro, como registrarUndoVisualMapa): guarda, ANTES
+    // de gravar, as linhas de cada tabela cuja `chave` está em `ids`. A volta apaga as linhas atuais dessas chaves e
+    // regrava as guardadas — ou, com soAtualizar (tabela-mãe como `item`, que não se apaga sem cascata), só regrava as
+    // colunas das linhas que existiam. `depois` roda após o COMMIT da volta (ex.: tags via definirTags, que cuida da
+    // busca). registrarUndoDeRetrato pode ser chamado de outra thread (vai para a message thread).
+    struct ParteRetrato {
+        std::string tabela, chave, temp, chavesJson;
+        bool soAtualizar = false;
+    };
+    using Retrato = std::vector<ParteRetrato>;
+    struct TabelaDoRetrato {
+        std::string tabela, chave;
+        bool soAtualizar = false;
+    };
+    Retrato retratar(const std::vector<TabelaDoRetrato>& tabelas, const std::vector<std::string>& ids);
+    void registrarUndoDeRetrato(const std::string& descricao, Retrato retrato, std::vector<std::string> idsAvisar,
+                                std::function<void()> depois = nullptr);
     // Undo do Folder Map (chamar ANTES de mudar o banco). As cópias ficam em tabelas TEMP da conexão do registro.
     //  - Visual: posição, tamanho (escala_no), ativo, cor das pastas do mapa + fator dos cartões.
     //  - Snapshot: pastas + vínculos do mapa inteiro (e, com incluirLinhaMapa, a linha do folder_map: mapa apagado).
