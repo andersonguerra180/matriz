@@ -519,6 +519,22 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
                    "#6 Undo of Replace File goes back to the original only");
         }
 
+        // #7 confirmar sugestão da IA
+        {
+            const auto a = novo();
+            pa.projeto().indice().run("INSERT INTO sugestao_campo (id, item_id, nivel, nivel_indice, campo_id, valor, modelo, modelo_versao, processado_em) "
+                                      "VALUES ('sug1', ?, 'raiz', 0, 'campo_ia', 'Tour 2015', 'm', '1', '2026-10-24')", {Value::of(a)});
+            auto sug = pa.sugestaoPendente(a, "raiz", 0, "campo_ia");
+            checar(sug.has_value(), "#7 the AI suggestion is pending");
+            if (sug) pa.confirmarSugestao(*sug, a, "raiz", 0, "campo_ia", "user");
+            checar(pa.valorCampo(a, "raiz", 0, "campo_ia").value_or("") == "Tour 2015" && !pa.sugestaoPendente(a, "raiz", 0, "campo_ia"),
+                   "#7 confirming fills the field and closes the suggestion (before Undo)");
+            pa.desfazer();
+            checar(pa.valorCampo(a, "raiz", 0, "campo_ia").value_or("").empty() && pa.sugestaoPendente(a, "raiz", 0, "campo_ia").has_value() &&
+                       contar("SELECT COUNT(*) FROM item_historico WHERE item_id = ? AND tipo_evento = 'confirmacao_sugestao_ia'", {Value::of(a)}) == 0,
+                   "#7 Undo of Confirm: field empty, suggestion pending again, no history line");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }

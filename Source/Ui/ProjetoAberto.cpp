@@ -1369,6 +1369,10 @@ std::optional<std::string> ProjetoAberto::valorCampo(const std::string& itemId, 
     return std::nullopt;
 }
 
+struct ParteUndoLinhas;
+static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descricao, std::vector<ParteUndoLinhas> partes,
+                                  std::vector<std::string> itensAvisar, const std::string& tipoEvento);
+
 void ProjetoAberto::definirCampoRaiz(const std::string& itemId, const std::string& campoId, const std::string& valor) {
     if (somenteLeitura_ || !projeto_ || itemId.empty()) return;
     projeto_->registro().run(
@@ -1427,6 +1431,49 @@ static std::string idsEmJson(const std::vector<std::string>& ids) {
     juce::Array<juce::var> lista;
     for (const auto& id : ids) lista.add(juce::String::fromUTF8(id.c_str()));
     return juce::JSON::toString(juce::var(lista), true).toStdString();
+}
+
+// Undo de linhas com filtro: cada parte é (tabela, onde, params, noIndice). Guarda agora (chamar ANTES de gravar) e a
+// volta apaga o que bate com o filtro e regrava o guardado — o registro numa transação, o índice depois. Avisa os
+// itens com `tipoEvento`. Função livre (API pública do ProjetoAberto) para não mexer no header.
+struct ParteUndoLinhas {
+    std::string tabela, onde;
+    std::vector<matriz::db::Value> params;
+    bool noIndice = false;
+};
+static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descricao, std::vector<ParteUndoLinhas> partes,
+                                  std::vector<std::string> itensAvisar, const std::string& tipoEvento) {
+    std::vector<std::string> temps;
+    try {
+        for (const auto& pt : partes)
+            temps.push_back(guardarLinhasParaUndo(pt.noIndice ? pa.projeto().indice() : pa.projeto().registro(), pt.tabela, pt.onde, pt.params));
+    } catch (...) { return; }
+    ProjetoAberto* p = &pa;
+    registrarUndoNaMessageThread(pa, descricao, [p, partes, temps, itensAvisar, tipoEvento] {
+        auto& r = p->projeto().registro();
+        auto& i = p->projeto().indice();
+        std::unique_lock<std::recursive_mutex> lock(p->writeMutex());
+        try {
+            r.run("BEGIN TRANSACTION", {});
+            for (size_t k = 0; k < partes.size(); ++k)
+                if (!partes[k].noIndice) voltarLinhasDoUndo(r, temps[k], partes[k].tabela, partes[k].onde, partes[k].params);
+            r.run("COMMIT", {});
+        } catch (...) {
+            try { r.run("ROLLBACK", {}); } catch (...) {}
+            return;
+        }
+        for (size_t k = 0; k < partes.size(); ++k) {
+            auto& d = partes[k].noIndice ? i : r;
+            try {
+                if (partes[k].noIndice) voltarLinhasDoUndo(i, temps[k], partes[k].tabela, partes[k].onde, partes[k].params);
+                d.run("DROP TABLE IF EXISTS temp.\"" + temps[k] + "\"", {});
+            } catch (...) {}
+        }
+        auto& bus = EventBus::obterInstancia();
+        bus.iniciarLote();
+        for (const auto& id : itensAvisar) bus.dispararItemAlterado(id, tipoEvento);
+        bus.finalizarLote();
+    });
 }
 
 // Undo da capa do item (Set/Remove Cover): só as linhas 'capa_frente' de `arquivo` e as miniaturas delas no índice.
@@ -2678,6 +2725,15 @@ void ProjetoAberto::confirmarSugestao(const SugestaoCampo& sugestao, const std::
                                        const std::string& autor) {
     if (!projeto_) return;
     std::string agora = matriz::model::agoraIso8601();
+    // Undo: o campo, o registro da confirmação no histórico e a sugestão (que volta a ficar pendente).
+    registrarUndoDeLinhas(*this, "Confirm AI suggestion",
+                          {{"item_campo", "item_id = ? AND nivel = ? AND nivel_indice = ? AND campo_id = ?",
+                            {matriz::db::Value::of(itemId), matriz::db::Value::of(nivel), matriz::db::Value::of(nivelIndice),
+                             matriz::db::Value::of(campoId)}, false},
+                           {"item_historico", "item_id = ? AND tipo_evento = 'confirmacao_sugestao_ia' AND campo_id = ?",
+                            {matriz::db::Value::of(itemId), matriz::db::Value::of(campoId)}, false},
+                           {"sugestao_campo", "id = ?", {matriz::db::Value::of(sugestao.id)}, true}},
+                          {itemId}, "campo");
 
     projeto_->registro().run(
         "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
