@@ -15,6 +15,7 @@
 #include "OverlayComponent.h"
 #include "ViewModeIconButton.h"
 #include "BarraLateral.h"
+#include "PainelListaEscolha.h"
 
 namespace matriz::ui {
 
@@ -97,7 +98,7 @@ private:
     void aplicarFiltroAno();
     void aplicarFiltrosAdicionais();
     // Só repinta o destaque dos botões de ano/combo de collection a partir de
-    // anosSelecionados_/collectionSelecionado_ — sem tocar no filtro da grade
+    // anosSelecionados_/collectionsSelecionados_ — sem tocar no filtro da grade
     // nem chamar mosaico_->recarregar() (ver comentário em aoMudar).
     void atualizarDestaqueBotoesAnoCollection();
     void atualizarContagens();
@@ -322,7 +323,21 @@ private:
     };
     EscutaEventos escutaEventos_{*this};
     void atualizarFiltrosDeData();
-    void atualizarListasDoContentEmMemoria();
+    // Hierarquia CONTENT TYPE -> SUBJECT -> LIST (níveis 0, 1, 2), cada um com múltipla escolha (OU dentro do
+    // nível, E entre níveis). O nível mais alto com escolha é o "chefe": suas opções nunca são cortadas pelos outros;
+    // um nível com escolha abaixo dele só é cortado pelos níveis com escolha acima; um nível sem escolha mostra só o
+    // que existe no resultado atual. Ligar um nível de cima desliga, embaixo, o que deixou de existir.
+    void alternarFiltroHierarquia(int nivel, const std::string& valor, bool ligado);
+    void limparFiltroHierarquia(int nivel);
+    void podarFiltrosAbaixoDe(int nivel);
+    void aposMudarFiltroHierarquia(int nivel);
+    void abrirPainelHierarquia(int nivel);
+    std::vector<PainelListaEscolha::Opcao> opcoesDoNivel(int nivel) const;
+    juce::String subtituloDoNivel(int nivel) const;
+    void atualizarResumoCombos();
+    std::set<std::string>& selecaoDoNivel(int nivel);
+    juce::Component::SafePointer<PainelListaEscolha> painelAberto_;
+    int nivelPainelAberto_ = -1;
     bool refreshDataPendente_ = false;
     bool contagensAguardandoSnapshot_ = false;
     bool filtrosAguardandoSnapshot_ = false;
@@ -331,7 +346,6 @@ private:
     // -1 = a grade não está com esse conjunto. Snapshot novo = conjunto velho, refeito ao chegar.
     int versaoSnapshotDoFunil_ = -1;
     int loteMetadadosProfundidade_ = 0;
-    bool listasAdiadasDuranteLote_ = false;
     bool filtrosAdiadosDuranteLote_ = false;
     bool contagensAdiadasDuranteLote_ = false;
     // Arquivos vindos de "Show content in grid" (Folder Map/árvores): fica
@@ -360,17 +374,17 @@ private:
     void abrirMenuAnosMais();
 
     std::vector<std::pair<std::string, int>> collectionDisponiveis_;
-    std::unique_ptr<juce::ComboBox> comboContentType_;
-    std::optional<std::string> collectionSelecionado_;
-    // SUBJECT (card CONTENT TYPE): filtra por UM subject; item passa se o
-    // dc_subject dele contém esse subject (lista separada por , ou ;).
-    std::unique_ptr<juce::ComboBox> comboSubject_;
+    std::unique_ptr<ComboDePainel> comboContentType_;
+    std::set<std::string> collectionsSelecionados_;  // vazio = sem filtro; "Unknown"/"Hidden" são entradas fixas
+    // SUBJECT (card CONTENT TYPE): item passa se o dc_subject dele (lista
+    // separada por , ou ;) contém algum dos subjects ligados.
+    std::unique_ptr<ComboDePainel> comboSubject_;
     std::vector<std::pair<std::string, int>> subjectsDisponiveis_;
-    std::optional<std::string> subjectSelecionado_;
-    // LIST (card CONTENT TYPE): filtra por UMA lista/seleção (item.lista, valor único).
-    std::unique_ptr<juce::ComboBox> comboLista_;
+    std::set<std::string> subjectsSelecionados_;
+    // LIST (card CONTENT TYPE): item passa se a lista dele (item.lista, valor único) é uma das ligadas.
+    std::unique_ptr<ComboDePainel> comboLista_;
     std::vector<std::pair<std::string, int>> listasDisponiveis_;
-    std::optional<std::string> listaSelecionada_;
+    std::set<std::string> listasSelecionadas_;
 
     juce::ThreadPool poolMiniaturas_{juce::ThreadPoolOptions{}.withThreadName("MatrizMiniGen")
                                      .withNumberOfThreads(1)

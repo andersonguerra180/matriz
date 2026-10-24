@@ -218,15 +218,51 @@ constexpr const char* kSemLista = "__sem_lista__";
 
 bool semLista(const ItemResumo& item) { return !item.lista.has_value() || item.lista->empty(); }
 
-// Item passa no filtro LIST? (sem filtro = passa; comparação case-insensitive)
-bool passaLista(const ItemResumo& item, const std::optional<std::string>& sel) {
-    if (!sel.has_value()) return true;
-    if (*sel == kSemLista) return semLista(item);
-    return !semLista(item) && matriz::model::nomes::chave(*item.lista) == matriz::model::nomes::chave(*sel);
-}
-
 bool semSubject(const ItemResumo& item) {
     return !item.subject.has_value() || dividirSubjects(*item.subject).empty();
+}
+
+// Escolhas de SUBJECT/LIST já em chave canônica (nomes case-insensitive: "show" passa no filtro "Show").
+struct SelecaoNomes {
+    bool vazia = true;
+    bool sem = false;  // a entrada fixa "No Subject"/"No List" está ligada
+    std::set<std::string> chaves;
+};
+
+SelecaoNomes selecaoNomes(const std::set<std::string>& sel, const char* sentinela) {
+    SelecaoNomes s;
+    s.vazia = sel.empty();
+    for (const auto& v : sel) {
+        if (v == sentinela) s.sem = true;
+        else s.chaves.insert(matriz::model::nomes::chave(v));
+    }
+    return s;
+}
+
+// Item passa no filtro LIST? (sem escolha = passa; senão, a lista dele é uma das ligadas)
+bool passaLista(const ItemResumo& item, const SelecaoNomes& sel) {
+    if (sel.vazia) return true;
+    if (semLista(item)) return sel.sem;
+    return sel.chaves.count(matriz::model::nomes::chave(*item.lista)) > 0;
+}
+
+// SUBJECT: passa se algum dos subjects do item está ligado.
+bool passaSubject(const ItemResumo& item, const SelecaoNomes& sel) {
+    if (sel.vazia) return true;
+    if (semSubject(item)) return sel.sem;
+    for (const auto& sub : dividirSubjects(*item.subject))
+        if (sel.chaves.count(matriz::model::nomes::chave(sub))) return true;
+    return false;
+}
+
+// CONTENT TYPE: "Unknown" = sem content, "Hidden" = os ocultos. ignorarHidden (contagens, que são do catálogo
+// visível): Hidden não restringe nada.
+bool passaContent(const ItemResumo& item, const std::set<std::string>& sel, bool ignorarHidden) {
+    if (sel.empty()) return true;
+    if (ignorarHidden && sel.size() == 1 && sel.count("Hidden")) return true;
+    const bool temContent = item.collectionType.has_value() && !item.collectionType->empty();
+    if (!temContent) return sel.count("Unknown") > 0;
+    return sel.count(*item.collectionType) > 0;
 }
 } // namespace
 
@@ -363,10 +399,8 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (mosaico_) {
             mosaico_->atualizarItemEmMemoria(itemId);
             if (loteMetadadosProfundidade_ > 0) {
-                listasAdiadasDuranteLote_ = true;
                 filtrosAdiadosDuranteLote_ = true;
             } else {
-                atualizarListasDoContentEmMemoria();
                 // O campo recém-gravado já está no snapshot em memória: refaz o
                 // funil agora, sem esperar a contagem assíncrona nem reler o catálogo.
                 aplicarFiltrosAdicionais();
@@ -387,10 +421,6 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     fichaPanel_->aoFinalizarLoteAtualizacao = [this] {
         if (loteMetadadosProfundidade_ > 0) --loteMetadadosProfundidade_;
         if (loteMetadadosProfundidade_ == 0) {
-            if (listasAdiadasDuranteLote_) {
-                listasAdiadasDuranteLote_ = false;
-                atualizarListasDoContentEmMemoria();
-            }
             if (filtrosAdiadosDuranteLote_) {
                 filtrosAdiadosDuranteLote_ = false;
                 aplicarFiltrosAdicionais();
@@ -1178,9 +1208,9 @@ int CatalogWorkspaceComponent::contarFiltrosAtivos() const {
     if (categoriaSelecionada_ > 0 && static_cast<size_t>(categoriaSelecionada_) < categorias_.size() &&
         categorias_[static_cast<size_t>(categoriaSelecionada_)].chave == "merge_conflitos") ++n;
     if (!anosSelecionados_.empty()) ++n;
-    if (collectionSelecionado_.has_value()) ++n;
-    if (subjectSelecionado_.has_value()) ++n;
-    if (listaSelecionada_.has_value()) ++n;
+    if (!collectionsSelecionados_.empty()) ++n;
+    if (!subjectsSelecionados_.empty()) ++n;
+    if (!listasSelecionadas_.empty()) ++n;
     if (mosaico_ && !mosaico_->termosBuscaAtuais().isEmpty()) ++n;
     if (filtroHerdadoIds_.has_value()) ++n;
     n += (ocultarEditados_ ? 1 : 0) + (mostrarApenasRejeitados_ ? 1 : 0) + (ocultarNaoSelecionados_ ? 1 : 0) +
@@ -1246,36 +1276,9 @@ void CatalogWorkspaceComponent::atualizarDestaqueBotoesAnoCollection() {
     }
     repaint(0, 0, kLarguraSidebar, getHeight());
 
-    // CONTENT TYPE (item 4, nova lista) é um dropdown, não botões — só
-    // precisa refletir collectionSelecionado_ no item selecionado do combo,
-    // sem tocar na grade (mesma regra dos botões de ano/tipo acima).
-    if (comboContentType_) {
-        int idTodos = static_cast<int>(collectionDisponiveis_.size()) + 1;
-        int idSel = idTodos;
-        if (collectionSelecionado_.has_value()) {
-            for (size_t i = 0; i < collectionDisponiveis_.size(); ++i) {
-                if (collectionDisponiveis_[i].first == *collectionSelecionado_) {
-                    idSel = static_cast<int>(i + 1);
-                    break;
-                }
-            }
-        }
-        comboContentType_->setSelectedId(idSel, juce::dontSendNotification);
-    }
-    if (comboSubject_) {
-        int idSel = static_cast<int>(subjectsDisponiveis_.size()) + 1;
-        if (subjectSelecionado_.has_value())
-            for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i)
-                if (subjectsDisponiveis_[i].first == *subjectSelecionado_) { idSel = static_cast<int>(i + 1); break; }
-        comboSubject_->setSelectedId(idSel, juce::dontSendNotification);
-    }
-    if (comboLista_) {
-        int idSel = static_cast<int>(listasDisponiveis_.size()) + 1;
-        if (listaSelecionada_.has_value())
-            for (size_t i = 0; i < listasDisponiveis_.size(); ++i)
-                if (listasDisponiveis_[i].first == *listaSelecionada_) { idSel = static_cast<int>(i + 1); break; }
-        comboLista_->setSelectedId(idSel, juce::dontSendNotification);
-    }
+    // CONTENT TYPE / SUBJECT / LIST são dropdowns, não botões — só o texto
+    // de cada um acompanha a escolha, sem tocar na grade.
+    atualizarResumoCombos();
 }
 
 void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
@@ -1283,7 +1286,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
     if (!mosaico_) return;
 
-    mosaico_->definirMostrarOcultos(collectionSelecionado_.has_value() && *collectionSelecionado_ == "Hidden");
+    mosaico_->definirMostrarOcultos(collectionsSelecionados_.count("Hidden") > 0);
 
     const auto& libChave = (categoriaSelecionada_ >= 0 && categoriaSelecionada_ < static_cast<int>(categorias_.size()))
         ? categorias_[static_cast<size_t>(categoriaSelecionada_)].chave : std::string();
@@ -1365,6 +1368,8 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     };
 
     if (filtroHerdadoIds_ || ocultarComGeo_) anyFilter = true;
+    const auto selSubjects = selecaoNomes(subjectsSelecionados_, kSemSubject);
+    const auto selListas = selecaoNomes(listasSelecionadas_, kSemLista);
     for (const auto& item : itens) {
         if (ocultarComGeo_ && item.temGeolocalizacao) continue;
         if (filtroHerdadoIds_ && !filtroHerdadoIds_->count(item.id)) continue;
@@ -1424,33 +1429,19 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             if (!anoBate) continue;
         }
 
-        if (collectionSelecionado_.has_value()) {
+        if (!collectionsSelecionados_.empty()) {
             anyFilter = true;
-            if (*collectionSelecionado_ == "Unknown") {
-                if (item.collectionType.has_value() && !item.collectionType->empty()) continue;
-            } else {
-                if (!item.collectionType.has_value() || *item.collectionType != *collectionSelecionado_) continue;
-            }
+            if (!passaContent(item, collectionsSelecionados_, /*ignorarHidden*/ false)) continue;
         }
 
-        if (subjectSelecionado_.has_value() && *subjectSelecionado_ == kSemSubject) {
+        if (!selSubjects.vazia) {
             anyFilter = true;
-            if (!semSubject(item)) continue;
-        } else if (subjectSelecionado_.has_value()) {
-            anyFilter = true;
-            if (!item.subject.has_value()) continue;
-            // Nomes case-insensitive: "show" passa no filtro "Show".
-            const auto chaveSel = matriz::model::nomes::chave(*subjectSelecionado_);
-            auto subs = dividirSubjects(*item.subject);
-            if (std::none_of(subs.begin(), subs.end(), [&](const std::string& s) {
-                    return matriz::model::nomes::chave(s) == chaveSel;
-                }))
-                continue;
+            if (!passaSubject(item, selSubjects)) continue;
         }
 
-        if (listaSelecionada_.has_value()) {
+        if (!selListas.vazia) {
             anyFilter = true;
-            if (!passaLista(item, listaSelecionada_)) continue;
+            if (!passaLista(item, selListas)) continue;
         }
 
         filteredIds.insert(item.id);
@@ -1474,160 +1465,170 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 }
 
 void CatalogWorkspaceComponent::construirFiltroCollection() {
-    // Item 4 (nova lista): o filtro CONTENT TYPE volta como card próprio
-    // abaixo de MEDIA TYPE, desta vez como dropdown em vez da lista de
-    // botões de antes — mesmo collectionSelecionado_/collectionDisponiveis_
-    // que já alimentavam aplicarFiltrosAdicionais() e atualizarContagens(),
-    // só a apresentação mudou. O combo em si nasce uma vez só; aqui só
-    // repõe os itens quando collectionDisponiveis_ muda.
-    if (!comboContentType_) {
-        comboContentType_ = std::make_unique<juce::ComboBox>();
-        addAndMakeVisible(*comboContentType_);
-        comboContentType_->onChange = [this] {
-            int sel = comboContentType_->getSelectedId();
-            int idTodos = static_cast<int>(collectionDisponiveis_.size()) + 1;
-            if (sel <= 0 || sel >= idTodos) {
-                collectionSelecionado_ = std::nullopt;
-            } else {
-                collectionSelecionado_ = collectionDisponiveis_[static_cast<size_t>(sel - 1)].first;
-            }
-            atualizarListasDoContentEmMemoria();
-            aplicarFiltrosAdicionais();
-            atualizarContagens();  // os outros grupos contam só o que passa por este filtro
-        };
-    }
-
-    comboContentType_->clear(juce::dontSendNotification);
-    int idTodos = static_cast<int>(collectionDisponiveis_.size()) + 1;
-    comboContentType_->addItem(matriz::i18n::t("catwork.content_type_todos"), idTodos);
-    for (size_t i = 0; i < collectionDisponiveis_.size(); ++i) {
-        const auto& [valor, contagem] = collectionDisponiveis_[i];
-        juce::String rotulo = (valor == "Unknown")
-            ? matriz::i18n::t("catwork.content_type_desconhecido")
-            : juce::String(valor);
-        rotulo += " (" + juce::String(contagem) + ")";
-        comboContentType_->addItem(rotulo, static_cast<int>(i + 1));
-    }
-
-    int idSel = idTodos;
-    if (collectionSelecionado_.has_value()) {
-        for (size_t i = 0; i < collectionDisponiveis_.size(); ++i) {
-            if (collectionDisponiveis_[i].first == *collectionSelecionado_) {
-                idSel = static_cast<int>(i + 1);
-                break;
-            }
-        }
-    }
-    comboContentType_->setSelectedId(idSel, juce::dontSendNotification);
+    // CONTENT TYPE / SUBJECT / LIST: o combo é só o rótulo (mesmo desenho e
+    // lugar de antes); clicar abre o PainelListaEscolha com um interruptor por
+    // opção, que fica aberto enquanto o usuário liga/desliga. As opções vêm de
+    // collectionDisponiveis_/subjectsDisponiveis_/listasDisponiveis_ (job de
+    // contagens), aqui só o texto do combo e o painel aberto acompanham.
+    auto criar = [this](std::unique_ptr<ComboDePainel>& combo, int nivel) {
+        if (combo) return;
+        combo = std::make_unique<ComboDePainel>();
+        combo->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        combo->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        combo->setColour(juce::ComboBox::outlineColourId, tema().borda);
+        combo->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+        combo->aoAbrir = [this, nivel] { abrirPainelHierarquia(nivel); };
+        addAndMakeVisible(*combo);
+    };
+    criar(comboContentType_, 0);
+    criar(comboSubject_, 1);
+    criar(comboLista_, 2);
+    atualizarResumoCombos();
 }
 
-void CatalogWorkspaceComponent::atualizarListasDoContentEmMemoria() {
+void CatalogWorkspaceComponent::construirFiltroSubject() { construirFiltroCollection(); }
+
+void CatalogWorkspaceComponent::construirFiltroLista() { construirFiltroCollection(); }
+
+std::set<std::string>& CatalogWorkspaceComponent::selecaoDoNivel(int nivel) {
+    return nivel == 0 ? collectionsSelecionados_ : (nivel == 1 ? subjectsSelecionados_ : listasSelecionadas_);
+}
+
+namespace {
+juce::String rotuloDoValor(int nivel, const std::string& valor) {
+    if (nivel == 0 && valor == "Unknown") return matriz::i18n::t("catwork.content_type_desconhecido");
+    if (nivel == 1 && valor == kSemSubject) return matriz::i18n::t("catwork.subject_nenhum");
+    if (nivel == 2 && valor == kSemLista) return matriz::i18n::t("catwork.lista_nenhuma");
+    return juce::String::fromUTF8(valor.c_str());
+}
+
+// "Music" / "Music, Live" / "3 selected"
+juce::String resumoDaSelecao(int nivel, const std::set<std::string>& sel) {
+    if (sel.size() > 2) return matriz::i18n::t("catwork.n_selecionados").replace("{n}", juce::String(static_cast<int>(sel.size())));
+    juce::StringArray rotulos;
+    for (const auto& v : sel) rotulos.add(rotuloDoValor(nivel, v));
+    return rotulos.joinIntoString(", ");
+}
+
+// Mesmo valor para SUBJECT/LIST = mesma chave canônica; CONTENT TYPE compara exato.
+bool mesmoValor(int nivel, const std::string& a, const std::string& b) {
+    if (nivel == 0 || a == kSemSubject || a == kSemLista || b == kSemSubject || b == kSemLista) return a == b;
+    return matriz::model::nomes::chave(a) == matriz::model::nomes::chave(b);
+}
+} // namespace
+
+void CatalogWorkspaceComponent::atualizarResumoCombos() {
+    const char* todos[] = {"catwork.content_type_todos", "catwork.subject_todos", "catwork.lista_todas"};
+    ComboDePainel* combos[] = {comboContentType_.get(), comboSubject_.get(), comboLista_.get()};
+    for (int nivel = 0; nivel < 3; ++nivel) {
+        if (combos[nivel] == nullptr) continue;
+        const auto& sel = selecaoDoNivel(nivel);
+        combos[nivel]->setText(sel.empty() ? matriz::i18n::t(todos[nivel]) : resumoDaSelecao(nivel, sel), juce::dontSendNotification);
+    }
+}
+
+std::vector<PainelListaEscolha::Opcao> CatalogWorkspaceComponent::opcoesDoNivel(int nivel) const {
+    const auto& disponiveis = nivel == 0 ? collectionDisponiveis_ : (nivel == 1 ? subjectsDisponiveis_ : listasDisponiveis_);
+    const auto& sel = const_cast<CatalogWorkspaceComponent*>(this)->selecaoDoNivel(nivel);
+    std::vector<PainelListaEscolha::Opcao> opcoes;
+    for (const auto& [valor, contagem] : disponiveis) {
+        PainelListaEscolha::Opcao o;
+        o.valor = juce::String::fromUTF8(valor.c_str());
+        o.rotulo = rotuloDoValor(nivel, valor);
+        o.contagem = contagem;
+        o.ligado = std::any_of(sel.begin(), sel.end(), [&](const std::string& v) { return mesmoValor(nivel, v, valor); });
+        opcoes.push_back(std::move(o));
+    }
+    return opcoes;
+}
+
+// "Within: Music › Backstage" — os níveis com escolha que estão cortando as opções deste (mesma regra das contagens).
+juce::String CatalogWorkspaceComponent::subtituloDoNivel(int nivel) const {
+    auto* self = const_cast<CatalogWorkspaceComponent*>(this);
+    const bool temEscolha = !self->selecaoDoNivel(nivel).empty();
+    juce::StringArray partes;
+    for (int outro = 0; outro < 3; ++outro) {
+        if (outro == nivel) continue;
+        const auto& sel = self->selecaoDoNivel(outro);
+        if (sel.empty() || (outro > nivel && temEscolha)) continue;
+        partes.add(resumoDaSelecao(outro, sel));
+    }
+    if (partes.isEmpty()) return {};
+    return matriz::i18n::t("catwork.dentro_de").replace("{x}", partes.joinIntoString(juce::String::fromUTF8(" \xe2\x80\xba ")));
+}
+
+void CatalogWorkspaceComponent::abrirPainelHierarquia(int nivel) {
+    ComboDePainel* combos[] = {comboContentType_.get(), comboSubject_.get(), comboLista_.get()};
+    const char* titulos[] = {"catwork.painel_content", "catwork.painel_subject", "catwork.painel_lista"};
+    if (nivel < 0 || nivel > 2 || combos[nivel] == nullptr) return;
+    PainelListaEscolha::Config c;
+    c.titulo = matriz::i18n::t(titulos[nivel]);
+    c.subtitulo = subtituloDoNivel(nivel);
+    c.modo = PainelListaEscolha::Modo::Multipla;
+    c.opcoes = opcoesDoNivel(nivel);
+    juce::Component::SafePointer<CatalogWorkspaceComponent> seguro(this);
+    c.aoAlternar = [seguro, nivel](const juce::String& valor, bool ligado) {
+        if (seguro != nullptr) seguro->alternarFiltroHierarquia(nivel, valor.toStdString(), ligado);
+    };
+    c.aoLimparTudo = [seguro, nivel] {
+        if (seguro != nullptr) seguro->limparFiltroHierarquia(nivel);
+    };
+    painelAberto_ = PainelListaEscolha::abrir(*combos[nivel], std::move(c));
+    nivelPainelAberto_ = nivel;
+}
+
+void CatalogWorkspaceComponent::alternarFiltroHierarquia(int nivel, const std::string& valor, bool ligado) {
+    auto& sel = selecaoDoNivel(nivel);
+    for (auto it = sel.begin(); it != sel.end();)
+        it = mesmoValor(nivel, *it, valor) ? sel.erase(it) : std::next(it);
+    if (ligado) sel.insert(valor);
+    aposMudarFiltroHierarquia(nivel);
+}
+
+void CatalogWorkspaceComponent::limparFiltroHierarquia(int nivel) {
+    selecaoDoNivel(nivel).clear();
+    aposMudarFiltroHierarquia(nivel);
+}
+
+void CatalogWorkspaceComponent::aposMudarFiltroHierarquia(int nivel) {
+    podarFiltrosAbaixoDe(nivel);
+    atualizarResumoCombos();
+    aplicarFiltrosAdicionais();
+    atualizarContagens();  // os outros níveis (e MEDIA TYPE/DATE) contam só o que passa por este filtro
+    if (painelAberto_ != nullptr && nivelPainelAberto_ >= 0)
+        painelAberto_->atualizarOpcoes(opcoesDoNivel(nivelPainelAberto_), subtituloDoNivel(nivelPainelAberto_));
+}
+
+// Mudou a escolha de um nível: o que estava ligado embaixo e não existe mais
+// dentro dos níveis acima (com escolha) é desligado — "Backstage" só existe em
+// Music, CONTENT TYPE passou a Video: Backstage sai, e a LIST é revista.
+void CatalogWorkspaceComponent::podarFiltrosAbaixoDe(int nivel) {
     if (!mosaico_ || mosaico_->versaoSnapshot() == 0) return;
-
-    std::map<std::string, int> contagem;
-    std::map<std::string, std::string> grafia;
-    int semLista = 0;
-    for (const auto& item : mosaico_->todosItensEmMemoria()) {
-        if (collectionSelecionado_.has_value()) {
-            const bool temContent = item.collectionType.has_value() && !item.collectionType->empty();
-            const bool pertence = *collectionSelecionado_ == "Unknown"
-                ? !temContent
-                : (temContent && *item.collectionType == *collectionSelecionado_);
-            if (!pertence) continue;
+    const bool comOcultos = collectionsSelecionados_.count("Hidden") > 0;
+    for (int abaixo = nivel + 1; abaixo <= 2; ++abaixo) {
+        auto& sel = selecaoDoNivel(abaixo);
+        if (sel.empty()) continue;
+        const auto selSubjects = selecaoNomes(subjectsSelecionados_, kSemSubject);
+        std::set<std::string> existe;
+        bool existeSem = false;
+        for (const auto& item : mosaico_->todosItensEmMemoria()) {
+            if (item.oculto() && !comOcultos) continue;
+            if (!passaContent(item, collectionsSelecionados_, /*ignorarHidden*/ false)) continue;
+            if (abaixo == 1) {
+                if (semSubject(item)) existeSem = true;
+                else for (const auto& sub : dividirSubjects(*item.subject)) existe.insert(matriz::model::nomes::chave(sub));
+            } else {
+                if (!passaSubject(item, selSubjects)) continue;
+                if (semLista(item)) existeSem = true;
+                else existe.insert(matriz::model::nomes::chave(*item.lista));
+            }
         }
-        if (!item.lista.has_value() || item.lista->empty()) {
-            ++semLista;
-            continue;
+        const std::string sentinela = abaixo == 1 ? kSemSubject : kSemLista;
+        for (auto it = sel.begin(); it != sel.end();) {
+            const bool fica = *it == sentinela ? existeSem : existe.count(matriz::model::nomes::chave(*it)) > 0;
+            it = fica ? std::next(it) : sel.erase(it);
         }
-        const auto chave = matriz::model::nomes::chave(*item.lista);
-        grafia.emplace(chave, *item.lista);
-        ++contagem[grafia[chave]];
     }
-
-    listasDisponiveis_.clear();
-    for (const auto& par : contagem) listasDisponiveis_.push_back(par);
-    listasDisponiveis_.push_back({kSemLista, semLista});
-
-    if (listaSelecionada_.has_value()) {
-        const bool aindaExiste = std::any_of(listasDisponiveis_.begin(), listasDisponiveis_.end(),
-            [this](const auto& par) { return par.first == *listaSelecionada_; });
-        if (!aindaExiste) listaSelecionada_.reset();
-    }
-    construirFiltroLista();
-}
-
-void CatalogWorkspaceComponent::construirFiltroSubject() {
-    // SUBJECT: mesmo desenho do combo de CONTENT TYPE, no mesmo card. As
-    // opções vêm do job de contagens (subjects existentes no projeto).
-    if (!comboSubject_) {
-        comboSubject_ = std::make_unique<juce::ComboBox>();
-        comboSubject_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-        comboSubject_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
-        comboSubject_->setColour(juce::ComboBox::outlineColourId, tema().borda);
-        comboSubject_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
-        comboSubject_->setTooltip("Filter by one of the subjects used in this project");
-        addAndMakeVisible(*comboSubject_);
-        comboSubject_->onChange = [this] {
-            int sel = comboSubject_->getSelectedId();
-            int idTodos = static_cast<int>(subjectsDisponiveis_.size()) + 1;
-            if (sel <= 0 || sel >= idTodos) subjectSelecionado_ = std::nullopt;
-            else subjectSelecionado_ = subjectsDisponiveis_[static_cast<size_t>(sel - 1)].first;
-            aplicarFiltrosAdicionais();
-            atualizarContagens();  // os outros grupos contam só o que passa por este filtro
-        };
-    }
-
-    comboSubject_->clear(juce::dontSendNotification);
-    int idTodos = static_cast<int>(subjectsDisponiveis_.size()) + 1;
-    comboSubject_->addItem(matriz::i18n::t("catwork.subject_todos"), idTodos);
-    for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i) {
-        const auto& [valor, contagem] = subjectsDisponiveis_[i];
-        const juce::String rotulo = (valor == kSemSubject) ? matriz::i18n::t("catwork.subject_nenhum")
-                                                           : juce::String::fromUTF8(valor.c_str());
-        comboSubject_->addItem(rotulo + " (" + juce::String(contagem) + ")",
-                               static_cast<int>(i + 1));
-    }
-    int idSel = idTodos;
-    if (subjectSelecionado_.has_value())
-        for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i)
-            if (subjectsDisponiveis_[i].first == *subjectSelecionado_) { idSel = static_cast<int>(i + 1); break; }
-    comboSubject_->setSelectedId(idSel, juce::dontSendNotification);
-}
-
-void CatalogWorkspaceComponent::construirFiltroLista() {
-    // LIST: mesmo desenho do combo de SUBJECT, logo abaixo dele no card CONTENT TYPE.
-    if (!comboLista_) {
-        comboLista_ = std::make_unique<juce::ComboBox>();
-        comboLista_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-        comboLista_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
-        comboLista_->setColour(juce::ComboBox::outlineColourId, tema().borda);
-        comboLista_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
-        comboLista_->setTooltip("Filter by one of the lists used in this project");
-        addAndMakeVisible(*comboLista_);
-        comboLista_->onChange = [this] {
-            int sel = comboLista_->getSelectedId();
-            int idTodos = static_cast<int>(listasDisponiveis_.size()) + 1;
-            if (sel <= 0 || sel >= idTodos) listaSelecionada_ = std::nullopt;
-            else listaSelecionada_ = listasDisponiveis_[static_cast<size_t>(sel - 1)].first;
-            aplicarFiltrosAdicionais();
-            atualizarContagens();
-        };
-    }
-
-    comboLista_->clear(juce::dontSendNotification);
-    int idTodos = static_cast<int>(listasDisponiveis_.size()) + 1;
-    comboLista_->addItem(matriz::i18n::t("catwork.lista_todas"), idTodos);
-    for (size_t i = 0; i < listasDisponiveis_.size(); ++i) {
-        const auto& [valor, contagem] = listasDisponiveis_[i];
-        const juce::String rotulo = (valor == kSemLista) ? matriz::i18n::t("catwork.lista_nenhuma")
-                                                         : juce::String::fromUTF8(valor.c_str());
-        comboLista_->addItem(rotulo + " (" + juce::String(contagem) + ")", static_cast<int>(i + 1));
-    }
-    int idSel = idTodos;
-    if (listaSelecionada_.has_value())
-        for (size_t i = 0; i < listasDisponiveis_.size(); ++i)
-            if (listasDisponiveis_[i].first == *listaSelecionada_) { idSel = static_cast<int>(i + 1); break; }
-    comboLista_->setSelectedId(idSel, juce::dontSendNotification);
 }
 
 void CatalogWorkspaceComponent::atualizarContagens() {
@@ -1688,11 +1689,12 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // mesmo tratamento que mostrarApenasRecentes_ já recebe acima.
     std::optional<std::set<std::string>> filtroHerdado = filtroHerdadoIds_;
 
-    // Contagens "facetadas": cada grupo (MEDIA TYPE, DATE, CONTENT TYPE, SUBJECT) conta só o que passa
-    // pelos filtros ATIVOS dos OUTROS grupos — assim o número do botão bate com o que a grade mostra.
-    const std::optional<std::string> collSel = collectionSelecionado_;
-    const std::optional<std::string> subjSel = subjectSelecionado_;
-    const std::optional<std::string> listaSel = listaSelecionada_;
+    // Contagens "facetadas": MEDIA TYPE e DATE contam só o que passa pelos filtros ATIVOS dos OUTROS grupos —
+    // assim o número do botão bate com o que a grade mostra. CONTENT TYPE -> SUBJECT -> LIST seguem a hierarquia
+    // (ver alternarFiltroHierarquia no .h): um nível com escolha só é cortado pelos níveis com escolha ACIMA dele.
+    const std::set<std::string> collSel = collectionsSelecionados_;
+    const std::set<std::string> subjSelValores = subjectsSelecionados_;
+    const std::set<std::string> listaSelValores = listasSelecionadas_;
     const int geracao = ++geracaoContagens_;
 
     std::set<std::string> itensExtraidos;
@@ -1701,7 +1703,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     } catch (...) {}
 
     const bool ocultarGeo = ocultarComGeo_;
-    poolContagens_.addJob([ocultarGeo, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
+    poolContagens_.addJob([ocultarGeo, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSelValores, listaSelValores, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1747,6 +1749,15 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 return OriginalSourceMediumVocabulary::itemIsPhoneDump(it.sourceMedia, it.nestOrigem, it.collectionType.value_or(""));
             };
 
+            const auto subjSel = selecaoNomes(subjSelValores, kSemSubject);
+            const auto listaSel = selecaoNomes(listaSelValores, kSemLista);
+            // H corta as opções de G quando H tem escolha e (H está acima de G, ou G não tem escolha). O nível mais
+            // alto com escolha é o "chefe": nenhum outro corta as opções dele.
+            const bool escC = !collSel.empty(), escS = !subjSel.vazia, escL = !listaSel.vazia;
+            const bool subjCortaContent = escS && !escC, listaCortaContent = escL && !escC;
+            const bool contentCortaSubj = escC, listaCortaSubj = escL && !escS;
+            const bool contentCortaLista = escC, subjCortaLista = escS;
+
             std::map<int, int> contagemPorAno;
             int semAno = 0;
             std::map<std::string, int> contagemPorCollection;
@@ -1789,24 +1800,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     }
                 }
 
-                bool pColl = true;
-                if (collSel.has_value() && *collSel != "Hidden") {  // Hidden: as contagens são do catálogo visível
-                    const bool temColl = item.collectionType.has_value() && !item.collectionType->empty();
-                    pColl = (*collSel == "Unknown") ? !temColl : (temColl && *item.collectionType == *collSel);
-                }
-
-                bool pSubj = true;
-                if (subjSel.has_value()) {
-                    if (*subjSel == kSemSubject) pSubj = semSubject(item);
-                    else {
-                        const auto chaveSel = matriz::model::nomes::chave(*subjSel);
-                        pSubj = false;
-                        if (item.subject.has_value())
-                            for (const auto& sub : dividirSubjects(*item.subject))
-                                if (matriz::model::nomes::chave(sub) == chaveSel) { pSubj = true; break; }
-                    }
-                }
-
+                const bool pColl = passaContent(item, collSel, /*ignorarHidden*/ true);  // contagens: catálogo visível
+                const bool pSubj = passaSubject(item, subjSel);
                 const bool pLista = passaLista(item, listaSel);
 
                 // MEDIA TYPE: ano + collection + subject + lista (não filtra por si mesmo).
@@ -1836,16 +1831,16 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     if (item.anoDesconhecido()) semAno++;
                 }
 
-                // CONTENT TYPE: tipo + ano + subject.
-                if (pTipo && pAno && pSubj && pLista) {
+                // CONTENT TYPE: tipo + ano (+ SUBJECT/LIST só enquanto CONTENT TYPE não tem escolha).
+                if (pTipo && pAno && (!subjCortaContent || pSubj) && (!listaCortaContent || pLista)) {
                     if (item.collectionType.has_value() && !item.collectionType->empty())
                         contagemPorCollection[*item.collectionType]++;
                     else
                         semCollection++;
                 }
 
-                // LIST: tipo + ano + collection + subject.
-                if (pTipo && pAno && pColl && pSubj) {
+                // LIST: tipo + ano + CONTENT TYPE + SUBJECT (os dois acima dela).
+                if (pTipo && pAno && (!contentCortaLista || pColl) && (!subjCortaLista || pSubj)) {
                     if (semLista(item)) ++totalSemLista;
                     else {
                         auto chave = matriz::model::nomes::chave(*item.lista);
@@ -1854,8 +1849,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     }
                 }
 
-                // SUBJECT: tipo + ano + collection + lista.
-                if (pTipo && pAno && pColl && pLista) {
+                // SUBJECT: tipo + ano + CONTENT TYPE (+ LIST só enquanto SUBJECT não tem escolha).
+                if (pTipo && pAno && (!contentCortaSubj || pColl) && (!listaCortaSubj || pLista)) {
                     if (semSubject(item)) ++totalSemSubject;
                     if (item.subject.has_value()) {
                         // "A, a" conta uma vez só; variações de maiúsculas são o
@@ -1874,15 +1869,12 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             // O valor hoje selecionado nunca some da lista (mesmo com 0 no contexto atual),
             // senão o combo/botão fica inconsistente com o filtro ainda ativo.
             for (int anoSel : anosParaTipo) if (anoSel != -1) contagemPorAno.emplace(anoSel, 0);
-            if (collSel && *collSel != "Unknown" && *collSel != "Hidden") contagemPorCollection.emplace(*collSel, 0);
-            if (subjSel && *subjSel != kSemSubject) {
-                const auto chaveSel = matriz::model::nomes::chave(*subjSel);
-                if (!grafiaPorChaveSubject.count(chaveSel)) contagemPorSubject.emplace(*subjSel, 0);
-            }
-
-            if (listaSel && *listaSel != kSemLista &&
-                !grafiaPorChaveLista.count(matriz::model::nomes::chave(*listaSel)))
-                contagemPorLista.emplace(*listaSel, 0);
+            for (const auto& v : collSel)
+                if (v != "Unknown" && v != "Hidden") contagemPorCollection.emplace(v, 0);
+            for (const auto& v : subjSelValores)
+                if (v != kSemSubject && !grafiaPorChaveSubject.count(matriz::model::nomes::chave(v))) contagemPorSubject.emplace(v, 0);
+            for (const auto& v : listaSelValores)
+                if (v != kSemLista && !grafiaPorChaveLista.count(matriz::model::nomes::chave(v))) contagemPorLista.emplace(v, 0);
 
             for (auto it = contagemPorAno.rbegin(); it != contagemPorAno.rend(); ++it)
                 res.anos.push_back({it->first, it->second});
@@ -1890,7 +1882,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
             for (const auto& pair : contagemPorCollection)
                 res.collections.push_back(pair);
-            if (semCollection > 0)
+            if (semCollection > 0 || collSel.count("Unknown"))
                 res.collections.push_back({"Unknown", semCollection});
             res.collections.push_back({"Hidden", totalOcultos});  // sempre listado, mesmo com 0
 
@@ -2005,6 +1997,8 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
         // reintroduziria o problema de performance que aoMudar evita).
         atualizarDestaqueBotoesAnoCollection();
     }
+    if (painelAberto_ != nullptr && nivelPainelAberto_ >= 0)  // painel aberto acompanha as contagens novas
+        painelAberto_->atualizarOpcoes(opcoesDoNivel(nivelPainelAberto_), subtituloDoNivel(nivelPainelAberto_));
     resized();  // um chip do MEDIA TYPE pode passar a precisar da linha inteira com a contagem nova
 }
 
@@ -2079,10 +2073,10 @@ void CatalogWorkspaceComponent::atualizarBotaoBounce() {
 void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     tipoMidiaSelecionado_ = std::nullopt;
     anosSelecionados_.clear();
-    collectionSelecionado_ = std::nullopt;
-    subjectSelecionado_ = std::nullopt;
-    listaSelecionada_ = std::nullopt;
-    atualizarListasDoContentEmMemoria();
+    collectionsSelecionados_.clear();
+    subjectsSelecionados_.clear();
+    listasSelecionadas_.clear();
+    atualizarResumoCombos();
 
     if (ocultarEditados_) {
         ocultarEditados_ = false;
@@ -2574,9 +2568,9 @@ void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>&
     categoriaSelecionada_ = 0;
     tipoMidiaSelecionado_ = std::nullopt;
     anosSelecionados_.clear();
-    collectionSelecionado_ = std::nullopt;
-    subjectSelecionado_ = std::nullopt;
-    listaSelecionada_ = std::nullopt;
+    collectionsSelecionados_.clear();
+    subjectsSelecionados_.clear();
+    listasSelecionadas_.clear();
     filtroHerdadoIds_ = itemIds;
     if (mosaico_) {
         mosaico_->definirFiltroItens(itemIds);
@@ -2744,11 +2738,13 @@ void CatalogWorkspaceComponent::resized() {
     barra_.iniciarCard(matriz::i18n::t("catwork.secao_content_type"));
     {
         bool primeiro = true;
+        int nivel = 0;
         for (auto* combo : {comboContentType_.get(), comboSubject_.get(), comboLista_.get()}) {
+            const int recuo = 12 * nivel++;  // hierarquia: SUBJECT dentro de CONTENT TYPE, LIST dentro de SUBJECT
             if (!combo) continue;
             if (!primeiro) corpo.removeFromTop(6);
             primeiro = false;
-            combo->setBounds(corpo.removeFromTop(28));
+            combo->setBounds(corpo.removeFromTop(28).withTrimmedLeft(recuo));
         }
     }
     barra_.finalizarCard();

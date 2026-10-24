@@ -2704,7 +2704,7 @@ int rodarLoteSelfTest() {
                    juce::String((int) cw->subjectsDisponiveis_.size()) + ")");
         if (cw->comboSubject_ && idTour > 0) {
             const auto versaoAntesDoFiltro = cw->mosaico_->versaoSnapshot();
-            cw->comboSubject_->setSelectedId(idTour, juce::sendNotificationSync);
+            cw->alternarFiltroHierarquia(1, "Tour", true);  // o interruptor "Tour" no painel SUBJECT
             esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
             bombear(200);
             checar(visiveis(cw) == 2, "SUBJECT \"Tour\" shows only the 2 items tagged with it (" + juce::String(visiveis(cw)) + ")");
