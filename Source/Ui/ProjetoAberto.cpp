@@ -7273,6 +7273,8 @@ bool ProjetoAberto::linkarColecao(const juce::File& pastaProjeto, const juce::St
     std::string agora = juce::Time::getCurrentTime().formatted("%Y-%m-%dT%H:%M:%SZ").toStdString();
 
     try {
+        registrarUndoDeLinhas(*this, "Link Collection",
+                              {{"catalog_colecao_link", "caminho_projeto = ?", {matriz::db::Value::of(caminho)}, false}}, {}, "colecao");
         projeto_->registro().run(
             "INSERT INTO catalog_colecao_link (id, caminho_projeto, nome, grupo, criado_em) "
             "VALUES (?, ?, ?, ?, ?) "
@@ -7291,6 +7293,8 @@ bool ProjetoAberto::linkarColecao(const juce::File& pastaProjeto, const juce::St
 bool ProjetoAberto::desvincularColecao(const std::string& linkId) {
     if (!projeto_ || linkId.empty()) return false;
     try {
+        registrarUndoDeLinhas(*this, "Unlink Collection",
+                              {{"catalog_colecao_link", "id = ?", {matriz::db::Value::of(linkId)}, false}}, {}, "colecao");
         projeto_->registro().run("DELETE FROM catalog_colecao_link WHERE id = ?", {matriz::db::Value::of(linkId)});
         dirty_ = true;
         return true;
@@ -7306,6 +7310,8 @@ bool ProjetoAberto::relocarColecaoLink(const std::string& linkId, const juce::Fi
 
     try {
         std::string caminho = novaPastaProjeto.getFullPathName().toStdString();
+        registrarUndoDeLinhas(*this, "Relocate Collection",
+                              {{"catalog_colecao_link", "id = ?", {matriz::db::Value::of(linkId)}, false}}, {}, "colecao");
         projeto_->registro().run(
             "UPDATE catalog_colecao_link SET caminho_projeto = ? WHERE id = ?",
             {matriz::db::Value::of(caminho), matriz::db::Value::of(linkId)});

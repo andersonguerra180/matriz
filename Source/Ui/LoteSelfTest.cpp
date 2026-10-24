@@ -643,6 +643,13 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             checar(colunaDoItem(reg, "estado", a) == antes, "#27 Undo of Change State brings the old state back");
         }
 
+        // #28 coleção do Catalog Hub
+        {
+            reg.run("INSERT INTO catalog_colecao_link (id, caminho_projeto, nome, grupo, criado_em) VALUES ('lk1', '/tmp/x', 'X', '', '2026-10-24')", {});
+            pa.desvincularColecao("lk1");
+            pa.desfazer();
+            checar(contar("SELECT COUNT(*) FROM catalog_colecao_link WHERE id = 'lk1'", {}) == 1, "#28 Undo of Unlink Collection brings the link back");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }
