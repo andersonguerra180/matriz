@@ -6445,10 +6445,26 @@ int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::
 }
 
 void ProjetoAberto::removerItemDaPasta(const std::string& itemId, const std::string& pastaId) {
+    removerItensDasPastas({itemId}, {pastaId});
+}
+
+void ProjetoAberto::removerItensDasPastas(const std::vector<std::string>& itemIds, const std::set<std::string>& pastaIds) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
-    if (!projeto_) return;
-    projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?",
-                              {matriz::db::Value::of(itemId), matriz::db::Value::of(pastaId)});
+    if (!projeto_ || itemIds.empty() || pastaIds.empty()) return;
+    registrarUndoVinculosDePasta(itemIds.size() == 1 ? "Remove from Folder" : "Remove " + std::to_string(itemIds.size()) + " Items from Folder",
+                                 itemIds, {});
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> lock(writeMutex());
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& itemId : itemIds)
+            for (const auto& pastaId : pastaIds)
+                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?",
+                       {matriz::db::Value::of(itemId), matriz::db::Value::of(pastaId)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}  // quem chama (menu da janela da pasta) não trata exceção
+    }
 }
 
 std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, EscopoBusca escopo) const {

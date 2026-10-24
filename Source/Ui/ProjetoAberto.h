@@ -926,6 +926,8 @@ public:
         return replicarSubarvoreNoAcervo(origem, pastaPaiId, manterEstrutura, mapaAtivoPadrao());
     }
     void removerItemDaPasta(const std::string& itemId, const std::string& pastaId);
+    // Extract from folder em lote: os itens saem de todas essas pastas numa transação e num passo de Undo.
+    void removerItensDasPastas(const std::vector<std::string>& itemIds, const std::set<std::string>& pastaIds);
 
     // --- Ações sobre item/seleção (menu de contexto e painel direito) ---
     //

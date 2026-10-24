@@ -451,8 +451,7 @@ private:
                     for (const auto& f : n.filhos) coleta(f);
                 };
                 if (const auto* raiz = acharNo(seguro->arvoreDoMapa_, seguro->pastaId_)) coleta(*raiz);
-                for (const auto& id : ids)
-                    for (const auto& pid : pastas) proj->removerItemDaPasta(id, pid);
+                proj->removerItensDasPastas(std::vector<std::string>(ids.begin(), ids.end()), pastas);  // um passo de Undo
                 seguro->recarregarItens();
                 if (seguro->aoMudouDados_) seguro->aoMudouDados_();
             } else if (r == kMenuMoverParaPasta) {

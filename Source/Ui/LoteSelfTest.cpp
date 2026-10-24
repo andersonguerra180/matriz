@@ -418,6 +418,11 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
             pa.desfazer();  // o segundo Move to Trash
             checar(naPasta(a, pasta), "#15 Undo again: the file is in its folder as at the start");
 
+            pa.removerItensDasPastas({a, b}, {pasta});
+            checar(!naPasta(a, pasta) && !naPasta(b, pasta), "#16 Remove from Folder takes both files out (before Undo)");
+            checar(pa.descricaoUndoAtual().rfind("Remove 2 Items from Folder", 0) == 0, "#16 removing from a folder is ONE Undo step");
+            pa.desfazer();
+            checar(naPasta(a, pasta) && naPasta(b, pasta), "#16 Undo of Remove from Folder puts both files back");
         }
 
     } catch (const std::exception& e) {
