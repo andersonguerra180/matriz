@@ -81,14 +81,12 @@ public:
 
     ~PainelListaEscolha() override { busca_.removeKeyListener(this); }
 
-    // Abre preso à âncora (abaixo dela, sem seta). O painel é dono de si via CallOutBox; o SafePointer devolvido
-    // serve para atualizar as opções com ele aberto (contagens que chegam depois).
+    // Abre preso à âncora (abaixo dela, sem seta), numa CaixaFlutuante (clique fora fecha e segue adiante; clicar de
+    // novo na âncora fecha — aí devolve nullptr). O SafePointer serve para atualizar as opções com ele aberto.
     static juce::Component::SafePointer<PainelListaEscolha> abrir(juce::Component& ancora, Config c) {
-        auto painel = std::make_unique<PainelListaEscolha>(std::move(c), ancora.getWidth());
-        juce::Component::SafePointer<PainelListaEscolha> seguro(painel.get());
-        auto& caixa = juce::CallOutBox::launchAsynchronously(std::move(painel), ancora.getScreenBounds(), nullptr);
-        caixa.setArrowSize(0.0f);
-        caixa.setLookAndFeel(&PainelOpcoesFiltro::lfCaixa());
+        auto* painel = CaixaFlutuante::abrir(ancora, std::make_unique<PainelListaEscolha>(std::move(c), ancora.getWidth()),
+                                             PainelOpcoesFiltro::lfCaixa());
+        juce::Component::SafePointer<PainelListaEscolha> seguro(dynamic_cast<PainelListaEscolha*>(painel));
         juce::MessageManager::callAsync([seguro] {
             if (seguro == nullptr) return;
             if (seguro->temBusca()) seguro->busca_.grabKeyboardFocus();

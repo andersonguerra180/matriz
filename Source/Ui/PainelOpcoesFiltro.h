@@ -12,6 +12,74 @@
 
 namespace matriz::ui {
 
+// Cartão flutuante dos painéis (FILTER OPTIONS, listas de escolha). NÃO modal: qualquer clique fora fecha e o clique
+// segue para onde foi dado (abrir outro dropdown, selecionar na grade) — o CallOutBox modal engolia esse clique e
+// pedia um segundo. Também fecha com Esc, ao sair do app, se a âncora some ou sai do lugar. Clicar de novo na âncora
+// fecha (abrir() alterna). Um por vez no app.
+class CaixaFlutuante : public juce::DeletedAtShutdown, private juce::MouseListener, private juce::Timer {
+public:
+    // Devolve o conteúdo já na tela, ou nullptr se era a mesma âncora (só fechou).
+    static juce::Component* abrir(juce::Component& ancora, std::unique_ptr<juce::Component> conteudo, juce::LookAndFeel& lf) {
+        auto* atual = instancia();
+        const bool mesmaAncora = atual != nullptr && atual->ancora_.getComponent() == &ancora;
+        delete atual;
+        if (mesmaAncora) return nullptr;
+        instancia() = new CaixaFlutuante(ancora, std::move(conteudo), lf);  // DeletedAtShutdown: some antes do Desktop
+        return instancia()->conteudo_.get();
+    }
+
+    ~CaixaFlutuante() override {
+        juce::Desktop::getInstance().removeGlobalMouseListener(this);
+        stopTimer();
+        if (instancia() == this) instancia() = nullptr;
+    }
+
+private:
+    CaixaFlutuante(juce::Component& ancora, std::unique_ptr<juce::Component> conteudo, juce::LookAndFeel& lf)
+        : ancora_(&ancora), boundsAncora_(ancora.getScreenBounds()), conteudo_(std::move(conteudo)) {
+        caixa_ = std::make_unique<juce::CallOutBox>(*conteudo_, boundsAncora_, nullptr);
+        caixa_->setArrowSize(0.0f);
+        caixa_->setLookAndFeel(&lf);
+        caixa_->setVisible(true);
+        juce::Desktop::getInstance().addGlobalMouseListener(this);
+        startTimer(100);
+    }
+
+    static CaixaFlutuante*& instancia() {
+        static CaixaFlutuante* c = nullptr;
+        return c;
+    }
+
+    // Fecha depois do evento em curso (quem chamou pode estar dentro de um evento do próprio conteúdo).
+    void fecharDepois() {
+        juce::MessageManager::callAsync([alvo = this] {
+            if (instancia() == alvo) delete alvo;
+        });
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        auto* c = e.eventComponent;
+        if (c == nullptr || caixa_ == nullptr) return;
+        if (c == caixa_.get() || caixa_->isParentOf(c)) return;  // dentro do cartão
+        if (auto* a = ancora_.getComponent(); a != nullptr && (c == a || a->isParentOf(c))) return;  // a âncora alterna
+        fecharDepois();
+    }
+
+    void timerCallback() override {
+        auto* a = ancora_.getComponent();
+        if (caixa_ == nullptr || !caixa_->isVisible()  // Esc / APPLY / CLOSE (CallOutBox::dismiss só esconde)
+            || !juce::Process::isForegroundProcess() || a == nullptr || !a->isShowing() || a->getScreenBounds() != boundsAncora_) {
+            stopTimer();
+            fecharDepois();
+        }
+    }
+
+    juce::Component::SafePointer<juce::Component> ancora_;
+    juce::Rectangle<int> boundsAncora_;
+    std::unique_ptr<juce::Component> conteudo_;   // declarado antes: a caixa (que o tem como filho) sai primeiro
+    std::unique_ptr<juce::CallOutBox> caixa_;
+};
+
 // FILTER OPTIONS da barra do METADATA no desenho do mapa: cartão claro com seções (HIDE / SHOW ONLY / SELECTION), uma
 // linha por opção com título, descrição e interruptor à direita, e "Clear all" no título. Fica aberto enquanto o
 // usuário liga/desliga (cada troca já aplica); fecha clicando fora. Abre como CallOutBox sem a seta.
@@ -29,12 +97,9 @@ public:
         setMouseCursor(juce::MouseCursor::NormalCursor);
     }
 
-    // Abre preso ao botão (abaixo dele, sem seta). O painel é dono de si via CallOutBox.
+    // Abre preso ao botão (abaixo dele, sem seta), numa CaixaFlutuante; clicar de novo no botão fecha.
     static void abrir(juce::Component& botao, std::vector<Opcao> opcoes, std::function<void(int, bool)> aoAlternar) {
-        auto painel = std::make_unique<PainelOpcoesFiltro>(std::move(opcoes), std::move(aoAlternar));
-        auto& caixa = juce::CallOutBox::launchAsynchronously(std::move(painel), botao.getScreenBounds(), nullptr);
-        caixa.setArrowSize(0.0f);
-        caixa.setLookAndFeel(&lfCaixa());
+        CaixaFlutuante::abrir(botao, std::make_unique<PainelOpcoesFiltro>(std::move(opcoes), std::move(aoAlternar)), lfCaixa());
     }
 
     void paint(juce::Graphics& g) override {
