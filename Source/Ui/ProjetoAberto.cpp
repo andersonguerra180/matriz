@@ -5453,6 +5453,13 @@ void ProjetoAberto::removerDoContainer(const std::vector<std::string>& itemIds) 
         st.bind(1, matriz::db::Value::of(id));
         if (st.step()) nests.insert(st.columnText(0));
     }
+    if (nests.empty()) return;
+    // Undo: os containers afetados inteiros (linha do nest + todos os membros), porque um container que fica com
+    // menos de 2 itens é desfeito e o que sobra muda de capa.
+    registrarUndoDeRetrato(itemIds.size() == 1 ? "Remove from Container" : "Remove " + std::to_string(itemIds.size()) + " Items from Container",
+                           retratar({{"nest", "id", false}, {"nest_item", "nest_id", false}},
+                                    std::vector<std::string>(nests.begin(), nests.end())),
+                           itemIds, [] { EventBus::obterInstancia().dispararItemAlterado("", "nest"); });
     db.run("BEGIN TRANSACTION", {});
     try {
         for (const auto& id : itemIds) db.run("DELETE FROM nest_item WHERE item_id = ?", {matriz::db::Value::of(id)});

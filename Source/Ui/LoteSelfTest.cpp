@@ -440,6 +440,17 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
         checar(pa.lerMetadado(a, "notas_livres").value_or("") == "old note" && pa.lerMetadado(b, "notas_livres").value_or("").empty(),
                "#4 Undo of Other Metadata brings each note back exactly");
 
+        // #21 Remover do container (container de 2 é desfeito)
+        {
+            const std::string nest = pa.criarContainerImportacao({a, b}, "gallery");
+            checar(!nest.empty() && pa.nestDoItem(a) && pa.nestDoItem(b), "#21 container with both files exists");
+            pa.removerDoContainer({a});
+            checar(!pa.nestDoItem(a) && !pa.nestDoItem(b), "#21 removing one of two dissolves the container (before Undo)");
+            checar(pa.descricaoUndoAtual() == "Remove from Container", "#21 Remove from Container is the step Undo will revert");
+            pa.desfazer();
+            checar(pa.nestDoItem(a) && pa.nestDoItem(b) && pa.nestDoItem(a)->nestId == nest,
+                   "#21 Undo of Remove from Container brings the container back with both files");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit selftest: ") + e.what());
     }
