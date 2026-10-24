@@ -383,6 +383,10 @@ public:
     Retrato retratar(const std::vector<TabelaDoRetrato>& tabelas, const std::vector<std::string>& ids);
     // Undo da marca E (marcado_revisado): só essa coluna volta ao que cada item tinha. Chamar ANTES de gravar.
     void registrarUndoRevisado(const std::vector<std::string>& itemIds);
+    // Undo de Trash / tirar de pasta: vínculos item<->pasta e lixeira DESTES itens (todos os mapas) voltam como estavam,
+    // e as pastas que a operação criar em `mapaId` (vazio = nenhuma) somem. Chamar ANTES de gravar.
+    void registrarUndoVinculosDePasta(const std::string& descricao, const std::vector<std::string>& itemIds,
+                                      const std::string& mapaId);
     void registrarUndoDeRetrato(const std::string& descricao, Retrato retrato, std::vector<std::string> idsAvisar,
                                 std::function<void()> depois = nullptr);
     // Undo do Folder Map (chamar ANTES de mudar o banco). As cópias ficam em tabelas TEMP da conexão do registro.

@@ -382,6 +382,44 @@ void rodarTestesUndoAuditoria(const Checar& checar) {
             checar(e(a), "#2 Undo of clear E brings the E back");
         }
 
+        // #15 Trash e #16 tirar de pasta (Folder Map)
+        {
+            using matriz::db::Value;
+            const std::string mapa = pa.criarFolderMap("Undo map", std::nullopt);
+            const std::string pasta = pa.criarPastaAcervo("Shows", std::nullopt, mapa);
+            pa.adicionarItensAPasta({a, b}, pasta);
+            auto naPasta = [&](const std::string& id, const std::string& p) {
+                auto q = reg.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?");
+                q.bind(1, Value::of(id));
+                q.bind(2, Value::of(p));
+                return q.step() && q.columnInt(0) > 0;
+            };
+            auto pastasDoMapa = [&] {
+                auto q = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE mapa_id = ?");
+                q.bind(1, Value::of(mapa));
+                return q.step() ? static_cast<int>(q.columnInt(0)) : -1;
+            };
+            const int pastasAntes = pastasDoMapa();
+            pa.moverItensParaTrash({a}, mapa);
+            checar(!naPasta(a, pasta), "#15 Move to Trash takes the file out of its folder (before Undo)");
+            checar(pa.descricaoUndoAtual() == "Move to Trash", "#15 Move to Trash is the step Undo will revert");
+            pa.desfazer();
+            checar(naPasta(a, pasta) && pastasDoMapa() == pastasAntes, "#15 Undo of Move to Trash puts it back and removes the _trash it created");
+            pa.moverItensParaTrash({a}, mapa);
+            pa.extrairItensParaCanvas({a}, mapa);
+            pa.desfazer();
+            auto lix = reg.prepare("SELECT COUNT(*) FROM lixeira_item WHERE item_id = ?");
+            lix.bind(1, Value::of(a));
+            checar(lix.step() && lix.columnInt(0) == 1, "#15 Undo of Extract from Trash puts the file back in the Trash");
+            pa.restaurarItensDaTrash({a}, mapa);
+            checar(naPasta(a, pasta), "#15 Restore from Trash puts it back in its folder");
+            pa.desfazer();
+            checar(!naPasta(a, pasta), "#15 Undo of Restore from Trash sends it back to the Trash");
+            pa.desfazer();  // o segundo Move to Trash
+            checar(naPasta(a, pasta), "#15 Undo again: the file is in its folder as at the start");
+
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit selftest: ") + e.what());
     }

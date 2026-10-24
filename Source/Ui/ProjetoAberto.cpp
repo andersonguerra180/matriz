@@ -4124,11 +4124,37 @@ bool ProjetoAberto::ehPastaTrash(const std::string& pastaId) const {
     return false;
 }
 
+void ProjetoAberto::registrarUndoVinculosDePasta(const std::string& descricao, const std::vector<std::string>& itemIds,
+                                                 const std::string& mapaId) {
+    if (!projeto_ || itemIds.empty() || desfazendo_) return;
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+    auto retrato = retratar({{"acervo_item_pasta", "item_id", false}, {"lixeira_item", "item_id", false}}, itemIds);
+    std::set<std::string> pastasAntes;
+    if (!mapaId.empty()) {
+        auto st = db.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ?");
+        st.bind(1, matriz::db::Value::of(mapaId));
+        while (st.step()) pastasAntes.insert(st.columnText(0));
+    }
+    registrarUndoDeRetrato(descricao, std::move(retrato), itemIds, [this, mapaId, pastasAntes] {
+        if (mapaId.empty() || !projeto_) return;
+        auto& d = projeto_->registro();
+        std::vector<std::string> novas;
+        auto st = d.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ?");
+        st.bind(1, matriz::db::Value::of(mapaId));
+        while (st.step()) if (!pastasAntes.count(st.columnText(0))) novas.push_back(st.columnText(0));
+        for (const auto& id : novas)
+            try { d.run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(id)}); } catch (...) {}
+    });
+}
+
 void ProjetoAberto::moverItensParaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId, const std::string& nomePastaOrigem) {
     if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    registrarUndoVinculosDePasta(itemIds.size() == 1 ? "Move to Trash" : "Move " + std::to_string(itemIds.size()) + " Items to Trash",
+                                 itemIds, mapaId);  // antes do _trash ser criado: ele também some no Undo
     const std::string trashId = obterOuCriarPastaTrash(mapaId);
     if (trashId.empty()) return;
-    const auto itemIds = expandirMembrosDeNest(idsPedidos);
     auto& db = projeto_->registro();
     garantirTabelaLixeira(db);
 
@@ -4171,6 +4197,8 @@ void ProjetoAberto::moverItensParaTrash(const std::vector<std::string>& idsPedid
 void ProjetoAberto::extrairItensParaCanvas(const std::vector<std::string>& idsPedidos, const std::string& mapaId) {
     if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
     const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    registrarUndoVinculosDePasta(itemIds.size() == 1 ? "Extract from Trash" : "Extract " + std::to_string(itemIds.size()) + " Items from Trash",
+                                 itemIds, mapaId);
     auto& db = projeto_->registro();
     garantirTabelaLixeira(db);
 
@@ -4192,6 +4220,8 @@ void ProjetoAberto::extrairItensParaCanvas(const std::vector<std::string>& idsPe
 void ProjetoAberto::restaurarItensDaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId) {
     if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
     const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    registrarUndoVinculosDePasta(itemIds.size() == 1 ? "Restore from Trash" : "Restore " + std::to_string(itemIds.size()) + " Items from Trash",
+                                 itemIds, mapaId);  // a pasta recriada pelo nome também some no Undo
     auto& db = projeto_->registro();
     garantirTabelaLixeira(db);
 
