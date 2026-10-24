@@ -562,6 +562,21 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             checar(pa.valorCampo(a, "raiz", 0, "etapa_producao").value_or("").empty(), "#9 Undo of a Preview field clears it again");
         }
 
+        // #12 agrupar em nova pasta
+        {
+            const auto a = novo();
+            const std::string mapa = pa.criarFolderMap("Group map", std::nullopt);
+            const std::string pasta = pa.criarPastaAcervo("Old", std::nullopt, mapa);
+            pa.adicionarItensAPasta({a}, pasta);
+            const int pastasAntes = contar("SELECT COUNT(*) FROM acervo_pasta WHERE mapa_id = ?", {Value::of(mapa)});
+            const auto nova = pa.agruparItensEmNovaPasta({a}, mapa);
+            checar(!nova.empty() && pa.descricaoUndoAtual() == "Group into New Folder", "#12 Group into New Folder is ONE Undo step");
+            pa.desfazer();
+            checar(contar("SELECT COUNT(*) FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?", {Value::of(a), Value::of(pasta)}) == 1 &&
+                       contar("SELECT COUNT(*) FROM acervo_pasta WHERE mapa_id = ?", {Value::of(mapa)}) == pastasAntes,
+                   "#12 Undo puts the file back in its folder and removes the new folder");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }

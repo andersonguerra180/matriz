@@ -4820,6 +4820,13 @@ std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return {};
     const auto itemIds = expandirMembrosDeNest(idsPedidos);
 
+    // Um passo de Undo: os vínculos dos itens voltam e a pasta nova some (o Undo de criarPastaAcervo vem no grupo).
+    iniciarGrupoUndo("Group into New Folder");
+    struct FimDoGrupo {
+        ProjetoAberto* p;
+        ~FimDoGrupo() { p->finalizarGrupoUndo(); }
+    } fimDoGrupo{this};
+    registrarUndoVinculosDePasta("Group into New Folder", itemIds, mapaId);
     std::string newFolderId = criarPastaAcervo("New Folder", std::nullopt, mapaId);
 
     std::string agora = matriz::model::agoraIso8601();
