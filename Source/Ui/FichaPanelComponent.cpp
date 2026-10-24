@@ -2007,6 +2007,7 @@ public:
                                     geoOpt->source == matriz::analytics::GeoSource::EmbeddedMetadata &&
                                     geoOpt->hasValidCoordinates();
         if (geolocalizacao_.protegida) {
+            geolocalizacao_.gpsEmbutido = std::make_pair(*geoOpt->latitude, *geoOpt->longitude);
             geolocalizacao_.overrideGeo = std::make_unique<juce::ToggleButton>("OVERRIDE");
             auto atualizarTrava = [this] {
                 const bool livre = geolocalizacao_.overrideGeo->getToggleState();
@@ -2023,9 +2024,9 @@ public:
     }
 
 
-    void salvarGeolocalizacao(const std::string& itemId) {
+    void salvarGeolocalizacao(const std::string& itemId, bool trocaConfirmada = false) {
         if (geolocalizacao_.protegida && (!geolocalizacao_.overrideGeo || !geolocalizacao_.overrideGeo->getToggleState())) return;
-        if (!geolocalizacao_.editorCoords) return;
+        if (!geolocalizacao_.editorCoords || geolocalizacao_.confirmandoTroca) return;
         matriz::analytics::AssetGeolocation geo;
         geo.assetId = itemId;
 
@@ -2042,6 +2043,36 @@ public:
                         geo.source = matriz::analytics::GeoSource::UserCoordinates;
                     }
                 } catch (...) {}
+            }
+        }
+
+        // GPS do arquivo: com as mesmas coordenadas (GET de endereço, só texto editado) continua sendo o GPS do arquivo —
+        // antes virava "digitado pelo usuário" e a foto perdia a proteção. Coordenadas diferentes (ou apagadas) pedem
+        // confirmação antes de gravar.
+        if (const auto& emb = geolocalizacao_.gpsEmbutido) {
+            const bool mesmas = geo.latitude && geo.longitude && std::abs(*geo.latitude - emb->first) < 1e-6 &&
+                                std::abs(*geo.longitude - emb->second) < 1e-6;
+            if (mesmas) {
+                geo.source = matriz::analytics::GeoSource::EmbeddedMetadata;
+            } else if (!trocaConfirmada) {
+                geolocalizacao_.confirmandoTroca = true;
+                juce::Component::SafePointer<FichaConteudo> seguro(this);
+                const auto restaurar = [seguro, emb = *emb] {
+                    if (seguro == nullptr) return;
+                    seguro->geolocalizacao_.confirmandoTroca = false;
+                    if (seguro->geolocalizacao_.editorCoords)
+                        seguro->geolocalizacao_.editorCoords->setText(juce::String(emb.first, 6) + ", " + juce::String(emb.second, 6),
+                                                                       juce::dontSendNotification);
+                };
+                matriz::ui::geoacoes::confirmarTrocaDoGpsDoArquivo(
+                    1, geolocalizacao_.editorCoords->getText().trim(),
+                    [seguro, itemId] {
+                        if (seguro == nullptr) return;
+                        seguro->geolocalizacao_.confirmandoTroca = false;
+                        seguro->salvarGeolocalizacao(itemId, true);
+                    },
+                    restaurar);
+                return;
             }
         }
 
@@ -2070,7 +2101,14 @@ public:
         }
 
         if (geo.hasAnyLocationData()) {
+            auto antes = projeto_.retratoGeo({itemId});
+            if (antes.front().second && antes.front().second->latitude == geo.latitude && antes.front().second->longitude == geo.longitude &&
+                antes.front().second->formattedAddress == geo.formattedAddress && antes.front().second->city == geo.city &&
+                antes.front().second->stateProvince == geo.stateProvince && antes.front().second->country == geo.country &&
+                antes.front().second->source == geo.source)
+                return;  // nada mudou (sair do campo sem editar): nem grava nem empilha Undo
             matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), geo);
+            projeto_.registrarUndoGeo("Edit geo location", std::move(antes));
             if (aoMudar) aoMudar();
             if (aoAplicarSucesso) aoAplicarSucesso(itemId);
         }
@@ -3870,6 +3908,8 @@ private:
 
     struct SecaoGeolocalizacao {
         bool protegida = false;
+        std::optional<std::pair<double, double>> gpsEmbutido;  // o GPS do arquivo (protegida)
+        bool confirmandoTroca = false;                         // diálogo de troca do GPS aberto
         std::unique_ptr<juce::ToggleButton> overrideGeo;
         std::unique_ptr<juce::Label>       titulo;
         std::unique_ptr<juce::Label>       statusBadge;
@@ -4674,6 +4714,7 @@ private:
     };
 
     struct SecaoGeoLote {
+        bool confirmandoTroca = false;  // diálogo de troca do GPS do arquivo aberto
         std::unique_ptr<juce::ToggleButton> overrideGeo;
         std::unique_ptr<juce::Label> titulo;
         std::unique_ptr<juce::Label> badge;
@@ -5477,6 +5518,13 @@ private:
                 const auto txt = [](const std::unique_ptr<juce::TextEditor>& e) { return e ? e->getText() : juce::String(); };
                 const matriz::ui::geoacoes::Local preenchido{ txt(geoLote_.editorCoords), txt(geoLote_.editorAddress), txt(geoLote_.editorCity),
                                                               txt(geoLote_.editorState), txt(geoLote_.editorCountry) };
+                // Vários arquivos e nada digitado: o endereço de CADA UM pelas coordenadas dele. Antes caía no "local
+                // atual" (IP) e gravava esse único lugar em todos — por cima do GPS do iPhone com o OVERRIDE ligado.
+                if (itemIds_.size() > 1 &&
+                    matriz::ui::geoacoes::modoDoGet(preenchido) == matriz::ui::geoacoes::ModoGet::LocalAtual) {
+                    obterEnderecosPeloGpsDeCadaItem();
+                    return;
+                }
                 matriz::ui::geoacoes::obterLocal(preenchido, geoLote_.botaoGet.get(), [this, seguro](matriz::ui::geoacoes::Local l) {
                     if (seguro == nullptr) return;
                     if (geoLote_.editorCoords && l.coords.isNotEmpty()) geoLote_.editorCoords->setText(l.coords);
@@ -5854,7 +5902,8 @@ private:
         if (aoAplicarEmLote) aoAplicarEmLote();
     }
 
-    void aplicarGeoAgora() {
+    void aplicarGeoAgora(bool trocaConfirmada = false) {
+        if (geoLote_.confirmandoTroca) return;  // o diálogo tirou o foco do campo: não reentra
         if (itemIds_.empty()) return;
 
         // Item 2 (correção METADATA 2026-09-28): só os subcampos cujo texto
@@ -5893,6 +5942,33 @@ private:
         std::optional<std::string> novoState   = stateMudou   ? textoOuNulo(geoLote_.editorState.get())    : std::nullopt;
         std::optional<std::string> novoCountry = countryMudou ? textoOuNulo(geoLote_.editorCountry.get())  : std::nullopt;
 
+        // Trocar coordenadas com OVERRIDE em arquivos que têm GPS da câmera: pergunta antes, dizendo quantos.
+        if (coordsMudou && !trocaConfirmada && geoLote_.overrideGeo && geoLote_.overrideGeo->getToggleState()) {
+            int comGpsDoArquivo = 0;
+            for (const auto& id : itemIds_) {
+                auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_.projeto().registro(), id);
+                if (g && g->source == matriz::analytics::GeoSource::EmbeddedMetadata && g->hasValidCoordinates()) ++comGpsDoArquivo;
+            }
+            if (comGpsDoArquivo > 0) {
+                geoLote_.confirmandoTroca = true;
+                juce::Component::SafePointer<FichaLoteConteudo> seguro(this);
+                matriz::ui::geoacoes::confirmarTrocaDoGpsDoArquivo(
+                    comGpsDoArquivo, geoLote_.editorCoords->getText().trim(),
+                    [seguro] {
+                        if (seguro == nullptr) return;
+                        seguro->geoLote_.confirmandoTroca = false;
+                        seguro->aplicarGeoAgora(true);
+                    },
+                    [seguro] {
+                        if (seguro == nullptr) return;
+                        seguro->geoLote_.confirmandoTroca = false;
+                        if (seguro->geoLote_.editorCoords)  // desiste: o campo volta ao que os itens têm
+                            seguro->geoLote_.editorCoords->setText(seguro->geoLote_.seedCoords, juce::dontSendNotification);
+                    });
+                return;
+            }
+        }
+
         // Item "Progress bar para operações de metadata" (exemplo
         // obrigatório: GEO LOCATION em lote) — mesma ProgressoGlobal já
         // usada por desfazer() nesta classe, progresso real por item
@@ -5905,6 +5981,7 @@ private:
         }
 
         projeto_.iniciarGrupoUndo("Batch edit: geo location");
+        ProjetoAberto::RetratoGeo antesGeo;  // como cada item gravado estava (UNDO)
         int concluidos = 0;
         // Fase 2b: uma transação só pros N itens (leitura + mescla + escrita)
         // em vez de uma por INSERT — com seleções grandes (1000+ itens) o
@@ -5974,6 +6051,7 @@ private:
                 // se sobrar algum dado de localização — limpar tudo não
                 // apaga a linha existente, só evita gravar um estado vazio.
                 if (geo.hasAnyLocationData()) {
+                    antesGeo.emplace_back(id, existenteOpt);
                     matriz::analytics::AssetGeolocationRepository::salvar(dbGeoLote, geo);
                 }
             } catch (...) {}
@@ -5983,7 +6061,9 @@ private:
                     kIdTarefa, concluidos, juce::String(concluidos) + " / " + juce::String((int) itemIds_.size()));
             }
         }
-        if (emTransacaoGeo) commitOuReverter(dbGeoLote, itemIds_);
+        const bool gravou = !emTransacaoGeo || commitOuReverter(dbGeoLote, itemIds_);
+        writeLock.unlock();
+        if (gravou) projeto_.registrarUndoGeo("Batch edit: geo location", std::move(antesGeo));
         loteEventosGeo.fim();
         projeto_.finalizarGrupoUndo();
         if (ehLote) {
@@ -6000,6 +6080,85 @@ private:
         if (countryMudou) geoLote_.seedCountry = geoLote_.editorCountry->getText();
         if (aoAplicarGeoEmLote) aoAplicarGeoEmLote();
         else if (aoAplicarEmLote) aoAplicarEmLote();
+    }
+
+    // GET em lote: endereço/cidade/estado/país de cada arquivo pelas coordenadas DELE (só onde está vazio; coordenadas
+    // nunca mudam). Fotos no mesmo lugar (~11 m) fazem uma consulta só. Grava no fim, mesmo que a seleção tenha mudado
+    // no meio (o projeto ainda aberto basta); Cancel na barra de progresso para e grava o que já achou. Um Undo.
+    void obterEnderecosPeloGpsDeCadaItem() {
+        auto& db = projeto_.projeto().registro();
+        std::vector<std::string> ids;
+        std::vector<size_t> pontoDoItem;
+        std::vector<std::pair<double, double>> pontos;
+        std::map<std::pair<long long, long long>, size_t> indicePonto;
+        for (const auto& id : itemIds_) {
+            auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(db, id);
+            if (!g || !g->hasValidCoordinates()) continue;
+            const auto chave = std::make_pair(std::llround(*g->latitude * 1e4), std::llround(*g->longitude * 1e4));
+            const auto [it, novo] = indicePonto.emplace(chave, pontos.size());
+            if (novo) pontos.emplace_back(*g->latitude, *g->longitude);
+            ids.push_back(id);
+            pontoDoItem.push_back(it->second);
+        }
+        const int total = static_cast<int>(itemIds_.size());
+        const int semCoords = total - static_cast<int>(ids.size());
+        if (ids.empty()) {
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                             .withTitle(matriz::i18n::t("imp.ficha.geo.get"))
+                                             .withMessage(matriz::i18n::t("geo.lote_sem_coords").replace("{n}", juce::String(total)))
+                                             .withButton(matriz::i18n::t("dialogo.ok")),
+                                         nullptr);
+            return;
+        }
+        auto cancelado = std::make_shared<std::atomic<bool>>(false);
+        const int nPontos = static_cast<int>(pontos.size());
+        auto progresso = [](int a, int b) {
+            return matriz::i18n::t("geo.lote_get_progresso").replace("{a}", juce::String(a)).replace("{b}", juce::String(b));
+        };
+        ProgressoGlobal::obterInstancia().iniciarTarefa("batch_geo_get", matriz::i18n::t("geo.lote_get_titulo"), nPontos,
+                                                        [cancelado] { cancelado->store(true); }, progresso(0, nPontos));
+        ProjetoAberto* projeto = &projeto_;
+        std::weak_ptr<bool> vivo = projeto_.tokenVida();
+        juce::Component::SafePointer<FichaLoteConteudo> seguro(this);
+        matriz::ui::geoacoes::reverterEmLote(
+            std::move(pontos), cancelado,
+            [progresso](int feitos, int n) { ProgressoGlobal::obterInstancia().atualizarProgresso("batch_geo_get", feitos, progresso(feitos, n)); },
+            [projeto, vivo, seguro, ids, pontoDoItem, total, semCoords](std::vector<std::optional<matriz::ui::geoacoes::Local>> res) {
+                ProgressoGlobal::obterInstancia().concluirTarefa("batch_geo_get", "");
+                if (vivo.expired()) return;  // projeto fechado no meio
+                auto opt = [](const juce::String& s) {
+                    return s.trim().isEmpty() ? std::optional<std::string>() : std::optional<std::string>(s.trim().toStdString());
+                };
+                std::vector<matriz::analytics::AssetGeolocation> achados;
+                int naoAchados = 0;
+                for (size_t i = 0; i < ids.size(); ++i) {
+                    const auto& l = res[pontoDoItem[i]];
+                    if (!l) { ++naoAchados; continue; }
+                    matriz::analytics::AssetGeolocation a;
+                    a.assetId = ids[i];
+                    a.formattedAddress = opt(l->endereco);
+                    a.city = opt(l->cidade);
+                    a.stateProvince = opt(l->estado);
+                    a.country = opt(l->pais);
+                    achados.push_back(std::move(a));
+                }
+                const int feitos = projeto->completarEnderecosGeo(achados);
+                if (seguro != nullptr) {
+                    if (seguro->aoAplicarGeoEmLote) seguro->aoAplicarGeoEmLote();
+                    else if (seguro->aoAplicarEmLote) seguro->aoAplicarEmLote();
+                }
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                                 .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                                 .withTitle(matriz::i18n::t("imp.ficha.geo.get"))
+                                                 .withMessage(matriz::i18n::t("geo.lote_get_fim")
+                                                                  .replace("{feitos}", juce::String(feitos))
+                                                                  .replace("{total}", juce::String(total))
+                                                                  .replace("{sem}", juce::String(semCoords))
+                                                                  .replace("{nao}", juce::String(naoAchados)))
+                                                 .withButton(matriz::i18n::t("dialogo.ok")),
+                                             nullptr);
+            });
     }
 
     void desfazer() {

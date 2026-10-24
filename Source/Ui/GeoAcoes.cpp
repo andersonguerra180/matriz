@@ -178,6 +178,77 @@ void obterLocal(const Local& preenchido, juce::Component* alvo, std::function<vo
     }
 }
 
+namespace {
+juce::String urlReverso(double lat, double lng) {
+    const juce::String idioma = matriz::i18n::localeAtivo() == "pt_BR" ? "pt-BR,pt,en" : "en";
+    return "https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=18&lat=" + juce::String(lat, 6) +
+           "&lon=" + juce::String(lng, 6) + "&accept-language=" + juce::URL::addEscapeChars(idioma, true);
+}
+
+struct EstadoLoteReverso {
+    std::vector<std::pair<double, double>> pontos;
+    std::vector<std::optional<Local>> resultados;
+    size_t proximo = 0;
+    std::shared_ptr<std::atomic<bool>> cancelado;
+    std::function<void(int, int)> aoProgredir;
+    std::function<void(std::vector<std::optional<Local>>)> aoConcluir;
+};
+
+void passoLoteReverso(std::shared_ptr<EstadoLoteReverso> e) {
+    if ((e->cancelado && e->cancelado->load()) || e->proximo >= e->pontos.size()) {
+        if (e->aoConcluir) e->aoConcluir(std::move(e->resultados));
+        return;
+    }
+    const auto [lat, lng] = e->pontos[e->proximo];
+    auto terminar = [e](Achados achados) {
+        if (!achados.empty()) e->resultados[e->proximo] = achados.front().first;
+        ++e->proximo;
+        if (e->aoProgredir) e->aoProgredir(static_cast<int>(e->proximo), static_cast<int>(e->pontos.size()));
+        const int pausa = e->proximo < e->pontos.size() ? 1200 : 0;
+        juce::Timer::callAfterDelay(pausa, [e] { passoLoteReverso(e); });
+    };
+    auto noNominatim = [lat, lng, terminar] {
+        juce::Thread::launch([lat, lng, terminar] {
+            auto achados = consultarNominatim(urlReverso(lat, lng));
+            juce::MessageManager::callAsync([achados = std::move(achados), terminar]() mutable { terminar(std::move(achados)); });
+        });
+    };
+    if (!geocoderDoSistemaDisponivel()) { noNominatim(); return; }
+    reverterNoSistema(lat, lng, [terminar, noNominatim](Achados achados) {
+        if (achados.empty()) noNominatim();
+        else terminar(std::move(achados));
+    });
+}
+}  // namespace
+
+void reverterEmLote(std::vector<std::pair<double, double>> pontos, std::shared_ptr<std::atomic<bool>> cancelado,
+                    std::function<void(int, int)> aoProgredir, std::function<void(std::vector<std::optional<Local>>)> aoConcluir) {
+    auto e = std::make_shared<EstadoLoteReverso>();
+    e->resultados.resize(pontos.size());
+    e->pontos = std::move(pontos);
+    e->cancelado = std::move(cancelado);
+    e->aoProgredir = std::move(aoProgredir);
+    e->aoConcluir = std::move(aoConcluir);
+    passoLoteReverso(e);
+}
+
+void confirmarTrocaDoGpsDoArquivo(int quantos, const juce::String& novo, std::function<void()> aoConfirmar,
+                                  std::function<void()> aoCancelar) {
+    const auto msg = matriz::i18n::t("geo.trocar_gps_msg")
+                         .replace("{n}", juce::String(quantos))
+                         .replace("{novo}", novo.isNotEmpty() ? novo : matriz::i18n::t("geo.trocar_gps_sem_coords"));
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                     .withTitle(matriz::i18n::t("geo.trocar_gps_titulo"))
+                                     .withMessage(msg)
+                                     .withButton(matriz::i18n::t("geo.trocar_gps_sim"))
+                                     .withButton(matriz::i18n::t("comum.cancelar")),
+                                 [aoConfirmar, aoCancelar](int r) {
+                                     if (r == 1) { if (aoConfirmar) aoConfirmar(); }
+                                     else if (aoCancelar) aoCancelar();
+                                 });
+}
+
 juce::String urlDoGoogleMaps(const Local& local) {
     juce::StringArray partes;
     partes.addTokens(local.coords.replaceCharacters(";", ","), ", ", "");

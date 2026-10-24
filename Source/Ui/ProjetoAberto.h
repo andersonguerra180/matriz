@@ -18,6 +18,7 @@
 #include "../Consolidacao/MainEdit.h"
 #include "../Ficha/FichaDefinition.h"
 #include "../Ingest/SobreMaterial.h"
+#include "../Analytics/AssetGeolocation.h"
 #include "../Model/Project.h"
 #include "../Preservation/Preservation.h"
 
@@ -355,6 +356,16 @@ public:
     void registrarUndo(const std::string& descricao, std::function<void()> acaoReversa);
     void iniciarGrupoUndo(const std::string& descricao = {});
     void finalizarGrupoUndo();
+    // UNDO de GEO LOCATION (ficha, lote, Intake): a gravação vai direto em asset_geolocation, que não passa por
+    // salvarMetadado — sem isto o grupo de Undo ficava vazio e o Undo desfazia a edição ANTERIOR. Tirar o retrato
+    // ANTES de gravar (nullopt = o item não tinha linha) e registrar depois do COMMIT; a volta é uma transação só.
+    // registrarUndoGeo pode ser chamado de outra thread (vai para a message thread).
+    using RetratoGeo = std::vector<std::pair<std::string, std::optional<matriz::analytics::AssetGeolocation>>>;
+    RetratoGeo retratoGeo(const std::vector<std::string>& itemIds) const;
+    void registrarUndoGeo(const std::string& descricao, RetratoGeo antes);
+    // GET em lote: endereço/cidade/estado/país achados pelas coordenadas de cada item entram só onde o campo está
+    // vazio; coordenadas e fonte nunca mudam. Uma transação, um Undo. Devolve quantos itens mudaram.
+    int completarEnderecosGeo(const std::vector<matriz::analytics::AssetGeolocation>& achados);
     // Undo do Folder Map (chamar ANTES de mudar o banco). As cópias ficam em tabelas TEMP da conexão do registro.
     //  - Visual: posição, tamanho (escala_no), ativo, cor das pastas do mapa + fator dos cartões.
     //  - Snapshot: pastas + vínculos do mapa inteiro (e, com incluirLinhaMapa, a linha do folder_map: mapa apagado).

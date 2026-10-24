@@ -1566,6 +1566,78 @@ void ProjetoAberto::registrarUndo(const std::string& descricao, std::function<vo
     }
 }
 
+ProjetoAberto::RetratoGeo ProjetoAberto::retratoGeo(const std::vector<std::string>& itemIds) const {
+    RetratoGeo out;
+    if (!projeto_) return out;
+    out.reserve(itemIds.size());
+    for (const auto& id : itemIds)
+        out.emplace_back(id, matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_->registro(), id));
+    return out;
+}
+
+void ProjetoAberto::registrarUndoGeo(const std::string& descricao, RetratoGeo antes) {
+    if (antes.empty()) return;
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        std::weak_ptr<bool> vivo = vivo_;
+        juce::MessageManager::callAsync([this, vivo, descricao, antes = std::move(antes)]() mutable {
+            if (vivo.lock()) registrarUndoGeo(descricao, std::move(antes));
+        });
+        return;
+    }
+    registrarUndo(descricao, [this, antes = std::move(antes)] {
+        if (!projeto_) return;
+        auto& db = projeto_->registro();
+        std::unique_lock<std::recursive_mutex> lock(writeMutex());
+        bool emTransacao = false;
+        try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+        try {
+            for (const auto& [id, geo] : antes) {
+                if (geo) matriz::analytics::AssetGeolocationRepository::salvar(db, *geo);
+                else matriz::analytics::AssetGeolocationRepository::remover(db, id);
+            }
+            if (emTransacao) db.exec("COMMIT");
+        } catch (...) {
+            if (emTransacao) { try { db.exec("ROLLBACK"); } catch (...) {} }
+        }
+    });
+}
+
+int ProjetoAberto::completarEnderecosGeo(const std::vector<matriz::analytics::AssetGeolocation>& achados) {
+    if (!projeto_ || somenteLeitura_ || achados.empty()) return 0;
+    std::vector<std::string> ids;
+    for (const auto& a : achados) ids.push_back(a.assetId);
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> lock(writeMutex());
+    auto antes = retratoGeo(ids);
+    RetratoGeo mudados;
+    bool emTransacao = false;
+    try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+    try {
+        for (size_t i = 0; i < achados.size(); ++i) {
+            if (!antes[i].second) continue;  // sem linha = sem coordenadas: nada a completar
+            auto geo = *antes[i].second;
+            bool mudou = false;
+            auto completar = [&mudou](std::optional<std::string>& campo, const std::optional<std::string>& achado) {
+                if ((!campo || campo->empty()) && achado && !achado->empty()) { campo = achado; mudou = true; }
+            };
+            completar(geo.formattedAddress, achados[i].formattedAddress);
+            completar(geo.city, achados[i].city);
+            completar(geo.stateProvince, achados[i].stateProvince);
+            completar(geo.country, achados[i].country);
+            if (!mudou) continue;
+            matriz::analytics::AssetGeolocationRepository::salvar(db, geo);
+            mudados.push_back(antes[i]);
+        }
+        if (emTransacao) db.exec("COMMIT");
+    } catch (...) {
+        if (emTransacao) { try { db.exec("ROLLBACK"); } catch (...) {} }
+        return 0;
+    }
+    const int n = static_cast<int>(mudados.size());
+    registrarUndoGeo(n == 1 ? "GET address" : "GET addresses (" + std::to_string(n) + " items)", std::move(mudados));
+    return n;
+}
+
 void ProjetoAberto::iniciarGrupoUndo(const std::string& descricao) {
     if (desfazendo_) return;
     if (grupoAberto_) finalizarGrupoUndo();

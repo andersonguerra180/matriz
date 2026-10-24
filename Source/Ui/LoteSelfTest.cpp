@@ -163,6 +163,82 @@ void rodarTesteReloadArquivo(const Checar& checar) {
     raiz.deleteRecursively();
 }
 
+// GEO LOCATION: Undo de verdade (antes o grupo ficava vazio e o Undo desfazia a edição anterior) e o GET em lote, que
+// só completa endereço vazio pelas coordenadas de cada item — nunca troca coordenada nem fonte.
+void rodarTestesUndoGeo(const Checar& checar) {
+    using matriz::analytics::AssetGeolocation;
+    using matriz::analytics::AssetGeolocationRepository;
+    using matriz::analytics::GeoSource;
+    std::cout << "\n-- GEO LOCATION: Undo and batch GET --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_geo_undo_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Geo";
+        params.prefixoNomenclatura = "GEO";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string a = inserirItem(reg, projetoId, "GEO-1", false, ".jpg");
+        const std::string b = inserirItem(reg, projetoId, "GEO-2", false, ".jpg");
+        const std::string c = inserirItem(reg, projetoId, "GEO-3", false, ".jpg");
+        auto gps = [&](const std::string& id, double lat, double lng, std::optional<std::string> cidade) {
+            AssetGeolocation g;
+            g.assetId = id;
+            g.latitude = lat;
+            g.longitude = lng;
+            g.city = std::move(cidade);
+            g.source = GeoSource::EmbeddedMetadata;
+            AssetGeolocationRepository::salvar(reg, g);
+        };
+        gps(a, 31.775, 35.233, std::nullopt);
+        gps(b, 38.722, -9.139, std::string("Existing"));
+
+        // GET em lote: só os campos vazios; coordenadas e fonte intactas; um Undo volta tudo.
+        AssetGeolocation achadoA, achadoB;
+        achadoA.assetId = a; achadoA.city = "Jerusalem"; achadoA.country = "Israel";
+        achadoB.assetId = b; achadoB.city = "Other"; achadoB.country = "Portugal";
+        checar(pa.completarEnderecosGeo({achadoA, achadoB}) == 2, "batch GET fills the address of both items");
+        auto ga = AssetGeolocationRepository::obterPorAssetId(reg, a);
+        auto gb = AssetGeolocationRepository::obterPorAssetId(reg, b);
+        checar(ga && ga->city == std::optional<std::string>("Jerusalem") && ga->latitude == 31.775 && ga->longitude == 35.233 &&
+                   ga->source == GeoSource::EmbeddedMetadata,
+               "batch GET fills the city but never touches the camera GPS or its source");
+        checar(gb && gb->city == std::optional<std::string>("Existing") && gb->country == std::optional<std::string>("Portugal"),
+               "batch GET keeps an address that already exists and only fills the empty fields");
+        checar(pa.desfazer(), "batch GET leaves one Undo step");
+        ga = AssetGeolocationRepository::obterPorAssetId(reg, a);
+        gb = AssetGeolocationRepository::obterPorAssetId(reg, b);
+        checar(ga && !ga->city && gb && !gb->country && gb->city == std::optional<std::string>("Existing"),
+               "Undo of the batch GET brings both items back exactly");
+
+        // Gravação em lote com retrato: Undo devolve o GPS da câmera e apaga a linha que não existia.
+        auto antes = pa.retratoGeo({a, c});
+        for (const auto& id : {a, c}) {
+            AssetGeolocation errado;
+            errado.assetId = id;
+            errado.latitude = -16.45;
+            errado.longitude = -39.06;
+            errado.city = "Porto Seguro";
+            errado.source = GeoSource::UserCoordinates;
+            AssetGeolocationRepository::salvar(reg, errado);
+        }
+        pa.iniciarGrupoUndo("Batch edit: geo location");
+        pa.registrarUndoGeo("Batch edit: geo location", std::move(antes));
+        pa.finalizarGrupoUndo();
+        checar(pa.descricaoUndoAtual() == "Batch edit: geo location", "a batch geo edit is the step Undo will revert (not the edit before it)");
+        checar(pa.desfazer(), "Undo of the batch geo edit runs");
+        ga = AssetGeolocationRepository::obterPorAssetId(reg, a);
+        checar(ga && ga->latitude == 31.775 && ga->source == GeoSource::EmbeddedMetadata && !ga->city,
+               "Undo brings back the camera GPS of an item that had it");
+        checar(!AssetGeolocationRepository::obterPorAssetId(reg, c), "Undo removes the location of an item that had none");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("geo undo selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesNomesCanonicos(const Checar& checar) {
     namespace nomes = matriz::model::nomes;
     using matriz::db::Value;
@@ -5932,6 +6008,7 @@ int rodarLoteSelfTest() {
     raizSetas.deleteRecursively();
 
     rodarTesteReloadArquivo(checar);
+    rodarTestesUndoGeo(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();

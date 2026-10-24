@@ -3190,13 +3190,66 @@ void IntakeWorkspaceComponent::aplicarGeolocationAosSelecionados(const std::stri
     std::vector<std::string> ids(selecionados.begin(), selecionados.end());
     if (ids.empty()) return;
 
-    // Fase 2b: mesmo motivo dos outros aplicarXAosSelecionados -- sai da
-    // message thread. salvarEmLote() já virou uma transação só.
+    // Fase 2b: mesmo motivo dos outros aplicarXAosSelecionados -- sai da message thread, uma transação só.
+    // Por item, só muda o que foi digitado (salvarEmLote gravava a linha inteira: digitar só a cidade APAGAVA o GPS
+    // do iPhone), com retrato de antes para o Undo.
     ProjetoAberto* projeto = &projeto_;
-    poolMetadadoLote_.addJob([projeto, ids, geoTemplate] {
-        matriz::analytics::AssetGeolocationRepository::salvarEmLote(projeto->projeto().registro(), ids, geoTemplate);
-    });
-    if (tabela_) tabela_->repaint();
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    auto gravar = [projeto, ids, geoTemplate, seguro] {
+        if (seguro == nullptr) return;
+        seguro->poolMetadadoLote_.addJob([projeto, ids, geoTemplate] {
+            using matriz::analytics::GeoSource;
+            auto& db = projeto->projeto().registro();
+            std::unique_lock<std::recursive_mutex> lock(projeto->writeMutex());
+            auto antes = projeto->retratoGeo(ids);
+            ProjetoAberto::RetratoGeo gravados;
+            try {
+                db.exec("BEGIN IMMEDIATE");
+                for (const auto& [id, existente] : antes) {
+                    auto g = existente.value_or(matriz::analytics::AssetGeolocation{});
+                    g.assetId = id;
+                    const bool deUsuario = geoTemplate.hasValidCoordinates() || g.source == GeoSource::None ||
+                                           g.source == GeoSource::UserCoordinates || g.source == GeoSource::UserAddress ||
+                                           g.source == GeoSource::UserCity || g.source == GeoSource::UserState ||
+                                           g.source == GeoSource::UserCountry;
+                    if (geoTemplate.hasValidCoordinates()) { g.latitude = geoTemplate.latitude; g.longitude = geoTemplate.longitude; }
+                    if (geoTemplate.formattedAddress) g.formattedAddress = geoTemplate.formattedAddress;
+                    if (geoTemplate.city) g.city = geoTemplate.city;
+                    if (geoTemplate.stateProvince) g.stateProvince = geoTemplate.stateProvince;
+                    if (geoTemplate.country) g.country = geoTemplate.country;
+                    if (deUsuario) {
+                        if (g.hasValidCoordinates())   g.source = GeoSource::UserCoordinates;
+                        else if (g.formattedAddress)   g.source = GeoSource::UserAddress;
+                        else if (g.city)               g.source = GeoSource::UserCity;
+                        else if (g.stateProvince)      g.source = GeoSource::UserState;
+                        else if (g.country)            g.source = GeoSource::UserCountry;
+                    }
+                    matriz::analytics::AssetGeolocationRepository::salvar(db, g);
+                    gravados.emplace_back(id, existente);
+                }
+                db.exec("COMMIT");
+            } catch (...) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                return;
+            }
+            projeto->registrarUndoGeo(gravados.size() == 1 ? "Edit geo location" : "Batch edit: geo location", std::move(gravados));
+        });
+        if (seguro->tabela_) seguro->tabela_->repaint();
+    };
+
+    // Coordenadas novas em arquivos com GPS da câmera: pergunta antes, dizendo quantos.
+    if (geoTemplate.hasValidCoordinates()) {
+        int comGpsDoArquivo = 0;
+        for (const auto& id : ids) {
+            auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_.projeto().registro(), id);
+            if (g && g->source == matriz::analytics::GeoSource::EmbeddedMetadata && g->hasValidCoordinates()) ++comGpsDoArquivo;
+        }
+        if (comGpsDoArquivo > 0) {
+            matriz::ui::geoacoes::confirmarTrocaDoGpsDoArquivo(comGpsDoArquivo, juce::String(coords), gravar);
+            return;
+        }
+    }
+    gravar();
 }
 
 void IntakeWorkspaceComponent::confirmarSelecaoParaGrid() {
