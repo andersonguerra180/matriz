@@ -6056,8 +6056,10 @@ void ProjetoAberto::alternarMarcaR(const std::vector<std::string>& itemIds) {
     if (itemIds.empty() || !projeto_) return;
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     bool remover = true;
+    std::set<std::string> marcadosAntes;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& id : itemIds) if (marcadosR_.count(id)) marcadosAntes.insert(id);
         for (const auto& id : itemIds)
             if (marcadosR_.count(id) == 0) { remover = false; break; }
         for (const auto& id : itemIds) {
@@ -6067,6 +6069,22 @@ void ProjetoAberto::alternarMarcaR(const std::vector<std::string>& itemIds) {
         ++versaoMarcasR_;
         ++gravacoesMarcasPendentes_;
     }
+    // Undo (Intake, item a item): cada item volta a ter ou não ter R, pelo mesmo caminho (memória + fila serial).
+    if (!desfazendo_ && juce::MessageManager::getInstance()->isThisTheMessageThread())
+        registrarUndo(itemIds.size() == 1 ? "Mark R" : "Mark R (" + std::to_string(itemIds.size()) + " items)",
+                      [this, itemIds, marcadosAntes] {
+                          std::vector<std::string> ligar, desligar;
+                          {
+                              std::lock_guard<std::mutex> lock(marcacoesMutex_);
+                              for (const auto& id : itemIds) {
+                                  const bool agoraTem = marcadosR_.count(id) > 0, tinha = marcadosAntes.count(id) > 0;
+                                  if (tinha && !agoraTem) ligar.push_back(id);
+                                  else if (!tinha && agoraTem) desligar.push_back(id);
+                              }
+                          }
+                          if (!ligar.empty()) alternarMarcaR(ligar);       // todos sem R: liga
+                          if (!desligar.empty()) alternarMarcaR(desligar); // todos com R: desliga
+                      });
     const std::string agora = matriz::model::agoraIso8601();
     std::weak_ptr<bool> vivo = vivo_;
     poolMarcas_.addJob([this, itemIds, remover, agora, vivo]() {

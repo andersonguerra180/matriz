@@ -591,6 +591,17 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             juce::ignoreUnused(id);
         }
 
+        // #20 marca R item a item (Intake)
+        {
+            const auto a = novo();
+            const auto b = novo();
+            pa.alternarMarcaR({a});
+            pa.alternarMarcaR({a, b});  // a já tinha R e b não: nem todos têm, então liga nos dois
+            checar(pa.semMarcadosR({a, b}).empty(), "#20 R on a mixed selection marks both");
+            pa.desfazer();
+            checar(pa.semMarcadosR({a, b}) == std::vector<std::string>{b}, "#20 Undo of R brings each item back exactly");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());
     }
