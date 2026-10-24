@@ -5251,7 +5251,11 @@ void BackupWorkspaceComponent::abrirPacote() {
     if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     if (exportando_) return;
     // O folder map do pacote é o do card C (FOLDER STRUCTURE) — nada de dropdown próprio.
-    const std::string mapaId = mapaParaBackup();
+    // MAIN sem mapa (card C travado): mesma regra do EXPORT, mapa do MAIN ou o mapa aberto;
+    // o que não tem pasta nele sai em _NO FOLDER.
+    std::string mapaId = mapaParaBackup();
+    if (mapaId.empty()) mapaId = projeto_.mapaDoMainId();
+    if (mapaId.empty()) mapaId = projeto_.mapaAtivoPadrao();
     juce::String nomeMapa;
     for (auto& m : projeto_.listarFolderMaps())
         if (m.id == mapaId) nomeMapa = m.nome;
