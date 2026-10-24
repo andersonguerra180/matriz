@@ -379,6 +379,18 @@ public:
         else abrirEscolhaUnica();
     }
 
+    // Um clique = um pedido. O juce::ComboBox pede o menu ao apertar E de novo ao soltar (e a cada arrasto); com o
+    // painel, o segundo pedido valia como "clicar de novo na âncora" e fechava — o painel piscava e sumia. Aqui só o
+    // apertar abre (ou fecha, se já estiver aberto); soltar e arrastar não fazem nada. No texto editável (opção livre)
+    // o clique continua indo para a edição, como antes.
+    void mouseDown(const juce::MouseEvent& e) override {
+        if (!isEnabled() || e.mods.isPopupMenu()) return;
+        if (e.eventComponent != this && isTextEditable()) return;
+        showPopup();
+    }
+    void mouseDrag(const juce::MouseEvent&) override {}
+    void mouseUp(const juce::MouseEvent&) override {}
+
 private:
     void abrirEscolhaUnica() {
         if (!isEnabled()) return;
