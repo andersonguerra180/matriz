@@ -374,7 +374,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "EXISTS(SELECT 1 FROM asset_geolocation g WHERE g.asset_id = i.id AND ("
         "g.latitude IS NOT NULL OR g.longitude IS NOT NULL OR "
         "TRIM(COALESCE(g.formatted_address, '')) != '' OR TRIM(COALESCE(g.city, '')) != '' OR "
-        "TRIM(COALESCE(g.state_province, '')) != '' OR TRIM(COALESCE(g.country, '')) != '')) "
+        "TRIM(COALESCE(g.state_province, '')) != '' OR TRIM(COALESCE(g.country, '')) != '')), "
+        // Original Source Medium (Phone Dump decide a categoria): sem ele aqui a grade nunca via o Phone Dump e a
+        // releitura de um item editado (obterItemResumo, que lê) o mudava de categoria — a foto sumia após um GET.
+        "i.source_media "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -459,6 +462,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         if (!stmt.columnIsNull(32)) r.versaoEscolhida = stmt.columnText(32) == "true";
         r.aiGenerated = stmt.columnInt(33) != 0;
         r.temGeolocalizacao = stmt.columnInt(34) != 0;
+        if (!stmt.columnIsNull(35)) r.sourceMedia = stmt.columnText(35);
         if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
         else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
