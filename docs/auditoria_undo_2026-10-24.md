@@ -17,7 +17,13 @@ Fora, de propósito:
 - **#19** zerar posições: migração automática ao abrir um mapa gravado por uma versão antiga, não é ação do usuário.
 - **#6 Reload File**: o Undo devolve o que o banco tinha (tamanho, cache, derivada), mas o arquivo no disco é o que ele é.
 
-Pendentes: #25 (ingest, decisão), F (backup/configuração, decisão) e H (defeitos do mecanismo).
+- **#25 Ingest** (decisão do usuário): fica sem Undo; o caminho de volta é "Remove from project", que tem Undo.
+- **F** feito (`Fix(Undo F)`): configurações com Undo de colunas; rebuild, converter/definir MAIN e editar MAIN já pediam
+  confirmação; o registro de clone em OUTRO banco (sanitizar clone) fica fora da pilha deste projeto.
+- **H** feito: aviso do que foi desfeito / nada a desfazer (H-a), passo próprio para Undo de outra thread (H-b), aviso
+  no limite de 100 (H-c), botão morto do lote removido (H-d).
+
+Pendente: **histórico persistente** (o Undo ainda se perde ao fechar o projeto) — plano aguardando aprovação.
 Decisão do usuário: Clear Metadata continua mantendo os campos Dublin Core.
 
 Já cobertos (têm Undo): campos da ficha via `salvarMetadado`/`salvarMetadadoEmLote` (individual, lote, Intake), tags,
