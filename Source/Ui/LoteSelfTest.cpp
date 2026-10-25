@@ -6,6 +6,7 @@
 #include "PainelMetadadosArquivo.h"
 
 #include <JuceHeader.h>
+#include <thread>
 
 #include <chrono>
 #include <functional>
@@ -689,6 +690,18 @@ void rodarTestesUndoMecanismo(const Checar& checar) {
                 "VALUES ('bd1', 'bd1', '/tmp/novo_destino', 'X', 'CLONE', 1, '2026-10-24', 0)", {});
         pa.desfazer();
         checar(um("SELECT COUNT(*) FROM backup_destino WHERE id = 'bd1'", {}) == "0", "F Undo of Add Backup Destination removes the new destination");
+
+        // H: Undo vindo de outra thread é passo próprio, nunca entra no grupo aberto de outra ação
+        pa.iniciarGrupoUndo("Ação A");
+        pa.registrarUndo("Ação A", [] {});
+        std::thread t([&pa] { pa.registrarUndo("Vindo de outra thread", [] {}); });
+        t.join();
+        pa.finalizarGrupoUndo();
+        bombear(100);
+        checar(pa.descricaoUndoAtual() == "Vindo de outra thread", "H an Undo registered from another thread is its own step");
+        pa.desfazer();
+        checar(pa.descricaoUndoAtual() == "Ação A", "H ... and the open group stays separate");
+        pa.desfazer();
 
         // H: passar de 100 passos avisa (uma vez)
         int avisos = 0;

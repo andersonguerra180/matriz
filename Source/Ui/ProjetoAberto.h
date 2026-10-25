@@ -356,6 +356,9 @@ public:
     void registrarUndo(const std::string& descricao, std::function<void()> acaoReversa);
     void iniciarGrupoUndo(const std::string& descricao = {});
     void finalizarGrupoUndo();
+    // Passo de Undo PRÓPRIO, fora de qualquer grupo aberto: o que chega de outra thread pela message thread cai num
+    // momento qualquer e não pode entrar no grupo de outra ação (os dois seriam desfeitos juntos). Message thread.
+    void registrarUndoComoPassoProprio(const std::string& descricao, std::function<void()> acaoReversa);
     // Undo de COLUNAS de uma linha de tabela-mãe (projeto, vault, backup_destino, source_clone): apagar e regravar a
     // linha levaria a cascata junto (o projeto inteiro, o vault_id dos arquivos). Chamar ANTES de gravar; a volta
     // regrava só essas colunas; se a linha não existia, ela sai. Pode ser chamado de outra thread.
@@ -1318,7 +1321,7 @@ public:
     void alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds);
     void definirMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds, bool marcado);
     // Undo das marcas H/K/P/W/B/R: `marcados` = quem tinha a marca ANTES, entre `itemIds`. A volta deixa cada item
-    // como estava (memória e banco, pela mesma fila serial das marcas). Message thread.
+    // como estava (memória e banco, pela mesma fila serial das marcas). De outra thread, vira passo próprio.
     void registrarUndoMarcacao(TipoMarcacao tipo, std::vector<std::string> itemIds, std::set<std::string> marcados);
     bool contemMarcacao(TipoMarcacao tipo, const std::string& itemId) const;
     size_t contarMarcacoes(TipoMarcacao tipo) const;

@@ -1418,16 +1418,9 @@ static void voltarLinhasDoUndo(matriz::db::Database& d, const std::string& t, co
 }
 
 // registrarUndo só na message thread (a pilha e aoMudarUndo são dela): de outra thread, vai para ela.
+// (registrarUndo já leva o de outra thread para a message thread, como passo próprio.)
 static void registrarUndoNaMessageThread(ProjetoAberto& pa, const std::string& descricao, std::function<void()> acao) {
-    if (juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-        pa.registrarUndo(descricao, std::move(acao));
-        return;
-    }
-    ProjetoAberto* p = &pa;
-    std::weak_ptr<bool> vivo = pa.tokenVida();
-    juce::MessageManager::callAsync([p, vivo, descricao, acao = std::move(acao)]() mutable {
-        if (vivo.lock()) p->registrarUndo(descricao, std::move(acao));
-    });
+    pa.registrarUndo(descricao, std::move(acao));
 }
 
 static std::string idsEmJson(const std::vector<std::string>& ids) {
@@ -1727,6 +1720,14 @@ std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId,
 
 void ProjetoAberto::registrarUndo(const std::string& descricao, std::function<void()> acaoReversa) {
     if (desfazendo_ || !acaoReversa) return;
+    // A pilha é da message thread: de outra thread, vira um passo próprio quando chegar lá.
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        std::weak_ptr<bool> vivo = vivo_;
+        juce::MessageManager::callAsync([this, vivo, descricao, acaoReversa = std::move(acaoReversa)]() mutable {
+            if (vivo.lock()) registrarUndoComoPassoProprio(descricao, std::move(acaoReversa));
+        });
+        return;
+    }
     if (grupoAberto_) {
         grupoAberto_->acoesReversas.push_back(std::move(acaoReversa));
     } else {
@@ -1734,6 +1735,13 @@ void ProjetoAberto::registrarUndo(const std::string& descricao, std::function<vo
         aparaPilhaUndo();
         if (aoMudarUndo) aoMudarUndo();
     }
+}
+
+void ProjetoAberto::registrarUndoComoPassoProprio(const std::string& descricao, std::function<void()> acaoReversa) {
+    if (desfazendo_ || !acaoReversa) return;
+    pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acaoReversa)}});
+    aparaPilhaUndo();
+    if (aoMudarUndo) aoMudarUndo();
 }
 
 void ProjetoAberto::aparaPilhaUndo() {
@@ -1788,13 +1796,7 @@ ProjetoAberto::RetratoGeo ProjetoAberto::retratoGeo(const std::vector<std::strin
 
 void ProjetoAberto::registrarUndoGeo(const std::string& descricao, RetratoGeo antes) {
     if (antes.empty()) return;
-    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-        std::weak_ptr<bool> vivo = vivo_;
-        juce::MessageManager::callAsync([this, vivo, descricao, antes = std::move(antes)]() mutable {
-            if (vivo.lock()) registrarUndoGeo(descricao, std::move(antes));
-        });
-        return;
-    }
+    // De outra thread (Intake em lote), registrarUndo leva para a message thread como passo próprio.
     registrarUndo(descricao, [this, antes = std::move(antes)] {
         if (!projeto_) return;
         auto& db = projeto_->registro();
@@ -2058,7 +2060,7 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
         } else {
             std::weak_ptr<bool> vivo = vivo_;
             juce::MessageManager::callAsync([this, vivo, descricao, desfazerLote]() mutable {
-                if (vivo.lock()) registrarUndo(descricao, std::move(desfazerLote));
+                if (vivo.lock()) registrarUndoComoPassoProprio(descricao, std::move(desfazerLote));
             });
         }
     }
@@ -5114,14 +5116,6 @@ ProjetoAberto::Retrato ProjetoAberto::retratar(const std::vector<TabelaDoRetrato
 void ProjetoAberto::registrarUndoDeRetrato(const std::string& descricao, Retrato retrato, std::vector<std::string> idsAvisar,
                                            std::function<void()> depois) {
     if (retrato.empty()) return;
-    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-        std::weak_ptr<bool> vivo = vivo_;
-        juce::MessageManager::callAsync([this, vivo, descricao, retrato = std::move(retrato), idsAvisar = std::move(idsAvisar),
-                                         depois = std::move(depois)]() mutable {
-            if (vivo.lock()) registrarUndoDeRetrato(descricao, std::move(retrato), std::move(idsAvisar), std::move(depois));
-        });
-        return;
-    }
     registrarUndo(descricao, [this, retrato = std::move(retrato), idsAvisar = std::move(idsAvisar), depois = std::move(depois)] {
         if (!projeto_) return;
         auto& d = projeto_->registro();
@@ -6168,7 +6162,7 @@ void ProjetoAberto::alternarMarcaR(const std::vector<std::string>& itemIds) {
         ++gravacoesMarcasPendentes_;
     }
     // Undo (Intake, item a item): cada item volta a ter ou não ter R, pelo mesmo caminho (memória + fila serial).
-    if (!desfazendo_ && juce::MessageManager::getInstance()->isThisTheMessageThread())
+    if (!desfazendo_)
         registrarUndo(itemIds.size() == 1 ? "Mark R" : "Mark R (" + std::to_string(itemIds.size()) + " items)",
                       [this, itemIds, marcadosAntes] {
                           std::vector<std::string> ligar, desligar;
@@ -6482,13 +6476,6 @@ std::shared_ptr<matriz::vault::ResolvedorEmLote> ProjetoAberto::criarResolvedorE
 void ProjetoAberto::registrarUndoDeColunaDoItem(const std::string& descricao, const std::string& coluna,
                                                 std::map<std::string, std::optional<std::string>> antes) {
     if (antes.empty() || desfazendo_) return;
-    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-        std::weak_ptr<bool> vivo = vivo_;
-        juce::MessageManager::callAsync([this, vivo, descricao, coluna, antes = std::move(antes)]() mutable {
-            if (vivo.lock()) registrarUndoDeColunaDoItem(descricao, coluna, std::move(antes));
-        });
-        return;
-    }
     registrarUndo(descricao, [this, coluna, antes = std::move(antes)] {
         if (!projeto_) return;
         auto& db = projeto_->registro();
@@ -8635,7 +8622,7 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
 // marcacoesMutex_ (ver comentário no membro, ProjetoAberto.h). É privada e
 // só usada pelas funções abaixo, cada uma já tranca a sua parte.
 void ProjetoAberto::registrarUndoMarcacao(TipoMarcacao tipo, std::vector<std::string> itemIds, std::set<std::string> marcados) {
-    if (itemIds.empty() || desfazendo_ || !juce::MessageManager::getInstance()->isThisTheMessageThread()) return;
+    if (itemIds.empty() || desfazendo_) return;  // de outra thread, registrarUndo leva para a message thread
     const char* letra = tipo == TipoMarcacao::Html ? "H" : tipo == TipoMarcacao::Zip ? "K" : tipo == TipoMarcacao::Print ? "P"
                       : tipo == TipoMarcacao::Watermark ? "W" : tipo == TipoMarcacao::Bounce ? "B" : "R";
     registrarUndo(std::string("Mark ") + letra + (itemIds.size() == 1 ? "" : " (" + std::to_string(itemIds.size()) + " items)"),
