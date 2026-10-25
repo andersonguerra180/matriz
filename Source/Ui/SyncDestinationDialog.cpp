@@ -755,6 +755,7 @@ void SyncDestinationDialog::localizarDestino(int idx) {
                                  return;
                              }
 
+                             if (antesDeGravarDestino_) antesDeGravarDestino_(destinos_[idx].id, {"destino_path"});
                              projeto_.registro().run("UPDATE backup_destino SET destino_path = ? WHERE id = ?",
                                                      {matriz::db::Value::of(escolhido.getFullPathName().toStdString()),
                                                       matriz::db::Value::of(destinos_[idx].id)});
@@ -809,6 +810,8 @@ void SyncDestinationDialog::adicionarDestinoExistente() {
                              }
 
                              std::string agora = matriz::model::agoraIso8601();
+                             if (antesDeGravarDestino_)
+                                 antesDeGravarDestino_(destInfo->destinationId, {"destino_path", "ultimo_visto_em", "ultima_edicao_conhecida", "ultima_revisao_conhecida"});
                              projeto_.registro().run(
                                  "INSERT INTO backup_destino (id, destino_path, rotulo, ativo, criado_em, destination_id, papel, ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "
                                  "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?) "
@@ -942,10 +945,12 @@ void SyncDestinationDialog::lookAndFeelChanged() {
     repaint();
 }
 
-void SyncDestinationDialog::abrirModal(matriz::model::Project& projeto, std::function<void()> aoConcluir) {
+void SyncDestinationDialog::abrirModal(matriz::model::Project& projeto, std::function<void()> aoConcluir,
+                                       std::function<void(const std::string&, const std::vector<std::string>&)> antesDeGravarDestino) {
     auto janela = std::make_unique<SyncDestinationDialog>(projeto, [aoConcluir] {
         if (aoConcluir) aoConcluir();
     });
+    janela->antesDeGravarDestino_ = std::move(antesDeGravarDestino);
 
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     juce::DialogWindow::LaunchOptions opt;

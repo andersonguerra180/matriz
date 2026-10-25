@@ -390,6 +390,7 @@ void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& 
                                                            {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
                     return;
                 }
+                projeto_.registrarUndoDeColunas("Edit Source Code", "vault", "id", versao.id, {"codigo"});
                 projeto_.projeto().registro().run("UPDATE vault SET codigo = ? WHERE id = ?",
                                                   {matriz::db::Value::of(novoCodigo.toStdString()),
                                                    matriz::db::Value::of(versao.id)});
@@ -403,6 +404,8 @@ void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& 
 
         // Só o rótulo (apelido do disco). Num SOURCE a pasta no MAIN nunca muda.
         const bool ehSource = versao.papel == ProjetoAberto::VersaoResumo::Papel::Source;
+        projeto_.registrarUndoDeColunas("Rename Disk", ehSource ? "vault" : versao.cloneDeSource ? "source_clone" : "backup_destino", "id",
+                                        versao.id, {ehSource ? "nome" : "rotulo"});
         projeto_.projeto().registro().run(
             ehSource ? "UPDATE vault SET nome = ? WHERE id = ?"
                      : versao.cloneDeSource ? "UPDATE source_clone SET rotulo = ? WHERE id = ?"

@@ -30,8 +30,11 @@ EstadoProjetoRow lerEstado(matriz::db::Database& registro) {
     return e;
 }
 
-void gravarPermitirSobrescrever(matriz::db::Database& registro, const std::string& projetoId, bool ligado,
+void gravarPermitirSobrescrever(ProjetoAberto& projeto, const std::string& projetoId, bool ligado,
                                  bool marcarAvisoConfirmado) {
+    auto& registro = projeto.projeto().registro();
+    projeto.registrarUndoDeColunas("Allow Overwriting Master", "projeto", "id", projetoId,
+                                   {"permitir_sobrescrever_master", "aviso_sobrescrita_confirmado_em"});
     if (marcarAvisoConfirmado) {
         registro.run("UPDATE projeto SET permitir_sobrescrever_master = ?, aviso_sobrescrita_confirmado_em = ? WHERE id = ?",
                       {matriz::db::Value::of(ligado), matriz::db::Value::of(matriz::model::agoraIso8601()),
@@ -84,14 +87,14 @@ void mostrarDialogoConfiguracoesProjeto(ProjetoAberto& projeto, std::function<vo
         bool ligarAgora = vivo->toggle->getToggleState();
 
         if (!ligarAgora) {
-            gravarPermitirSobrescrever(projeto.projeto().registro(), vivo->estado->id, false, false);
+            gravarPermitirSobrescrever(projeto, vivo->estado->id, false, false);
             vivo->estado->permitirSobrescrever = false;
             return;
         }
 
         if (vivo->estado->avisoJaConfirmado) {
             // Já confirmou antes — "não incomoda mais" (P1).
-            gravarPermitirSobrescrever(projeto.projeto().registro(), vivo->estado->id, true, false);
+            gravarPermitirSobrescrever(projeto, vivo->estado->id, true, false);
             vivo->estado->permitirSobrescrever = true;
             return;
         }
@@ -106,7 +109,7 @@ void mostrarDialogoConfiguracoesProjeto(ProjetoAberto& projeto, std::function<vo
             [vivo, &projeto](int resultado) {
                 bool confirmou = resultado == 1;
                 if (confirmou) {
-                    gravarPermitirSobrescrever(projeto.projeto().registro(), vivo->estado->id, true, true);
+                    gravarPermitirSobrescrever(projeto, vivo->estado->id, true, true);
                     vivo->estado->permitirSobrescrever = true;
                     vivo->estado->avisoJaConfirmado = true;
                 } else {

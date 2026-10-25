@@ -32,7 +32,10 @@ public:
 
     void closeDialog();
 
-    static void abrirModal(matriz::model::Project& projeto, std::function<void()> aoConcluir = nullptr);
+    // antesDeGravarDestino: chamado ANTES de gravar backup_destino (id, colunas) — quem abre registra o Undo.
+    static void abrirModal(matriz::model::Project& projeto, std::function<void()> aoConcluir = nullptr,
+                           std::function<void(const std::string&, const std::vector<std::string>&)> antesDeGravarDestino = nullptr);
+    std::function<void(const std::string&, const std::vector<std::string>&)> antesDeGravarDestino_;
 
 private:
     struct DestinoInfoUI {

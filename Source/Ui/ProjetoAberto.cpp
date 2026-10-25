@@ -1737,6 +1737,35 @@ void ProjetoAberto::registrarUndo(const std::string& descricao, std::function<vo
     }
 }
 
+void ProjetoAberto::registrarUndoDeColunas(const std::string& descricao, const std::string& tabela, const std::string& colunaChave,
+                                           const std::string& valorChave, std::vector<std::string> colunas) {
+    if (!projeto_ || desfazendo_ || colunas.empty()) return;
+    auto& d = projeto_->registro();
+    const std::string t = "undo_co_" + std::to_string(++contadorSnapUndo_);
+    try {
+        d.run("CREATE TEMP TABLE \"" + t + "\" AS SELECT * FROM \"" + tabela + "\" WHERE \"" + colunaChave + "\" = ?",
+              {matriz::db::Value::of(valorChave)});
+    } catch (...) { return; }
+    std::string cols;
+    for (const auto& c : colunas) cols += (cols.empty() ? "\"" : ", \"") + c + "\"";
+    registrarUndo(descricao, [this, t, tabela, colunaChave, valorChave, cols] {
+        if (!projeto_) return;
+        auto& r = projeto_->registro();
+        std::unique_lock<std::recursive_mutex> lock(writeMutex());
+        try {
+            auto st = r.prepare("SELECT COUNT(*) FROM temp.\"" + t + "\"");
+            const bool existia = st.step() && st.columnInt(0) > 0;
+            if (existia)
+                r.run("UPDATE \"" + tabela + "\" SET (" + cols + ") = (SELECT " + cols + " FROM temp.\"" + t + "\") WHERE \"" +
+                          colunaChave + "\" = ?",
+                      {matriz::db::Value::of(valorChave)});
+            else
+                r.run("DELETE FROM \"" + tabela + "\" WHERE \"" + colunaChave + "\" = ?", {matriz::db::Value::of(valorChave)});
+            r.run("DROP TABLE IF EXISTS temp.\"" + t + "\"", {});
+        } catch (...) {}
+    });
+}
+
 ProjetoAberto::RetratoGeo ProjetoAberto::retratoGeo(const std::vector<std::string>& itemIds) const {
     RetratoGeo out;
     if (!projeto_) return out;

@@ -356,6 +356,11 @@ public:
     void registrarUndo(const std::string& descricao, std::function<void()> acaoReversa);
     void iniciarGrupoUndo(const std::string& descricao = {});
     void finalizarGrupoUndo();
+    // Undo de COLUNAS de uma linha de tabela-mãe (projeto, vault, backup_destino, source_clone): apagar e regravar a
+    // linha levaria a cascata junto (o projeto inteiro, o vault_id dos arquivos). Chamar ANTES de gravar; a volta
+    // regrava só essas colunas; se a linha não existia, ela sai. Pode ser chamado de outra thread.
+    void registrarUndoDeColunas(const std::string& descricao, const std::string& tabela, const std::string& colunaChave,
+                                const std::string& valorChave, std::vector<std::string> colunas);
     // UNDO de GEO LOCATION (ficha, lote, Intake): a gravação vai direto em asset_geolocation, que não passa por
     // salvarMetadado — sem isto o grupo de Undo ficava vazio e o Undo desfazia a edição ANTERIOR. Tirar o retrato
     // ANTES de gravar (nullopt = o item não tinha linha) e registrar depois do COMMIT; a volta é uma transação só.

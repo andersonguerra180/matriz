@@ -3944,6 +3944,8 @@ void BackupWorkspaceComponent::gravarRascunhoOrganizacao() {
         o->setProperty("mapa_id", juce::String(valido ? idsComboMapaMain_[static_cast<size_t>(idx)] : std::string()));
     }
     try {
+        // Undo (a aba relê o rascunho em recarregar(), que o executarUndo chama).
+        projeto_.registrarUndoDeColunas("Backup Options", "projeto", "id", projeto_.projeto().projetoId(), {"backup_config_rascunho"});
         projeto_.projeto().registro().run("UPDATE projeto SET backup_config_rascunho = ?",
                                           {matriz::db::Value::of(juce::JSON::toString(juce::var(o.get()), true).toStdString())});
     } catch (...) {}
@@ -5565,6 +5567,7 @@ void BackupWorkspaceComponent::adicionarOuAtivarDestino(const juce::File& pasta,
     if (rotulo.empty()) rotulo = "Backup";
 
     try {
+        projeto_.registrarUndoDeColunas("Add Backup Destination", "backup_destino", "destino_path", destPath, {"ativo"});
         auto stmtCheck = db.prepare("SELECT id, rotulo, ativo FROM backup_destino WHERE destino_path = ?");
         stmtCheck.bind(1, matriz::db::Value::of(destPath));
         if (stmtCheck.step()) {
@@ -5653,6 +5656,8 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
             // Link existing destination
             auto& db = projeto_.projeto().registro();
             try {
+                projeto_.registrarUndoDeColunas("Link Backup Destination", "backup_destino", "destino_path", folder.getFullPathName().toStdString(),
+                                                {"ativo", "destination_id", "papel", "ultima_revisao_conhecida", "ultimo_visto_em", "ultima_edicao_conhecida"});
                 auto stmtCheck = db.prepare("SELECT id FROM backup_destino WHERE destino_path = ?");
                 stmtCheck.bind(1, matriz::db::Value::of(folder.getFullPathName().toStdString()));
                 if (stmtCheck.step()) {
@@ -5939,6 +5944,10 @@ void BackupWorkspaceComponent::desvincularDestino(const DestinoBackupItem& dest)
             if (result != 1) return;
 
             auto& db = projeto_.projeto().registro();
+            if (dest.id.empty())
+                projeto_.registrarUndoDeColunas("Unlink Backup Destination", "backup_destino", "destino_path", dest.caminho.toStdString(), {"ativo"});
+            else
+                projeto_.registrarUndoDeColunas("Unlink Backup Destination", "backup_destino", "id", dest.id, {"ativo"});
             if (dest.id.empty()) {
                 db.run("UPDATE backup_destino SET ativo = 0 WHERE destino_path = ?",
                        {matriz::db::Value::of(dest.caminho.toStdString())});
@@ -6248,9 +6257,12 @@ void BackupWorkspaceComponent::executarBackupAcao(bool forcarOverride) {
 void BackupWorkspaceComponent::iniciarSyncComOutroDestino() {
     if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    SyncDestinationDialog::abrirModal(projeto_.projeto(), [safeThis] {
-        if (safeThis) safeThis->recarregar();
-    });
+    ProjetoAberto* p = &projeto_;
+    SyncDestinationDialog::abrirModal(
+        projeto_.projeto(), [safeThis] { if (safeThis) safeThis->recarregar(); },
+        [p](const std::string& destinoId, const std::vector<std::string>& colunas) {
+            p->registrarUndoDeColunas("Backup Destination", "backup_destino", "id", destinoId, colunas);
+        });
 }
 
 void BackupWorkspaceComponent::registrarDestinoBackup(const juce::File& destFolder, const juce::String& rotuloSugerido,

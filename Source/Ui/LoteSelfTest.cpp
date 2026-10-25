@@ -656,6 +656,46 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
     raiz.deleteRecursively();
 }
 
+// Auditoria do UNDO: configuração de backup (F) e o próprio mecanismo (H).
+void rodarTestesUndoMecanismo(const Checar& checar) {
+    using matriz::db::Value;
+    std::cout << "\n-- UNDO audit: settings and mechanism --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_undo_mecanismo_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "UndoH";
+        params.prefixoNomenclatura = "UNH";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string a = inserirItem(reg, projetoId, "UNH-1", false, ".jpg");
+        auto um = [&](const std::string& sql, std::vector<Value> ps) {
+            auto q = reg.prepare(sql);
+            for (size_t i = 0; i < ps.size(); ++i) q.bind(static_cast<int>(i + 1), ps[i]);
+            return q.step() ? q.columnText(0) : std::string("<none>");
+        };
+
+        // F: colunas de tabela-mãe — volta só a coluna, a linha (e o que depende dela) fica
+        pa.registrarUndoDeColunas("Allow Overwriting Master", "projeto", "id", projetoId, {"permitir_sobrescrever_master"});
+        reg.run("UPDATE projeto SET permitir_sobrescrever_master = 1 WHERE id = ?", {Value::of(projetoId)});
+        pa.desfazer();
+        checar(um("SELECT permitir_sobrescrever_master FROM projeto WHERE id = ?", {Value::of(projetoId)}) == "0" &&
+                   um("SELECT COUNT(*) FROM item WHERE id = ?", {Value::of(a)}) == "1",
+               "F Undo of a project setting restores the column without touching the items (no cascade)");
+        pa.registrarUndoDeColunas("Add Backup Destination", "backup_destino", "destino_path", "/tmp/novo_destino", {"ativo"});
+        reg.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, ultima_revisao_conhecida) "
+                "VALUES ('bd1', 'bd1', '/tmp/novo_destino', 'X', 'CLONE', 1, '2026-10-24', 0)", {});
+        pa.desfazer();
+        checar(um("SELECT COUNT(*) FROM backup_destino WHERE id = 'bd1'", {}) == "0", "F Undo of Add Backup Destination removes the new destination");
+
+    } catch (const std::exception& e) {
+        checar(false, juce::String("undo mechanism selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesNomesCanonicos(const Checar& checar) {
     namespace nomes = matriz::model::nomes;
     using matriz::db::Value;
@@ -6429,6 +6469,7 @@ int rodarLoteSelfTest() {
     rodarTestesGradeConsistente(checar);
     rodarTestesUndoAuditoria(checar);
     rodarTestesUndoAuditoriaMedios(checar);
+    rodarTestesUndoMecanismo(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();
