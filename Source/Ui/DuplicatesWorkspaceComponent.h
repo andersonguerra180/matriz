@@ -102,6 +102,7 @@ private:
     // nome = nome do arquivo sem extensão; segundos = horário EXIF (-1 = sem data); camera vazia = desconhecida.
     // Sequência: mesmo prefixo e sufixo, contador diferente a até 10 (com volta 9999 -> 0001) ou nome-horário
     // (20200826_165804) a até 60 s; EXIF a até 60 s quando os dois têm data; mesma câmera quando os dois têm.
+    // Mesma câmera com horários EXIF diferentes a até 60 s também é sequência, com qualquer nome.
     static bool ehSequenciaDeFotos(const std::string& nomeA, long long segundosA, const std::string& cameraA,
                                    const std::string& nomeB, long long segundosB, const std::string& cameraB);
     std::vector<GrupoSequencia> sequenciasDetectadas_;

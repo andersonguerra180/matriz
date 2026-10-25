@@ -5380,6 +5380,13 @@ int rodarLoteSelfTest() {
                            !D::ehSequenciaDeFotos("20200826_165804", -1, "", "20200826_170004", -1, ""),
                        "sequence rule: phone time names compare in seconds (2 s across the minute yes, 2 min no)");
                 checar(!D::ehSequenciaDeFotos("IMG_A", -1, "", "IMG_B", -1, ""), "sequence rule: names without a counter never match");
+                checar(D::ehSequenciaDeFotos("J2784x1856-16084", 100, "Canon EOS 5D Mark II", "J2784x1856-16332", 101, "Canon EOS 5D Mark II") &&
+                           D::ehSequenciaDeFotos("73170E56-2EA4", 100, "Canon EOS REBEL T5", "EAE57099-BBF9", 111, "Canon EOS REBEL T5"),
+                       "sequence rule: same camera 1-60 s apart is a sequence whatever the names (recovered, exported)");
+                checar(!D::ehSequenciaDeFotos("J4000x3000-07811", 100, "DSC-W220", "DSC00590", 100, "DSC-W220") &&
+                           !D::ehSequenciaDeFotos("J2784x1856-16084", 100, "", "J2784x1856-16332", 101, "") &&
+                           !D::ehSequenciaDeFotos("IMG_4725", 0, "Canon EOS REBEL T5", "IMG_4729", 165, "Canon EOS REBEL T5"),
+                       "sequence rule: the same EXIF second, no camera or over 60 s keep the old rule");
 
                 // Scan de verdade: 3 fotos quase iguais FF-006/007/008 com 1 s entre elas viram UMA rajada.
                 std::vector<std::string> rajada;

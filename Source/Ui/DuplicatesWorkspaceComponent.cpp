@@ -2940,6 +2940,9 @@ bool DuplicatesWorkspaceComponent::ehSequenciaDeFotos(const std::string& nomeA, 
         !juce::String::fromUTF8(cameraA.c_str()).trim().equalsIgnoreCase(juce::String::fromUTF8(cameraB.c_str()).trim()))
         return false;
     if (segundosA >= 0 && segundosB >= 0 && std::llabs(segundosA - segundosB) > kMaxSegundos) return false;
+    // Mesma câmera e horário EXIF diferente (1 a 60 s): outra foto da mesma sessão, qualquer que seja o nome
+    // (recuperadas "J2784x1856-16084", exportadas com nome-código). O mesmo segundo continua podendo ser cópia.
+    if (!cameraA.empty() && !cameraB.empty() && segundosA >= 0 && segundosB >= 0 && segundosA != segundosB) return true;
 
     // Nome = antes + contador (último bloco de dígitos) + depois: "FF-006" -> "FF-", "006", "".
     struct Partes { juce::String antes, contador, depois; };
