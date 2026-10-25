@@ -1908,6 +1908,54 @@ void rodarTestesMerge(const Checar& checar) {
             checar(colunaDoItem(reg, "dc_description", c) == "do pacote" && carregar({}).empty(),
                    "merge window: USE THE OTHER VALUE writes it and the card leaves the list");
         }
+
+        // Cadeia: o mantido com conflito pendente é descartado depois em outro par -> os pendentes vão junto.
+        {
+            const std::string e = inserirItem(reg, projetoId, "MRG-5", false);
+            const std::string f = inserirItem(reg, projetoId, "MRG-6", false);
+            const std::string g = inserirItem(reg, projetoId, "MRG-7", false);
+            pa.salvarMetadado(e, "dc_publisher", "Editora E");
+            pa.salvarMetadado(f, "dc_publisher", "Editora F");
+            pa.salvarMetadado(g, "dc_publisher", "Editora G");
+            auto resolverPar = [&](const std::string& manter, const std::string& descartar) {
+                std::optional<bool> okPar;
+                pa.resolverDuplicatasEmSegundoPlano(
+                    {manter, descartar},
+                    [manter, descartar](matriz::db::Database& db) {
+                        return std::vector<ProjetoAberto::ResultadoSanitizacao>{ProjetoAberto::sanitizarDuplicata(db, manter, descartar)};
+                    },
+                    [&](bool r, std::vector<ProjetoAberto::ResultadoSanitizacao>) { okPar = r; });
+                esperarAte([&] { return okPar.has_value(); }, 20000);
+                return okPar.value_or(false);
+            };
+            checar(resolverPar(e, f) && pa.conflitosMergePendentes(e).size() == 1, "chain: E keeps F, the conflict waits on E");
+            checar(resolverPar(g, e), "chain: G keeps E (E had a pending conflict)");
+            auto emConflito = pa.itensDaColecaoEmbutida("merge_conflitos");
+            checar(pa.conflitosMergePendentes(e).empty() && pa.conflitosMergePendentes(g).size() == 2 &&
+                       emConflito.count(g) == 1 && emConflito.count(e) == 0,
+                   "chain: E's pending conflict goes with it to G, and only G shows up in \"Merge conflicts\"");
+            {
+                const auto gruposG = carregar({g});
+                checar(gruposG.size() == 1 && gruposG[0].valorAtual == "Editora G" && gruposG[0].alternativas.size() == 2,
+                       "chain: G's card has its value and both other values (E and F)");
+            }
+            checar(pa.desfazer() && pa.conflitosMergePendentes(e).size() == 1 && pa.conflitosMergePendentes(g).empty() &&
+                       colunaDoItem(reg, "estado", e) != "duplicata",
+                   "chain: Undo gives E back its pending conflict (and none is left on G)");
+
+            // Reparo dos que já ficaram presos (antes desta correção): E descartado em G sem levar o pendente.
+            reg.run("UPDATE item SET estado = 'duplicata' WHERE id = ?", {Value::of(e)});
+            reg.run("INSERT INTO preservation_event (id, item_id, event_type, event_date_time, event_detail, event_outcome, criado_em) "
+                    "VALUES (?, ?, 'validation', '2026-10-23T10:00:00Z', "
+                    "'Duplicate resolved: kept MRG-7, discarded MRG-5 (file stays in SOURCE: x)', 'SUCCESS', '2026-10-23T10:00:00Z')",
+                    {Value::of(matriz::model::novoUuid()), Value::of(e)});
+            checar(pa.itensDaColecaoEmbutida("merge_conflitos").count(e) == 0,
+                   "\"Merge conflicts\" counts only visible items (a resolved duplicate is hidden)");
+            checar(mg::levarConflitosPresosAoMantido(reg) == 1 && pa.conflitosMergePendentes(e).empty() &&
+                       pa.conflitosMergePendentes(g).size() == 1 && pa.itensDaColecaoEmbutida("merge_conflitos").count(g) == 1,
+                   "repair: a conflict stuck on a resolved duplicate goes to the kept item, following the chain");
+            checar(mg::levarConflitosPresosAoMantido(reg) == 0, "repair: running it again changes nothing");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("merge selftest: ") + e.what());
     }

@@ -73,6 +73,11 @@ struct ConflitoPendente {
 };
 std::vector<ConflitoPendente> conflitosPendentes(matriz::db::Database& registro, const std::string& itemId);
 std::set<std::string> itensComConflitoPendente(matriz::db::Database& registro);
+// Reparo (ao abrir o projeto): conflitos pendentes presos em duplicatas já resolvidas — de antes de juntarFichas
+// levá-los ao mantido — vão para o item que sobrou, seguindo a cadeia "kept X, discarded Y" do histórico de
+// preservação até um item que não é duplicata. Devolve quantos itens tinham conflitos presos e foram levados.
+// Quem chama cuida da transação.
+int levarConflitosPresosAoMantido(matriz::db::Database& registro);
 // Troca pelo valor alternativo os conflitos escolhidos (o atual vira o
 // alternativo no histórico) e marca TODOS os pendentes do item como
 // revisados. Quem chama segura a transação.

@@ -349,6 +349,11 @@ ResultadoJuncao juntarFichas(matriz::db::Database& db, const std::string& manter
             ++r.camposSomados;
         }
     }
+
+    // 7. Conflitos que o descartado ainda tinha para revisar vão com a ficha para o mantido: o descartado some do
+    // app (estado 'duplicata') e eles ficavam presos lá, contados em "Merge conflicts" sem ter onde abrir.
+    db.run("UPDATE item_historico SET item_id = ? WHERE item_id = ? AND modelo_origem = ? AND confianca_origem IS NULL",
+           {Value::of(manterId), Value::of(descartarId), Value::of(std::string(kModeloMerge))});
     return r;
 }
 
@@ -366,12 +371,69 @@ std::vector<ConflitoPendente> conflitosPendentes(matriz::db::Database& registro,
 std::set<std::string> itensComConflitoPendente(matriz::db::Database& registro) {
     std::set<std::string> out;
     try {
-        auto st = registro.prepare("SELECT DISTINCT item_id FROM item_historico WHERE modelo_origem = ? "
-                                   "AND confianca_origem IS NULL");
+        // Só itens visíveis: duplicata resolvida fica escondida do app (e o filtro contava o que a grade não mostra).
+        auto st = registro.prepare("SELECT DISTINCT h.item_id FROM item_historico h JOIN item i ON i.id = h.item_id "
+                                   "WHERE h.modelo_origem = ? AND h.confianca_origem IS NULL "
+                                   "AND COALESCE(i.estado, '') != 'duplicata'");
         st.bind(1, Value::of(std::string(kModeloMerge)));
         while (st.step()) out.insert(st.columnText(0));
     } catch (...) {}
     return out;
+}
+
+int levarConflitosPresosAoMantido(matriz::db::Database& registro) {
+    std::vector<std::string> presos;
+    {
+        auto st = registro.prepare("SELECT DISTINCT h.item_id FROM item_historico h JOIN item i ON i.id = h.item_id "
+                                   "WHERE h.modelo_origem = ? AND h.confianca_origem IS NULL AND i.estado = 'duplicata'");
+        st.bind(1, Value::of(std::string(kModeloMerge)));
+        while (st.step()) presos.push_back(st.columnText(0));
+    }
+    if (presos.empty()) return 0;
+
+    // O mantido da resolução que descartou o item: "Duplicate resolved: kept FF-A, discarded FF-B (...)"
+    // (ProjetoAberto::sanitizarDuplicata grava esse evento nos dois itens; o do descartado tem o código dele).
+    auto mantidoDe = [&](const std::string& itemId) -> std::string {
+        auto cod = registro.prepare("SELECT COALESCE(codigo_acervo, '') FROM item WHERE id = ?");
+        cod.bind(1, Value::of(itemId));
+        if (!cod.step() || cod.columnText(0).empty()) return {};
+        auto ev = registro.prepare("SELECT event_detail FROM preservation_event WHERE item_id = ? "
+                                   "AND event_detail LIKE 'Duplicate resolved: kept %' "
+                                   "AND instr(event_detail, ', discarded ' || ? || ' (') > 0 "
+                                   "ORDER BY criado_em DESC, rowid DESC LIMIT 1");
+        ev.bind(1, Value::of(itemId));
+        ev.bind(2, Value::of(cod.columnText(0)));
+        if (!ev.step()) return {};
+        const std::string detalhe = ev.columnText(0);
+        const std::string prefixo = "Duplicate resolved: kept ";
+        const auto fim = detalhe.find(", discarded ", prefixo.size());
+        if (fim == std::string::npos) return {};
+        auto id = registro.prepare("SELECT id FROM item WHERE codigo_acervo = ? LIMIT 1");
+        id.bind(1, Value::of(detalhe.substr(prefixo.size(), fim - prefixo.size())));
+        return id.step() ? id.columnText(0) : std::string();
+    };
+    auto estadoDe = [&](const std::string& itemId) {
+        auto st = registro.prepare("SELECT COALESCE(estado, '') FROM item WHERE id = ?");
+        st.bind(1, Value::of(itemId));
+        return st.step() ? st.columnText(0) : std::string("duplicata");
+    };
+
+    int levados = 0;
+    for (const auto& preso : presos) {
+        std::set<std::string> vistos{preso};
+        std::string atual = preso, destino;
+        for (int passo = 0; passo < 32 && destino.empty(); ++passo) {
+            const auto proximo = mantidoDe(atual);
+            if (proximo.empty() || !vistos.insert(proximo).second) break;
+            if (estadoDe(proximo) != "duplicata") destino = proximo;
+            atual = proximo;
+        }
+        if (destino.empty()) continue;  // sem cadeia: fica onde está (e fora do filtro, que só conta itens visíveis)
+        registro.run("UPDATE item_historico SET item_id = ? WHERE item_id = ? AND modelo_origem = ? AND confianca_origem IS NULL",
+                     {Value::of(destino), Value::of(preso), Value::of(std::string(kModeloMerge))});
+        ++levados;
+    }
+    return levados;
 }
 
 void revisarConflitos(matriz::db::Database& registro, const std::string& itemId,
@@ -399,7 +461,7 @@ std::vector<GrupoConflito> gruposDeConflitoPendentes(matriz::db::Database& regis
         "FROM item_historico h JOIN item i ON i.id = h.item_id "
         "LEFT JOIN arquivo a ON a.id = (SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id "
         "                               ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
-        "WHERE h.modelo_origem = ? AND h.confianca_origem IS NULL "
+        "WHERE h.modelo_origem = ? AND h.confianca_origem IS NULL AND COALESCE(i.estado, '') != 'duplicata' "
         "ORDER BY i.codigo_acervo, h.item_id, h.campo_id, h.criado_em, h.rowid");
     st.bind(1, Value::of(std::string(kModeloMerge)));
     while (st.step()) {
@@ -564,6 +626,11 @@ std::shared_ptr<Retrato> retratar(matriz::db::Database& db, const std::vector<st
 
 void restaurar(matriz::db::Database& db, const Retrato& retrato) {
     const auto colsItem = colunasItemRetrato();
+    // Linhas de merge do retrato, de qualquer item: a junção pode tê-las levado de um item a outro (passo 7 de
+    // juntarFichas), então no outro item elas não são "novas" — voltam ao dono pelo UPDATE abaixo.
+    std::set<std::string> historicoDoRetrato;
+    for (const auto& d : retrato.itens)
+        for (const auto& par : d.historicoMerge) historicoDoRetrato.insert(par.first);
     std::string sets;
     for (auto& c : colsItem) sets += (sets.empty() ? "" : ", ") + std::string(c.nome) + " = ?";
     for (const auto& d : retrato.itens) {
@@ -587,13 +654,15 @@ void restaurar(matriz::db::Database& db, const Retrato& retrato) {
             st.bind(1, Value::of(d.id));
             st.bind(2, Value::of(std::string(kModeloMerge)));
             while (st.step())
-                if (!d.historicoMerge.count(st.columnText(0))) novos.push_back(st.columnText(0));
+                if (!historicoDoRetrato.count(st.columnText(0))) novos.push_back(st.columnText(0));
         }
         for (const auto& h : novos) db.run("DELETE FROM item_historico WHERE id = ?", {Value::of(h)});
         for (const auto& [h, valores] : d.historicoMerge) {
-            auto vals = valores;
+            std::vector<Value> vals{Value::of(d.id)};
+            vals.insert(vals.end(), valores.begin(), valores.end());
             vals.push_back(Value::of(h));
-            db.run("UPDATE item_historico SET valor_anterior = ?, valor_novo = ?, confianca_origem = ? WHERE id = ?", vals);
+            db.run("UPDATE item_historico SET item_id = ?, valor_anterior = ?, valor_novo = ?, confianca_origem = ? WHERE id = ?",
+                   vals);
         }
     }
 }

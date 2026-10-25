@@ -13,6 +13,7 @@
 #include "BinaryData.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Diag/Watchdog.h"
+#include "MergeFichas.h"
 
 namespace matriz::model {
 
@@ -729,6 +730,18 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     migrarConsolidacaoRegistro(registro);
     registro.execScript(readBinarySql(BinaryData::registro_sql, BinaryData::registro_sqlSize));
     indice.execScript(readBinarySql(BinaryData::indice_sql, BinaryData::indice_sqlSize));
+    // Conflitos de merge presos em duplicatas resolvidas (de antes de juntarFichas levá-los ao mantido).
+    try {
+        registro.exec("BEGIN IMMEDIATE");
+        try {
+            if (const int levados = merge::levarConflitosPresosAoMantido(registro); levados > 0)
+                juce::Logger::writeToLog("[merge] conflitos presos em " + juce::String(levados) +
+                                         " duplicata(s) resolvida(s) levados ao item mantido");
+            registro.exec("COMMIT");
+        } catch (...) {
+            try { registro.exec("ROLLBACK"); } catch (...) {}
+        }
+    } catch (...) {}  // projeto somente leitura: fica para a próxima abertura
     // Precisa rodar DEPOIS do execScript acima (que só cria o gatilho se
     // ele ainda não existir) e ANTES das migrações de item_campo -> item
     // logo abaixo, que são justamente o UPDATE em massa que ficava lento.
