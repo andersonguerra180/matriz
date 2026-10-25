@@ -104,10 +104,12 @@ regras e decisões que não mudam de sessão pra sessão.
   completa do índice).
 - **`salvarMetadado` de 1 item continua síncrono, na message thread**
   (decisão deliberada). Não mover pra background sem antes auditar as
-  ~20 chamadas em `FichaPanelComponent.cpp`, em especial `desfazer()`
-  (~linha 5140), que intercala `salvarMetadado` com escrita SQL crua na
-  mesma conexão logo em seguida — mover só o `salvarMetadado` pra
-  background ali quebraria a ordem de gravação.
+  ~20 chamadas em `FichaPanelComponent.cpp`: há trechos que intercalam
+  `salvarMetadado` com outras escritas na mesma conexão logo em seguida
+  (ex.: notas em lote + `definirCampoRaiz("maquina")`) — mover só o
+  `salvarMetadado` pra background quebraria a ordem de gravação. (O
+  `desfazer()` do lote que esta nota citava era código morto e saiu em
+  2026-10-24; o Undo do lote é o do app, `ProjetoAberto::desfazer`.)
 - **Consolidação (cópia, catálogo, movimentos) roda em job de fundo, não na message thread.**
   `ConsolidacaoDialogo` usa `ProjetoAberto::executarConsolidacaoEmSegundoPlano`; `BackupWorkspaceComponent`
   usa o `poolExport_` com `projeto.guardaConsolidacao()`. Os dois mantêm `trabalhoDeConsolidacaoEmCurso()` verdadeiro

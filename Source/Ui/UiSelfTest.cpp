@@ -1080,10 +1080,8 @@ int rodarUiSelfTest() {
             salvarSnapshot(fichaLote, "22_ficha_lote_depois_de_aplicar");
             verificarInvariantes(fichaLote, "ficha_lote_depois_de_aplicar");
 
-            auto* botaoDesfazer = fichaLote.botaoDesfazerLoteParaTeste();
-            checar(botaoDesfazer != nullptr && botaoDesfazer->isVisible(),
-                   "the \"Undo\" button appears after a successful apply");
-            if (botaoDesfazer) botaoDesfazer->onClick();
+            // O botão UNDO próprio do lote era código morto (nunca aparecia) e saiu: o Undo do lote é o do app.
+            checar(janelaArchive.projetoAberto()->desfazer(), "Undo (Cmd+Z) after a batch apply has a step to revert");
 
             auto maquinaLote1Desfeita = janelaArchive.projetoAberto()->valorCampo(fitaLote1, "raiz", 0, "maquina");
             checar(maquinaLote1Desfeita.value_or("") == "", "desfazer em um passo restaura o campo ao valor anterior (vazio)");

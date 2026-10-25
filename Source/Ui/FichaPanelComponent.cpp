@@ -4128,7 +4128,6 @@ public:
             if (previa_) { previa_->setBounds(x, y, larguraUtil, 36); y += 36 + tk.espacoPequeno; }
             if (botaoAplicar_) {
                 botaoAplicar_->setBounds(x, y, 120, 28);
-                if (botaoDesfazer_) botaoDesfazer_->setBounds(x + 128, y, 120, 28);
                 y += 28 + tk.espacoMedio;
             }
             if (resultado_) { resultado_->setBounds(x, y, larguraUtil, 20); y += 20 + tk.espacoMedio; }
@@ -4392,7 +4391,6 @@ public:
             if (previa_) { previa_->setBounds(x, y, larguraUtil, 36); y += 36 + tk.espacoPequeno; }
             if (botaoAplicar_) {
                 botaoAplicar_->setBounds(x, y, 120, 28);
-                if (botaoDesfazer_) botaoDesfazer_->setBounds(x + 128, y, 120, 28);
                 y += 28 + tk.espacoMedio;
             }
             if (resultado_) { resultado_->setBounds(x, y, larguraUtil, 20); y += 20 + tk.espacoMedio; }
@@ -4484,7 +4482,6 @@ public:
         }
         if (botaoAplicar_) {
             botaoAplicar_->setBounds(x, y, 120, 28);
-            if (botaoDesfazer_) botaoDesfazer_->setBounds(x + 128, y, 120, 28);
             y += 28 + tk.espacoMedio;
         }
         if (resultado_) {
@@ -4584,7 +4581,6 @@ public:
         return nullptr;
     }
     juce::TextButton* botaoAplicarParaTeste() { return botaoAplicar_.get(); }
-    juce::TextButton* botaoDesfazerParaTeste() { return botaoDesfazer_.get(); }
 
 private:
     struct LinhaLote {
@@ -4701,18 +4697,6 @@ private:
         linha.btnPasta = std::move(botao);
     }
 
-    struct SnapshotItem {
-        std::string ano;
-        std::string source_media;
-        std::string collection_type;
-        std::string isrc;
-        std::string notas_livres;
-        std::string maquina;
-        std::vector<std::string> tags;
-        std::optional<matriz::analytics::AssetGeolocation> geo;
-        std::map<std::string, std::string> campos;
-    };
-
     struct SecaoGeoLote {
         bool confirmandoTroca = false;  // diálogo de troca do GPS do arquivo aberto
         std::unique_ptr<juce::ToggleButton> overrideGeo;
@@ -4753,9 +4737,7 @@ private:
         geoLote_ = {};
         previa_.reset();
         botaoAplicar_.reset();
-        botaoDesfazer_.reset();
         resultado_.reset();
-        undoSnapshot_.clear();
         quadroDublinCoreLote_ = {};
         quadroUserAssetLote_ = {};
         quadroGeoLocationLote_ = {};
@@ -5730,7 +5712,7 @@ private:
         // Real-time (correção METADATA, item 5): SEM botão APPLY — cada
         // campo já aplica sozinho no commit (ver aplicarCampoAgora/
         // aplicarGeoAgora, chamadas pelos onChange/onFocusLost de cada
-        // campo acima). previa_/botaoAplicar_/botaoDesfazer_ nunca são
+        // campo acima). previa_/botaoAplicar_ nunca são
         // construídos — ficam null pra sempre, os "if (botaoAplicar_)" de
         // layout mais abaixo continuam de pé mas não desenham nada.
         // resultado_ vira o feedback do ÚLTIMO campo aplicado.
@@ -6153,71 +6135,6 @@ private:
             });
     }
 
-    void desfazer() {
-        ProgressoGlobal::obterInstancia().iniciarTarefa("batch_undo", "Reverting Batch Edits", (int)undoSnapshot_.size(), nullptr, "Reverting changes...");
-        int restaurados = 0;
-        // Fase 2b: uma transação só pro lote de restauração inteiro (cada
-        // item já dispara até 6 salvarMetadado + escritas cruas + geo, sem
-        // isto viravam dezenas de transações implícitas separadas).
-        auto& dbUndo = projeto_.projeto().registro();
-        std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
-        bool emTransacaoUndo = false;
-        try { dbUndo.exec("BEGIN IMMEDIATE"); emTransacaoUndo = true; } catch (...) {}
-        for (const auto& [id, snap] : undoSnapshot_) {
-            try {
-                for (const auto& [coluna, valor] : snap.campos) {
-                    projeto_.salvarMetadado(id, coluna, valor);
-                }
-                projeto_.salvarMetadado(id, "ano", snap.ano);
-                projeto_.salvarMetadado(id, "source_media", snap.source_media);
-                projeto_.salvarMetadado(id, "collection_type", snap.collection_type);
-                projeto_.salvarMetadado(id, "isrc", snap.isrc);
-                projeto_.salvarMetadado(id, "notas_livres", snap.notas_livres);
-                projeto_.definirTags(id, snap.tags);
-                if (!snap.maquina.empty()) {
-                    std::string agora = matriz::model::agoraIso8601();
-                    projeto_.projeto().registro().run(
-                        "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-                        "VALUES (?, ?, 'raiz', 0, 'maquina', ?, 'humano', ?) "
-                        "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
-                        {matriz::db::Value::of(matriz::model::novoUuid()),
-                         matriz::db::Value::of(id),
-                         matriz::db::Value::of(snap.maquina),
-                         matriz::db::Value::of(agora)});
-                } else {
-                    projeto_.projeto().registro().run(
-                        "DELETE FROM item_campo WHERE item_id = ? AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = 'maquina'",
-                        {matriz::db::Value::of(id)});
-                }
-
-                if (snap.geo.has_value()) {
-                    matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), *snap.geo);
-                } else {
-                    matriz::analytics::AssetGeolocationRepository::remover(projeto_.projeto().registro(), id);
-                }
-                ++restaurados;
-            } catch (const std::exception&) {
-            }
-            ProgressoGlobal::obterInstancia().atualizarProgresso("batch_undo", restaurados, juce::String(restaurados) + " restored");
-        }
-        if (emTransacaoUndo) {
-            std::vector<std::string> idsUndo;
-            for (const auto& [id, snap] : undoSnapshot_) idsUndo.push_back(id);
-            if (!commitOuReverter(dbUndo, idsUndo)) {
-                // Nada foi desfeito: mantém o snapshot e o botão pra tentar de novo.
-                ProgressoGlobal::obterInstancia().concluirTarefa("batch_undo", "Undo failed (rolled back)");
-                if (aoAplicarEmLote) aoAplicarEmLote();
-                return;
-            }
-        }
-        resultado_->setText(matriz::i18n::t("ficha.lote_resultado_desfeito").replace("{n}", juce::String(restaurados)),
-                             juce::dontSendNotification);
-        if (botaoDesfazer_) botaoDesfazer_->setVisible(false);
-        undoSnapshot_.clear();
-        ProgressoGlobal::obterInstancia().concluirTarefa("batch_undo", matriz::i18n::t("ficha.lote_resultado_desfeito").replace("{n}", juce::String(restaurados)));
-        if (aoAplicarEmLote) aoAplicarEmLote();
-    }
-
     void relayoutEExibir() {
         if (aoRelayoutNecessario) aoRelayoutNecessario();
     }
@@ -6247,9 +6164,7 @@ private:
     SecaoGeoLote geoLote_;
     std::unique_ptr<juce::Label> previa_;
     std::unique_ptr<juce::TextButton> botaoAplicar_;
-    std::unique_ptr<juce::TextButton> botaoDesfazer_;
     std::unique_ptr<juce::Label> resultado_;
-    std::map<std::string, SnapshotItem> undoSnapshot_;
 
     // Item 1 — mesma diagramação em 3 cartões com bordas do modo de item
     // único (FichaConteudo): DUBLIN CORE / ASSET & USER METADATA / GEO
@@ -6351,10 +6266,6 @@ juce::TextButton* FichaPanelComponent::botaoTipoMidiaLoteParaTeste(const std::st
 
 juce::TextButton* FichaPanelComponent::botaoAplicarLoteParaTeste() {
     return conteudoLote_ ? conteudoLote_->botaoAplicarParaTeste() : nullptr;
-}
-
-juce::TextButton* FichaPanelComponent::botaoDesfazerLoteParaTeste() {
-    return conteudoLote_ ? conteudoLote_->botaoDesfazerParaTeste() : nullptr;
 }
 
 juce::TextButton* FichaPanelComponent::botaoTipoMidiaIndividualParaTeste(const std::string& tipoId) {

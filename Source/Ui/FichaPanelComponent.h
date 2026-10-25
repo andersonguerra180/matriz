@@ -67,7 +67,6 @@ public:
     juce::Component* editorDoCampoLoteParaTeste(const std::string& campoId);
     juce::TextButton* botaoTipoMidiaLoteParaTeste(const std::string& tipoId);
     juce::TextButton* botaoAplicarLoteParaTeste();
-    juce::TextButton* botaoDesfazerLoteParaTeste();
 
     // Idem, pro seletor de tipo na ficha INDIVIDUAL de um item ainda não
     // classificado (crash fix — ver FichaConteudo::construirSeletorTipoMidia).
