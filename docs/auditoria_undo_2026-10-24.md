@@ -23,7 +23,9 @@ Fora, de propósito:
 - **H** feito: aviso do que foi desfeito / nada a desfazer (H-a), passo próprio para Undo de outra thread (H-b), aviso
   no limite de 100 (H-c), botão morto do lote removido (H-d).
 
-Pendente: **histórico persistente** (o Undo ainda se perde ao fechar o projeto) — plano aguardando aprovação.
+**Histórico persistente** (Undo que sobrevive a fechar/reabrir): fase 1 (base) e fase 2 (os Undos desta auditoria)
+feitas. Fases 3 (Undos antigos: campos da ficha, tags, Folder Map, remoção, merge, Send to Grid, tipo de mídia,
+renomear) e 4 **não serão feitas** — decisão do usuário (2026-10-25): o que importa é o Undo na sessão, já coberto.
 Decisão do usuário: Clear Metadata continua mantendo os campos Dublin Core.
 
 Já cobertos (têm Undo): campos da ficha via `salvarMetadado`/`salvarMetadadoEmLote` (individual, lote, Intake), tags,

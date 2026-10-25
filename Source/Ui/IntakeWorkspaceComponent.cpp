@@ -3201,8 +3201,8 @@ void IntakeWorkspaceComponent::aplicarGeolocationAosSelecionados(const std::stri
             using matriz::analytics::GeoSource;
             auto& db = projeto->projeto().registro();
             std::unique_lock<std::recursive_mutex> lock(projeto->writeMutex());
+            projeto->registrarUndoGeo(ids.size() == 1 ? "Edit geo location" : "Batch edit: geo location", ids);  // antes de gravar
             auto antes = projeto->retratoGeo(ids);
-            ProjetoAberto::RetratoGeo gravados;
             try {
                 db.exec("BEGIN IMMEDIATE");
                 for (const auto& [id, existente] : antes) {
@@ -3225,14 +3225,12 @@ void IntakeWorkspaceComponent::aplicarGeolocationAosSelecionados(const std::stri
                         else if (g.country)            g.source = GeoSource::UserCountry;
                     }
                     matriz::analytics::AssetGeolocationRepository::salvar(db, g);
-                    gravados.emplace_back(id, existente);
                 }
                 db.exec("COMMIT");
             } catch (...) {
                 try { db.exec("ROLLBACK"); } catch (...) {}
                 return;
             }
-            projeto->registrarUndoGeo(gravados.size() == 1 ? "Edit geo location" : "Batch edit: geo location", std::move(gravados));
         });
         if (seguro->tabela_) seguro->tabela_->repaint();
     };

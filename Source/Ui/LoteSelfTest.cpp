@@ -215,7 +215,8 @@ void rodarTestesUndoGeo(const Checar& checar) {
                "Undo of the batch GET brings both items back exactly");
 
         // Gravação em lote com retrato: Undo devolve o GPS da câmera e apaga a linha que não existia.
-        auto antes = pa.retratoGeo({a, c});
+        pa.iniciarGrupoUndo("Batch edit: geo location");
+        pa.registrarUndoGeo("Batch edit: geo location", {a, c});  // antes de gravar
         for (const auto& id : {a, c}) {
             AssetGeolocation errado;
             errado.assetId = id;
@@ -225,8 +226,6 @@ void rodarTestesUndoGeo(const Checar& checar) {
             errado.source = GeoSource::UserCoordinates;
             AssetGeolocationRepository::salvar(reg, errado);
         }
-        pa.iniciarGrupoUndo("Batch edit: geo location");
-        pa.registrarUndoGeo("Batch edit: geo location", std::move(antes));
         pa.finalizarGrupoUndo();
         checar(pa.descricaoUndoAtual() == "Batch edit: geo location", "a batch geo edit is the step Undo will revert (not the edit before it)");
         checar(pa.desfazer(), "Undo of the batch geo edit runs");
@@ -796,11 +795,115 @@ void rodarTestesUndoPersistente(const Checar& checar) {
         pa->registrarUndo("Mixed", [] {});
         pa->finalizarGrupoUndo();
         reabrir();
-        checar(!pa->podeDesfazer(), "phase 1: a group with an in-memory-only part is not reloaded");
-        checar(um("SELECT COUNT(*) FROM undo_passo", {}) == "0", "phase 1: undone and incomplete steps leave no rows behind");
+        // (o "Add Note" do adicionarObservacao acima também é persistente e continua lá: é o passo de baixo)
+        checar(pa->descricaoUndoAtual() != "Mixed" && um("SELECT COUNT(*) FROM undo_passo WHERE descricao = 'Mixed'", {}) == "0",
+               "phase 1: a group with an in-memory-only part is not reloaded");
+        checar(um("SELECT COUNT(*) FROM undo_passo WHERE completo = 0", {}) == "0" &&
+                   um("SELECT COUNT(*) FROM undo_passo WHERE descricao IN ('Edit Note (test)', 'Cache (test)', 'File (test)')", {}) == "0",
+               "phase 1: undone and incomplete steps leave no rows behind");
         pa.reset();
     } catch (const std::exception& e) {
         checar(false, juce::String("persistent undo selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
+// Histórico de Undo persistente (fase 2): os Undos de hoje voltam depois de fechar e reabrir o projeto.
+void rodarTestesUndoPersistenteFase2(const Checar& checar) {
+    using matriz::db::Value;
+    using matriz::analytics::AssetGeolocation;
+    using matriz::analytics::AssetGeolocationRepository;
+    using matriz::analytics::GeoSource;
+    std::cout << "\n-- UNDO history survives closing the project (phase 2) --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_undo_fase2_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "UndoF2";
+        params.prefixoNomenclatura = "UF2";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        auto pa = std::make_unique<ProjetoAberto>(std::move(projeto));
+        const juce::File pasta = pa->projeto().pasta();
+        auto reabrir = [&] {
+            pa.reset();
+            pa = std::make_unique<ProjetoAberto>(matriz::model::Project::abrir(pasta));
+            bombear(150);  // marcas e afins carregam em background
+        };
+        auto reg = [&]() -> matriz::db::Database& { return pa->projeto().registro(); };
+        const std::string a = inserirItem(reg(), projetoId, "UF2-1", false, ".jpg");
+        const std::string b = inserirItem(reg(), projetoId, "UF2-2", false, ".jpg");
+
+        // Clear Metadata: campos e tags
+        pa->salvarMetadado(a, "collection_type", "Music");
+        pa->definirTags(a, {"Tour", "Live"});
+        pa->redefinirMetadadosItens({a});
+        reabrir();
+        checar(pa->descricaoUndoAtual() == "Clear Metadata", "phase 2: Clear Metadata is still undoable after reopening");
+        pa->desfazer();
+        checar(pa->lerMetadado(a, "collection_type").value_or("") == "Music" && pa->lerTags(a).size() == 2,
+               "phase 2: Undo of Clear Metadata after reopening brings fields and tags back");
+
+        // marca H
+        using T = ProjetoAberto::TipoMarcacao;
+        pa->alternarMarcacao(T::Html, {a});
+        bombear(100);
+        reabrir();
+        for (int i = 0; i < 40 && !pa->contemMarcacao(T::Html, a); ++i) bombear(50);
+        pa->desfazer();
+        checar(!pa->contemMarcacao(T::Html, a), "phase 2: Undo of a mark after reopening");
+
+        // marca E
+        pa->alternarMarcadoRevisado({b});
+        reabrir();
+        pa->desfazer();
+        checar(!pa->itemMarcadoRevisado(b), "phase 2: Undo of E after reopening");
+
+        // Trash
+        const std::string mapa = pa->criarFolderMap("Map", std::nullopt);
+        const std::string pastaShows = pa->criarPastaAcervo("Shows", std::nullopt, mapa);
+        pa->adicionarItensAPasta({a}, pastaShows);
+        auto contar = [&](const std::string& sql, std::vector<Value> ps) {
+            auto q = reg().prepare(sql);
+            for (size_t i = 0; i < ps.size(); ++i) q.bind(static_cast<int>(i + 1), ps[i]);
+            return q.step() ? static_cast<int>(q.columnInt(0)) : -1;
+        };
+        const int pastasAntes = contar("SELECT COUNT(*) FROM acervo_pasta WHERE mapa_id = ?", {Value::of(mapa)});
+        pa->moverItensParaTrash({a}, mapa);
+        reabrir();
+        pa->desfazer();
+        checar(contar("SELECT COUNT(*) FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?", {Value::of(a), Value::of(pastaShows)}) == 1 &&
+                   contar("SELECT COUNT(*) FROM acervo_pasta WHERE mapa_id = ?", {Value::of(mapa)}) == pastasAntes,
+               "phase 2: Undo of Move to Trash after reopening (and the _trash folder is gone)");
+
+        // container
+        const auto c1 = inserirItem(reg(), projetoId, "UF2-3", false, ".jpg");
+        const auto c2 = inserirItem(reg(), projetoId, "UF2-4", false, ".jpg");
+        const auto nest = pa->criarContainerDeTipo({c1, c2}, "audio.album", "project_audio", "Album");
+        pa->definirNomeDoContainer(nest, "Renamed");
+        reabrir();
+        pa->desfazer();
+        checar(pa->nestDoItem(c1) && pa->nestDoItem(c1)->nome == "Album", "phase 2: Undo of Rename Container after reopening");
+
+        // GPS em lote
+        AssetGeolocation g;
+        g.assetId = b;
+        g.latitude = 31.775;
+        g.longitude = 35.233;
+        g.source = GeoSource::EmbeddedMetadata;
+        AssetGeolocationRepository::salvar(reg(), g);
+        pa->registrarUndoGeo("Batch edit: geo location", {b});
+        g.latitude = -16.45;
+        g.longitude = -39.06;
+        g.source = GeoSource::UserCoordinates;
+        AssetGeolocationRepository::salvar(reg(), g);
+        reabrir();
+        pa->desfazer();
+        auto gb = AssetGeolocationRepository::obterPorAssetId(reg(), b);
+        checar(gb && gb->latitude == 31.775 && gb->source == GeoSource::EmbeddedMetadata, "phase 2: Undo of a geo edit after reopening brings the camera GPS back");
+        pa.reset();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("persistent undo phase 2 selftest: ") + e.what());
     }
     raiz.deleteRecursively();
 }
@@ -6580,6 +6683,7 @@ int rodarLoteSelfTest() {
     rodarTestesUndoAuditoriaMedios(checar);
     rodarTestesUndoMecanismo(checar);
     rodarTestesUndoPersistente(checar);
+    rodarTestesUndoPersistenteFase2(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();

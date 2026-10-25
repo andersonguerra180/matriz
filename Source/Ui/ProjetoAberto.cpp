@@ -1377,7 +1377,8 @@ std::optional<std::string> ProjetoAberto::valorCampo(const std::string& itemId, 
 
 struct ParteUndoLinhas;
 static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descricao, std::vector<ParteUndoLinhas> partes,
-                                  std::vector<std::string> itensAvisar, const std::string& tipoEvento);
+                                  std::vector<std::string> itensAvisar, const std::string& tipoEvento,
+                                  std::vector<ProjetoAberto::ParteUndo> extras = {});
 static void registrarUndoDeCampoRaiz(ProjetoAberto& pa, const std::string& itemId, const std::string& campoId);
 static void registrarUndoDoContainer(ProjetoAberto& pa, const std::string& descricao, const std::string& nestId, bool capa);
 
@@ -1402,102 +1403,50 @@ std::vector<std::string> ProjetoAberto::papeisArquivoPresentes(const std::string
     return out;
 }
 
-namespace { std::string colunasDe(matriz::db::Database& db, const std::string& tabela); }  // definida mais abaixo
-
-// Retrato com filtro próprio (Undo de linhas que não se separam só pela chave, ex. só a capa entre os arquivos do item,
-// ou a miniatura que mora no índice): guarda em TEMP, na conexão `d`, as linhas de `tabela` que batem com `onde`.
-static std::string guardarLinhasParaUndo(matriz::db::Database& d, const std::string& tabela,
-                                         const std::string& onde, const std::vector<matriz::db::Value>& params) {
-    static std::atomic<int> contador{0};
-    const std::string t = "undo_ft_" + std::to_string(++contador);
-    d.run("CREATE TEMP TABLE \"" + t + "\" AS SELECT * FROM \"" + tabela + "\" WHERE 0", {});
-    d.run("INSERT INTO temp.\"" + t + "\" SELECT * FROM \"" + tabela + "\" WHERE " + onde, params);
-    return t;
-}
-
-// A volta: apaga o que bate com `onde` hoje e regrava o guardado. Quem chama cuida da transação.
-static void voltarLinhasDoUndo(matriz::db::Database& d, const std::string& t, const std::string& tabela,
-                               const std::string& onde, const std::vector<matriz::db::Value>& params) {
-    const std::string cols = colunasDe(d, tabela);
-    d.run("DELETE FROM \"" + tabela + "\" WHERE " + onde, params);
-    d.run("INSERT INTO \"" + tabela + "\" (" + cols + ") SELECT " + cols + " FROM temp.\"" + t + "\"", {});
-}
-
-// registrarUndo só na message thread (a pilha e aoMudarUndo são dela): de outra thread, vai para ela.
-// (registrarUndo já leva o de outra thread para a message thread, como passo próprio.)
-static void registrarUndoNaMessageThread(ProjetoAberto& pa, const std::string& descricao, std::function<void()> acao) {
-    pa.registrarUndo(descricao, std::move(acao));
-}
-
 static std::string idsEmJson(const std::vector<std::string>& ids) {
     juce::Array<juce::var> lista;
     for (const auto& id : ids) lista.add(juce::String::fromUTF8(id.c_str()));
     return juce::JSON::toString(juce::var(lista), true).toStdString();
 }
 
-// Undo de linhas com filtro: cada parte é (tabela, onde, params, noIndice). Guarda agora (chamar ANTES de gravar) e a
-// volta apaga o que bate com o filtro e regrava o guardado — o registro numa transação, o índice depois. Avisa os
-// itens com `tipoEvento`. Função livre (API pública do ProjetoAberto) para não mexer no header.
+// Undo de linhas com filtro: cada parte é (tabela, onde, params, noIndice). Guarda agora (chamar ANTES de gravar);
+// a volta apaga o que bate com o filtro e regrava o guardado, na ordem dada. Persistente (sobrevive a reabrir).
 struct ParteUndoLinhas {
     std::string tabela, onde;
     std::vector<matriz::db::Value> params;
     bool noIndice = false;
 };
 static void registrarUndoDeLinhas(ProjetoAberto& pa, const std::string& descricao, std::vector<ParteUndoLinhas> partes,
-                                  std::vector<std::string> itensAvisar, const std::string& tipoEvento) {
-    std::vector<std::string> temps;
-    try {
-        for (const auto& pt : partes)
-            temps.push_back(guardarLinhasParaUndo(pt.noIndice ? pa.projeto().indice() : pa.projeto().registro(), pt.tabela, pt.onde, pt.params));
-    } catch (...) { return; }
-    ProjetoAberto* p = &pa;
-    registrarUndoNaMessageThread(pa, descricao, [p, partes, temps, itensAvisar, tipoEvento] {
-        auto& r = p->projeto().registro();
-        auto& i = p->projeto().indice();
-        std::unique_lock<std::recursive_mutex> lock(p->writeMutex());
-        try {
-            r.run("BEGIN TRANSACTION", {});
-            for (size_t k = 0; k < partes.size(); ++k)
-                if (!partes[k].noIndice) voltarLinhasDoUndo(r, temps[k], partes[k].tabela, partes[k].onde, partes[k].params);
-            r.run("COMMIT", {});
-        } catch (...) {
-            try { r.run("ROLLBACK", {}); } catch (...) {}
-            return;
-        }
-        for (size_t k = 0; k < partes.size(); ++k) {
-            auto& d = partes[k].noIndice ? i : r;
-            try {
-                if (partes[k].noIndice) voltarLinhasDoUndo(i, temps[k], partes[k].tabela, partes[k].onde, partes[k].params);
-                d.run("DROP TABLE IF EXISTS temp.\"" + temps[k] + "\"", {});
-            } catch (...) {}
-        }
-        auto& bus = EventBus::obterInstancia();
-        bus.iniciarLote();
-        for (const auto& id : itensAvisar) bus.dispararItemAlterado(id, tipoEvento);
-        bus.finalizarLote();
-    });
+                                  std::vector<std::string> itensAvisar, const std::string& tipoEvento,
+                                  std::vector<ProjetoAberto::ParteUndo> extras) {
+    std::vector<ProjetoAberto::ParteUndo> ps;
+    for (auto& pt : partes) {
+        ProjetoAberto::ParteUndo p;
+        p.tabela = pt.tabela;
+        p.onde = pt.onde;
+        p.params = pt.params;
+        p.noIndice = pt.noIndice;
+        ps.push_back(std::move(p));
+    }
+    for (auto& e : extras) ps.push_back(std::move(e));
+    pa.registrarUndoPersistente(descricao, ps, itensAvisar, tipoEvento);
 }
 
 // Undo de container (NEST): a linha do nest e os membros voltam como estavam (o nest se apaga com cascata, por isso
-// os dois juntos) e, com `capa`, também a imagem de capa no disco (caminho fixo, sobrescrito/apagado na operação).
+// os dois juntos, nest antes) e, com `capa`, também a imagem de capa no disco (caminho fixo, sobrescrito/apagado).
 static void registrarUndoDoContainer(ProjetoAberto& pa, const std::string& descricao, const std::string& nestId, bool capa) {
     if (nestId.empty()) return;
-    pa.iniciarGrupoUndo(descricao);
+    std::vector<ProjetoAberto::ParteUndo> extras;
+    if (capa) {
+        ProjetoAberto::ParteUndo a;
+        a.tipo = ProjetoAberto::ParteUndo::Tipo::Arquivo;
+        a.arquivo = pa.projeto().pasta().getChildFile(".miniaturas/capa_container_" + juce::String(nestId) + ".jpg");
+        extras.push_back(std::move(a));
+    }
     registrarUndoDeLinhas(pa, descricao,
                           {{"nest", "id = ?", {matriz::db::Value::of(nestId)}, false},
                            {"nest_item", "nest_id = ?", {matriz::db::Value::of(nestId)}, false}},
-                          {""}, "nest");
-    if (capa) {
-        const juce::File atual = pa.projeto().pasta().getChildFile(".miniaturas/capa_container_" + juce::String(nestId) + ".jpg");
-        const bool tinha = atual.existsAsFile();
-        const juce::File copia = pa.projeto().pasta().getChildFile(".miniaturas/undo_capa_" + juce::Uuid().toString() + ".jpg");
-        if (tinha) atual.copyFileTo(copia);
-        registrarUndoNaMessageThread(pa, descricao, [atual, copia, tinha] {
-            if (tinha) copia.copyFileTo(atual);
-            else atual.deleteFile();
-        });
-    }
-    pa.finalizarGrupoUndo();
+                          {""}, "nest", std::move(extras));
 }
 
 static void registrarUndoDeCampoRaiz(ProjetoAberto& pa, const std::string& itemId, const std::string& campoId) {
@@ -1507,50 +1456,15 @@ static void registrarUndoDeCampoRaiz(ProjetoAberto& pa, const std::string& itemI
                           {itemId}, "campo");
 }
 
-// Undo da capa do item (Set/Remove Cover): só as linhas 'capa_frente' de `arquivo` e as miniaturas delas no índice.
-// Função livre (API pública do ProjetoAberto) para não mexer no header; chamar ANTES de gravar.
+// Undo da capa do item (Set/Remove Cover): só as linhas 'capa_frente' de `arquivo` e as miniaturas do item no índice
+// (a da capa nova sai, as de antes voltam). Chamar ANTES de gravar.
 static void registrarUndoDeCapa(ProjetoAberto& pa, const std::string& descricao, const std::vector<std::string>& itemIds) {
     if (itemIds.empty()) return;
-    auto& reg = pa.projeto().registro();
-    auto& ind = pa.projeto().indice();
     const std::string json = idsEmJson(itemIds);
-    const std::string ondeCapa = "item_id IN (SELECT value FROM json_each(?)) AND papel = 'capa_frente'";
-    std::vector<std::string> capas;
-    {
-        auto st = reg.prepare("SELECT id FROM arquivo WHERE " + ondeCapa);
-        st.bind(1, matriz::db::Value::of(json));
-        while (st.step()) capas.push_back(st.columnText(0));
-    }
-    const std::string ondeMini = "arquivo_id IN (SELECT value FROM json_each(?))";
-    const std::string tArq = guardarLinhasParaUndo(reg, "arquivo", ondeCapa, {matriz::db::Value::of(json)});
-    const std::string tMini = guardarLinhasParaUndo(ind, "miniatura", ondeMini, {matriz::db::Value::of(idsEmJson(capas))});
-    ProjetoAberto* p = &pa;
-    registrarUndoNaMessageThread(pa, descricao, [p, itemIds, json, ondeCapa, ondeMini, tArq, tMini] {
-        auto& r = p->projeto().registro();
-        auto& i = p->projeto().indice();
-        std::unique_lock<std::recursive_mutex> lock(p->writeMutex());
-        std::vector<std::string> capasHoje;  // a capa posta depois: a miniatura dela sai do índice também
-        {
-            auto st = r.prepare("SELECT id FROM arquivo WHERE " + ondeCapa);
-            st.bind(1, matriz::db::Value::of(json));
-            while (st.step()) capasHoje.push_back(st.columnText(0));
-        }
-        try {
-            r.run("BEGIN TRANSACTION", {});
-            voltarLinhasDoUndo(r, tArq, "arquivo", ondeCapa, {matriz::db::Value::of(json)});
-            r.run("COMMIT", {});
-        } catch (...) {
-            try { r.run("ROLLBACK", {}); } catch (...) {}
-            return;
-        }
-        try {
-            i.run("DELETE FROM miniatura WHERE " + ondeMini, {matriz::db::Value::of(idsEmJson(capasHoje))});
-            i.run("INSERT OR IGNORE INTO miniatura SELECT * FROM temp.\"" + tMini + "\"", {});
-        } catch (...) {}
-        for (const auto& t : {tArq}) try { r.run("DROP TABLE IF EXISTS temp.\"" + t + "\"", {}); } catch (...) {}
-        try { i.run("DROP TABLE IF EXISTS temp.\"" + tMini + "\"", {}); } catch (...) {}
-        for (const auto& id : itemIds) EventBus::obterInstancia().dispararItemAlterado(id, "miniatura");
-    });
+    registrarUndoDeLinhas(pa, descricao,
+                          {{"arquivo", "item_id IN (SELECT value FROM json_each(?)) AND papel = 'capa_frente'", {matriz::db::Value::of(json)}, false},
+                           {"miniatura", "item_id IN (SELECT value FROM json_each(?))", {matriz::db::Value::of(json)}, true}},
+                          itemIds, "miniatura");
 }
 
 int ProjetoAberto::definirCapa(const std::vector<std::string>& itemIds, const juce::File& imagem) {
@@ -1854,11 +1768,16 @@ void ProjetoAberto::garantirTabelasUndo() {
     } catch (...) {}
 }
 
-void ProjetoAberto::registrarUndoPersistente(const std::string& descricao, const std::vector<ParteUndo>& partes,
-                                             const std::vector<std::string>& itensAvisar, const std::string& tipoEvento) {
-    if (desfazendo_ || somenteLeitura_ || !projeto_ || partes.empty()) return;
+// ordem = ação * kPartesPorAcao + posição: a volta roda as ações da última à primeira e, dentro de cada uma, as partes
+// na ordem em que foram dadas (o container antes dos membros, por exemplo).
+static constexpr int kPartesPorAcao = 10000;
+
+bool ProjetoAberto::capturarPartesPersistentes(const std::string& descricao, const std::vector<ParteUndo>& partes,
+                                               const std::vector<std::string>& itensAvisar, const std::string& tipoEvento,
+                                               bool completo, int64_t& passo, int& de, int& ate, UndoEntry*& grupo) {
+    if (desfazendo_ || somenteLeitura_ || !projeto_ || partes.empty()) return false;
     const bool naMessageThread = juce::MessageManager::getInstance()->isThisTheMessageThread();
-    UndoEntry* grupo = (naMessageThread && grupoAberto_) ? &*grupoAberto_ : nullptr;
+    grupo = (naMessageThread && grupoAberto_) ? &*grupoAberto_ : nullptr;
     auto& r = projeto_->registro();
     auto& ind = projeto_->indice();
     const juce::File pasta = projeto_->pasta();
@@ -1866,40 +1785,44 @@ void ProjetoAberto::registrarUndoPersistente(const std::string& descricao, const
     juce::Array<juce::var> itens;
     for (const auto& id : itensAvisar) itens.add(juce::String::fromUTF8(id.c_str()));
     const std::string itensJson = juce::JSON::toString(juce::var(itens), true).toStdString();
-    int64_t passo = 0;
-    int ordem = 0;
+    passo = 0;
+    int acao = 0;
     try {
         if (grupo && grupo->passoPersistente) {
             passo = grupo->passoPersistente;
-            auto st = r.prepare("SELECT COALESCE(MAX(ordem), -1) + 1 FROM undo_parte WHERE passo_id = ?");
+            auto st = r.prepare("SELECT COALESCE(MAX(ordem), -1) FROM undo_parte WHERE passo_id = ?");
             st.bind(1, matriz::db::Value::of(static_cast<long long>(passo)));
-            if (st.step()) ordem = static_cast<int>(st.columnInt(0));
+            if (st.step()) acao = static_cast<int>(st.columnInt(0) < 0 ? 0 : st.columnInt(0) / kPartesPorAcao + 1);
         } else {
             // Num grupo, o passo só vale ao reabrir se o grupo inteiro for persistente (finalizarGrupoUndo decide).
             r.run("INSERT INTO undo_passo (descricao, completo, criado_em) VALUES (?, ?, ?)",
-                  {matriz::db::Value::of(grupo ? grupo->descricao : descricao), matriz::db::Value::of(grupo ? 0 : 1),
+                  {matriz::db::Value::of(grupo ? grupo->descricao : descricao), matriz::db::Value::of(grupo || !completo ? 0 : 1),
                    matriz::db::Value::of(matriz::model::agoraIso8601())});
             auto st = r.prepare("SELECT last_insert_rowid()");
             if (st.step()) passo = st.columnInt(0);
             if (grupo) grupo->passoPersistente = passo;
         }
-        const int de = ordem;
+        int ordem = acao * kPartesPorAcao;
+        de = ordem;
         for (const auto& pt : partes) {
-            const char* tipo = pt.tipo == ParteUndo::Tipo::Linhas ? "linhas" : pt.tipo == ParteUndo::Tipo::Colunas ? "colunas" : "arquivo";
+            const char* tipo = pt.tipo == ParteUndo::Tipo::Linhas ? "linhas" : pt.tipo == ParteUndo::Tipo::Colunas ? "colunas"
+                             : pt.tipo == ParteUndo::Tipo::Arquivo ? "arquivo" : "acao";
             juce::Array<juce::var> cols;
             for (const auto& c : pt.colunas) cols.add(juce::String::fromUTF8(c.c_str()));
-            r.run("INSERT INTO undo_parte (passo_id, ordem, tipo, banco, tabela, onde, params_json, colunas_json, itens_json, tipo_evento) "
-                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            r.run("INSERT INTO undo_parte (passo_id, ordem, tipo, banco, tabela, onde, params_json, colunas_json, copia, itens_json, tipo_evento) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   {matriz::db::Value::of(static_cast<long long>(passo)), matriz::db::Value::of(ordem++), matriz::db::Value::of(tipo),
                    matriz::db::Value::of(pt.noIndice ? "indice" : "registro"), matriz::db::Value::of(pt.tabela),
                    matriz::db::Value::of(pt.onde), matriz::db::Value::of(paramsParaJson(pt.params)),
                    matriz::db::Value::of(juce::JSON::toString(juce::var(cols), true).toStdString()),
+                   pt.chave.empty() ? matriz::db::Value::null() : matriz::db::Value::of("chave:" + pt.chave),
                    matriz::db::Value::of(itensJson), matriz::db::Value::of(tipoEvento)});
             long long parte = 0;
             {
                 auto st = r.prepare("SELECT last_insert_rowid()");
                 if (st.step()) parte = st.columnInt(0);
             }
+            if (pt.tipo == ParteUndo::Tipo::Acao) continue;
             if (pt.tipo == ParteUndo::Tipo::Arquivo) {
                 const juce::String rel = matriz::caminhos::relativoParaBanco(pt.arquivo, pasta);
                 juce::String copia;
@@ -1914,8 +1837,13 @@ void ProjetoAberto::registrarUndoPersistente(const std::string& descricao, const
                 continue;
             }
             auto& d = pt.noIndice ? ind : r;
-            const std::string expr = expressaoJsonDaLinha(d, pt.tabela, pt.tipo == ParteUndo::Tipo::Colunas ? pt.colunas : std::vector<std::string>{});
-            const std::string sel = "SELECT " + expr + " FROM \"" + pt.tabela + "\" WHERE " + pt.onde;
+            std::vector<std::string> colsDaLinha;
+            if (pt.tipo == ParteUndo::Tipo::Colunas) {
+                colsDaLinha = pt.colunas;
+                if (!pt.chave.empty() && std::find(colsDaLinha.begin(), colsDaLinha.end(), pt.chave) == colsDaLinha.end())
+                    colsDaLinha.push_back(pt.chave);
+            }
+            const std::string sel = "SELECT " + expressaoJsonDaLinha(d, pt.tabela, colsDaLinha) + " FROM \"" + pt.tabela + "\" WHERE " + pt.onde;
             auto st = d.prepare(sel);
             for (size_t k = 0; k < pt.params.size(); ++k) st.bind(static_cast<int>(k + 1), pt.params[k]);
             long long n = 0;
@@ -1925,28 +1853,145 @@ void ProjetoAberto::registrarUndoPersistente(const std::string& descricao, const
             }
             r.run("UPDATE undo_parte SET linhas = ? WHERE id = ?", {matriz::db::Value::of(n), matriz::db::Value::of(parte)});
         }
-        const int ate = ordem - 1;
-        lock.unlock();
-        auto acao = [this, passo, de, ate] { executarPartesPersistentes(passo, de, ate); };
-        if (grupo) {
-            grupo->acoesReversas.push_back(std::move(acao));
-        } else if (naMessageThread) {
-            pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acao)}, passo, true});
-            aparaPilhaUndo();
-            if (aoMudarUndo) aoMudarUndo();
-        } else {
-            std::weak_ptr<bool> vivo = vivo_;
-            juce::MessageManager::callAsync([this, vivo, descricao, passo, acao = std::move(acao)]() mutable {
-                if (!vivo.lock() || desfazendo_) return;
-                pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acao)}, passo, true});
-                aparaPilhaUndo();
-                if (aoMudarUndo) aoMudarUndo();
-            });
-        }
+        ate = ordem - 1;
+        return true;
     } catch (...) {
         // A captura falhou: sem Undo para esta ação (antes um passo pela metade). O passo incompleto sai na próxima abertura.
         try { if (passo && !grupo) r.run("UPDATE undo_passo SET completo = 0 WHERE id = ?", {matriz::db::Value::of(static_cast<long long>(passo))}); } catch (...) {}
         if (grupo) grupo->tudoPersistente = false;
+        return false;
+    }
+}
+
+void ProjetoAberto::empilharPassoPersistente(const std::string& descricao, int64_t passo, int de, int ate, UndoEntry* grupo) {
+    auto acao = [this, passo, de, ate] { executarPartesPersistentes(passo, de, ate); };
+    if (grupo) {
+        grupo->acoesReversas.push_back(std::move(acao));
+        return;
+    }
+    if (juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acao)}, passo, true});
+        aparaPilhaUndo();
+        if (aoMudarUndo) aoMudarUndo();
+        return;
+    }
+    std::weak_ptr<bool> vivo = vivo_;
+    juce::MessageManager::callAsync([this, vivo, descricao, passo, acao = std::move(acao)]() mutable {
+        if (!vivo.lock() || desfazendo_) return;
+        pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acao)}, passo, true});
+        aparaPilhaUndo();
+        if (aoMudarUndo) aoMudarUndo();
+    });
+}
+
+void ProjetoAberto::registrarUndoPersistente(const std::string& descricao, const std::vector<ParteUndo>& partes,
+                                             const std::vector<std::string>& itensAvisar, const std::string& tipoEvento) {
+    int64_t passo = 0;
+    int de = 0, ate = -1;
+    UndoEntry* grupo = nullptr;
+    if (!capturarPartesPersistentes(descricao, partes, itensAvisar, tipoEvento, true, passo, de, ate, grupo)) return;
+    empilharPassoPersistente(descricao, passo, de, ate, grupo);
+}
+
+ProjetoAberto::Retrato ProjetoAberto::retratar(const std::vector<TabelaDoRetrato>& tabelas, const std::vector<std::string>& ids) {
+    Retrato r;
+    if (ids.empty()) return r;
+    const std::string json = idsEmJson(ids);
+    std::vector<ParteUndo> partes;
+    for (const auto& t : tabelas) {
+        ParteUndo p;
+        p.tabela = t.tabela;
+        p.onde = "\"" + t.chave + "\" IN (SELECT value FROM json_each(?))";
+        p.params = {matriz::db::Value::of(json)};
+        if (t.soAtualizar) {
+            p.tipo = ParteUndo::Tipo::Colunas;
+            p.chave = t.chave;
+            auto st = projeto_->registro().prepare("SELECT name FROM pragma_table_info(?)");
+            st.bind(1, matriz::db::Value::of(t.tabela));
+            while (st.step()) p.colunas.push_back(st.columnText(0));
+        }
+        partes.push_back(std::move(p));
+    }
+    UndoEntry* grupo = nullptr;
+    // incompleto até registrarUndoDeRetrato empilhar: se não empilhar, não volta ao reabrir
+    if (!capturarPartesPersistentes("", partes, {}, "metadado", false, r.passo, r.de, r.ate, grupo)) return Retrato{};
+    r.doGrupo = grupo != nullptr;
+    return r;
+}
+
+void ProjetoAberto::registrarUndoDeRetrato(const std::string& descricao, Retrato retrato, std::vector<std::string> idsAvisar,
+                                           std::vector<ParteUndo> acoesDepois, const std::string& tipoEvento) {
+    if (retrato.empty() || !projeto_) return;
+    auto& r = projeto_->registro();
+    UndoEntry* grupo = retrato.doGrupo && grupoAberto_ ? &*grupoAberto_ : nullptr;
+    try {
+        std::unique_lock<std::recursive_mutex> lock(writeMutex());
+        if (!grupo) r.run("UPDATE undo_passo SET descricao = ?, completo = 1 WHERE id = ?",
+                          {matriz::db::Value::of(descricao), matriz::db::Value::of(static_cast<long long>(retrato.passo))});
+        // avisos e ações no fim do mesmo intervalo (mesma ação)
+        juce::Array<juce::var> itens;
+        for (const auto& id : idsAvisar) itens.add(juce::String::fromUTF8(id.c_str()));
+        r.run("UPDATE undo_parte SET itens_json = ?, tipo_evento = ? WHERE passo_id = ? AND ordem BETWEEN ? AND ?",
+              {matriz::db::Value::of(juce::JSON::toString(juce::var(itens), true).toStdString()), matriz::db::Value::of(tipoEvento),
+               matriz::db::Value::of(static_cast<long long>(retrato.passo)), matriz::db::Value::of(retrato.de), matriz::db::Value::of(retrato.ate)});
+        int ordem = retrato.ate + 1;
+        for (const auto& a : acoesDepois) {
+            r.run("INSERT INTO undo_parte (passo_id, ordem, tipo, banco, tabela, onde, params_json, colunas_json) "
+                  "VALUES (?, ?, 'acao', 'registro', ?, ?, '[]', '[]')",
+                  {matriz::db::Value::of(static_cast<long long>(retrato.passo)), matriz::db::Value::of(ordem++),
+                   matriz::db::Value::of(a.tabela), matriz::db::Value::of(a.onde)});
+        }
+        retrato.ate = ordem - 1;
+    } catch (...) { return; }
+    empilharPassoPersistente(descricao, retrato.passo, retrato.de, retrato.ate, grupo);
+}
+
+void ProjetoAberto::executarAcaoDeUndo(const std::string& nome, const std::string& dadosJson) {
+    const auto v = juce::JSON::parse(juce::String::fromUTF8(dadosJson.c_str()));
+    auto lista = [](const juce::var& x) {
+        std::vector<std::string> out;
+        if (auto* a = x.getArray()) for (const auto& e : *a) out.push_back(e.toString().toStdString());
+        return out;
+    };
+    if (nome == "tags") {  // {"id": [tags]} — definirTags cuida de item_tag e da busca
+        if (auto* o = v.getDynamicObject())
+            for (const auto& prop : o->getProperties()) definirTags(prop.name.toString().toStdString(), lista(prop.value));
+    } else if (nome == "marcas") {  // {"tipo": n, "ids": [...], "marcados": [...]}
+        const auto tipo = static_cast<TipoMarcacao>(static_cast<int>(v["tipo"]));
+        const auto ids = lista(v["ids"]);
+        const auto marcados = lista(v["marcados"]);
+        const std::set<std::string> m(marcados.begin(), marcados.end());
+        std::vector<std::string> ligar, desligar;
+        for (const auto& id : ids) (m.count(id) ? ligar : desligar).push_back(id);
+        if (!ligar.empty()) definirMarcacao(tipo, ligar, true);
+        if (!desligar.empty()) definirMarcacao(tipo, desligar, false);
+    } else if (nome == "marca_r") {  // {"ids": [...], "marcados": [...]}
+        const auto ids = lista(v["ids"]);
+        const auto marcados = lista(v["marcados"]);
+        const std::set<std::string> m(marcados.begin(), marcados.end());
+        std::vector<std::string> ligar, desligar;
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            for (const auto& id : ids) {
+                const bool agoraTem = marcadosR_.count(id) > 0, tinha = m.count(id) > 0;
+                if (tinha && !agoraTem) ligar.push_back(id);
+                else if (!tinha && agoraTem) desligar.push_back(id);
+            }
+        }
+        if (!ligar.empty()) alternarMarcaR(ligar);       // todos sem R: liga
+        if (!desligar.empty()) alternarMarcaR(desligar); // todos com R: desliga
+    } else if (nome == "pastas_novas") {  // {"mapa": id, "antes": [...]} — as pastas criadas depois somem
+        const std::string mapa = v["mapa"].toString().toStdString();
+        const auto antes = lista(v["antes"]);
+        const std::set<std::string> a(antes.begin(), antes.end());
+        if (mapa.empty() || !projeto_) return;
+        auto& d = projeto_->registro();
+        std::vector<std::string> novas;
+        auto st = d.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ?");
+        st.bind(1, matriz::db::Value::of(mapa));
+        while (st.step()) if (!a.count(st.columnText(0))) novas.push_back(st.columnText(0));
+        for (const auto& id : novas)
+            try { d.run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(id)}); } catch (...) {}
     }
 }
 
@@ -1965,7 +2010,8 @@ void ProjetoAberto::executarPartesPersistentes(int64_t passo, int ordemDe, int o
     {
         auto st = r.prepare("SELECT id, tipo, banco, COALESCE(tabela, ''), COALESCE(onde, ''), COALESCE(params_json, '[]'), "
                             "COALESCE(colunas_json, '[]'), COALESCE(arquivo, ''), COALESCE(copia, ''), linhas, COALESCE(itens_json, '[]'), "
-                            "COALESCE(tipo_evento, '') FROM undo_parte WHERE passo_id = ? AND ordem BETWEEN ? AND ? ORDER BY ordem DESC");
+                            "COALESCE(tipo_evento, '') FROM undo_parte WHERE passo_id = ? AND ordem BETWEEN ? AND ? "
+                            "ORDER BY ordem / " + std::to_string(kPartesPorAcao) + " DESC, ordem ASC");
         st.bind(1, matriz::db::Value::of(static_cast<long long>(passo)));
         st.bind(2, matriz::db::Value::of(ordemDe));
         st.bind(3, matriz::db::Value::of(ordemAte));
@@ -1984,15 +2030,24 @@ void ProjetoAberto::executarPartesPersistentes(int64_t passo, int ordemDe, int o
         const auto params = paramsDoJson(p.paramsJson);
         const std::string t = "\"" + p.tabela + "\"";
         if (p.tipo == "colunas") {
-            if (p.linhas == 0) { d.run("DELETE FROM " + t + " WHERE " + p.onde, params); return; }
+            const std::string chave = p.copia.rfind("chave:", 0) == 0 ? p.copia.substr(6) : std::string();
+            if (p.linhas == 0) {
+                if (chave.empty()) d.run("DELETE FROM " + t + " WHERE " + p.onde, params);  // a linha não existia
+                return;
+            }
             std::string sets;
             const auto cols = juce::JSON::parse(juce::String::fromUTF8(p.colunasJson.c_str()));
             if (auto* a = cols.getArray())
                 for (const auto& c : *a) {
                     const std::string nome = c.toString().toStdString();
+                    if (nome == chave) continue;
                     sets += (sets.empty() ? "\"" : ", \"") + nome + "\" = " + valorDoJson(nome);
                 }
-            for (const auto& j : linhasDa(p.id)) d.run("UPDATE " + t + " SET " + sets + " WHERE " + p.onde, comJsonNaFrente(j, params));
+            if (sets.empty()) return;
+            for (const auto& j : linhasDa(p.id)) {
+                if (chave.empty()) d.run("UPDATE " + t + " SET " + sets + " WHERE " + p.onde, comJsonNaFrente(j, params));
+                else d.run("UPDATE " + t + " SET " + sets + " WHERE \"" + chave + "\" = " + valorDoJson(chave), {matriz::db::Value::of(j)});
+            }
             return;
         }
         // linhas: o que bate hoje sai, as guardadas voltam
@@ -2014,14 +2069,14 @@ void ProjetoAberto::executarPartesPersistentes(int64_t passo, int ordemDe, int o
     try {
         r.run("BEGIN TRANSACTION", {});
         for (const auto& p : partes)
-            if (p.tipo != "arquivo" && p.banco == "registro") restaurar(r, p);
+            if ((p.tipo == "linhas" || p.tipo == "colunas") && p.banco == "registro") restaurar(r, p);
         r.run("COMMIT", {});
     } catch (...) {
         try { r.run("ROLLBACK", {}); } catch (...) {}
         return;
     }
     for (const auto& p : partes)
-        if (p.tipo != "arquivo" && p.banco == "indice") {
+        if ((p.tipo == "linhas" || p.tipo == "colunas") && p.banco == "indice") {
             try { restaurar(ind, p); } catch (...) {}
         }
     for (const auto& p : partes)
@@ -2029,6 +2084,10 @@ void ProjetoAberto::executarPartesPersistentes(int64_t passo, int ordemDe, int o
             const juce::File alvo = pasta.getChildFile(juce::String::fromUTF8(p.arquivo.c_str()));
             if (!p.copia.empty()) pasta.getChildFile(juce::String::fromUTF8(p.copia.c_str())).copyFileTo(alvo);
             else alvo.deleteFile();
+        }
+    for (const auto& p : partes)
+        if (p.tipo == "acao") {
+            try { executarAcaoDeUndo(p.tabela, p.onde); } catch (...) {}
         }
     lock.unlock();
     auto& bus = EventBus::obterInstancia();
@@ -2047,7 +2106,7 @@ void ProjetoAberto::apagarPassoPersistente(int64_t passo) {
     const juce::File pasta = projeto_->pasta();
     std::unique_lock<std::recursive_mutex> lock(writeMutex());
     try {
-        auto st = r.prepare("SELECT copia FROM undo_parte WHERE passo_id = ? AND copia IS NOT NULL");
+        auto st = r.prepare("SELECT copia FROM undo_parte WHERE passo_id = ? AND tipo = 'arquivo' AND copia IS NOT NULL");
         st.bind(1, matriz::db::Value::of(static_cast<long long>(passo)));
         while (st.step()) pasta.getChildFile(juce::String::fromUTF8(st.columnText(0).c_str())).deleteFile();
         r.run("DELETE FROM undo_linha WHERE parte_id IN (SELECT id FROM undo_parte WHERE passo_id = ?)", {matriz::db::Value::of(static_cast<long long>(passo))});
@@ -2091,25 +2150,15 @@ ProjetoAberto::RetratoGeo ProjetoAberto::retratoGeo(const std::vector<std::strin
     return out;
 }
 
-void ProjetoAberto::registrarUndoGeo(const std::string& descricao, RetratoGeo antes) {
-    if (antes.empty()) return;
-    // De outra thread (Intake em lote), registrarUndo leva para a message thread como passo próprio.
-    registrarUndo(descricao, [this, antes = std::move(antes)] {
-        if (!projeto_) return;
-        auto& db = projeto_->registro();
-        std::unique_lock<std::recursive_mutex> lock(writeMutex());
-        bool emTransacao = false;
-        try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
-        try {
-            for (const auto& [id, geo] : antes) {
-                if (geo) matriz::analytics::AssetGeolocationRepository::salvar(db, *geo);
-                else matriz::analytics::AssetGeolocationRepository::remover(db, id);
-            }
-            if (emTransacao) db.exec("COMMIT");
-        } catch (...) {
-            if (emTransacao) { try { db.exec("ROLLBACK"); } catch (...) {} }
-        }
-    });
+void ProjetoAberto::registrarUndoGeo(const std::string& descricao, const std::vector<std::string>& itemIds) {
+    if (itemIds.empty()) return;
+    // Persistente: as linhas de asset_geolocation desses itens (a que não existia some na volta). De outra thread
+    // (Intake em lote), vira passo próprio na message thread.
+    ParteUndo p;
+    p.tabela = "asset_geolocation";
+    p.onde = "asset_id IN (SELECT value FROM json_each(?))";
+    p.params = {matriz::db::Value::of(idsEmJson(itemIds))};
+    registrarUndoPersistente(descricao, {p}, itemIds, "metadado");
 }
 
 int ProjetoAberto::completarEnderecosGeo(const std::vector<matriz::analytics::AssetGeolocation>& achados) {
@@ -2119,32 +2168,34 @@ int ProjetoAberto::completarEnderecosGeo(const std::vector<matriz::analytics::As
     auto& db = projeto_->registro();
     std::unique_lock<std::recursive_mutex> lock(writeMutex());
     auto antes = retratoGeo(ids);
-    RetratoGeo mudados;
+    std::vector<matriz::analytics::AssetGeolocation> novos;  // só os que mudam
+    for (size_t i = 0; i < achados.size(); ++i) {
+        if (!antes[i].second) continue;  // sem linha = sem coordenadas: nada a completar
+        auto geo = *antes[i].second;
+        bool mudou = false;
+        auto completar = [&mudou](std::optional<std::string>& campo, const std::optional<std::string>& achado) {
+            if ((!campo || campo->empty()) && achado && !achado->empty()) { campo = achado; mudou = true; }
+        };
+        completar(geo.formattedAddress, achados[i].formattedAddress);
+        completar(geo.city, achados[i].city);
+        completar(geo.stateProvince, achados[i].stateProvince);
+        completar(geo.country, achados[i].country);
+        if (mudou) novos.push_back(std::move(geo));
+    }
+    const int n = static_cast<int>(novos.size());
+    if (n == 0) return 0;
+    std::vector<std::string> mudados;
+    for (const auto& g : novos) mudados.push_back(g.assetId);
+    registrarUndoGeo(n == 1 ? "GET address" : "GET addresses (" + std::to_string(n) + " items)", mudados);  // antes de gravar
     bool emTransacao = false;
     try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
     try {
-        for (size_t i = 0; i < achados.size(); ++i) {
-            if (!antes[i].second) continue;  // sem linha = sem coordenadas: nada a completar
-            auto geo = *antes[i].second;
-            bool mudou = false;
-            auto completar = [&mudou](std::optional<std::string>& campo, const std::optional<std::string>& achado) {
-                if ((!campo || campo->empty()) && achado && !achado->empty()) { campo = achado; mudou = true; }
-            };
-            completar(geo.formattedAddress, achados[i].formattedAddress);
-            completar(geo.city, achados[i].city);
-            completar(geo.stateProvince, achados[i].stateProvince);
-            completar(geo.country, achados[i].country);
-            if (!mudou) continue;
-            matriz::analytics::AssetGeolocationRepository::salvar(db, geo);
-            mudados.push_back(antes[i]);
-        }
+        for (const auto& g : novos) matriz::analytics::AssetGeolocationRepository::salvar(db, g);
         if (emTransacao) db.exec("COMMIT");
     } catch (...) {
         if (emTransacao) { try { db.exec("ROLLBACK"); } catch (...) {} }
         return 0;
     }
-    const int n = static_cast<int>(mudados.size());
-    registrarUndoGeo(n == 1 ? "GET address" : "GET addresses (" + std::to_string(n) + " items)", std::move(mudados));
     return n;
 }
 
@@ -2424,19 +2475,20 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
 void ProjetoAberto::definirOrigemPhoneDump(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_ || !projeto_ || itemIds.empty()) return;
     auto& db = projeto_->registro();
-    {   // Undo: o Original Source Medium de cada item (campo da ficha e coluna do item) como estava.
+    {   // Undo: o Original Source Medium de cada item (campo da ficha e coluna do item) como estava, num passo.
         const std::string json = idsEmJson(itemIds);
-        std::map<std::string, std::optional<std::string>> colunaAntes;
-        auto st = db.prepare("SELECT id, source_media FROM item WHERE id IN (SELECT value FROM json_each(?))");
-        st.bind(1, matriz::db::Value::of(json));
-        while (st.step()) colunaAntes[st.columnText(0)] = st.columnIsNull(1) ? std::nullopt : std::optional<std::string>(st.columnText(1));
-        iniciarGrupoUndo("Mark as Phone Dump");
-        registrarUndoDeLinhas(*this, "Mark as Phone Dump",
-                              {{"item_campo", "item_id IN (SELECT value FROM json_each(?)) AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = 'source_media'",
-                                {matriz::db::Value::of(json)}, false}},
-                              itemIds, "metadado");
-        registrarUndoDeColunaDoItem("Mark as Phone Dump", "source_media", std::move(colunaAntes));
-        finalizarGrupoUndo();
+        ParteUndo campo;
+        campo.tabela = "item_campo";
+        campo.onde = "item_id IN (SELECT value FROM json_each(?)) AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = 'source_media'";
+        campo.params = {matriz::db::Value::of(json)};
+        ParteUndo coluna;
+        coluna.tipo = ParteUndo::Tipo::Colunas;
+        coluna.tabela = "item";
+        coluna.onde = "id IN (SELECT value FROM json_each(?))";
+        coluna.params = {matriz::db::Value::of(json)};
+        coluna.colunas = {"source_media"};
+        coluna.chave = "id";
+        registrarUndoPersistente("Mark as Phone Dump", {campo, coluna}, itemIds, "metadado");
     }
     std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
     try {
@@ -2529,11 +2581,20 @@ void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& item
             EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
         } catch (...) {}
     }
+    // As tags voltam por definirTags (que cuida de item_tag e da busca): uma ação no fim do passo.
+    juce::DynamicObject::Ptr tags = new juce::DynamicObject();
+    for (const auto& [id, lista] : tagsAntes) {
+        if (lista.empty()) continue;
+        juce::Array<juce::var> a;
+        for (const auto& t : lista) a.add(juce::String::fromUTF8(t.c_str()));
+        tags->setProperty(juce::Identifier(juce::String::fromUTF8(id.c_str())), a);
+    }
+    ParteUndo acaoTags;
+    acaoTags.tipo = ParteUndo::Tipo::Acao;
+    acaoTags.tabela = "tags";
+    acaoTags.onde = juce::JSON::toString(juce::var(tags.get()), true).toStdString();
     registrarUndoDeRetrato(itemIds.size() == 1 ? "Clear Metadata" : "Clear Metadata (" + std::to_string(itemIds.size()) + " items)",
-                           std::move(retrato), itemIds, [this, tagsAntes] {
-                               for (const auto& [id, tags] : tagsAntes)
-                                   if (!tags.empty()) definirTags(id, tags);
-                           });
+                           std::move(retrato), itemIds, {acaoTags});
 }
 
 std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const {
@@ -2754,63 +2815,29 @@ const std::vector<std::string>& ProjetoAberto::ultimosItensIngeridos() const {
     return ultimosItensIngeridos_;
 }
 
-// Undo de Reload/Replace File: a derivada (o "arquivo atual" de um Replace), o cache técnico e as miniaturas dos
-// arquivos do item, e o tamanho do master, como estavam. O arquivo no disco não volta (um Reload relê o que está lá).
+// Undo de Reload/Replace File: a derivada (o "arquivo atual" de um Replace), o cache técnico e as miniaturas do item, e
+// o tamanho do master, como estavam. O arquivo no disco não volta (um Reload relê o que está lá). Ordem: o cache dos
+// arquivos de antes volta depois da derivada (apagar a derivada leva o cache dela junto).
 static void registrarUndoDeArquivoAtual(ProjetoAberto& pa, const std::string& descricao, const std::string& itemId,
                                         const std::string& masterId) {
     auto& reg = pa.projeto().registro();
-    auto& ind = pa.projeto().indice();
     std::vector<std::string> arquivos;
     {
         auto st = reg.prepare("SELECT id FROM arquivo WHERE item_id = ?");
         st.bind(1, matriz::db::Value::of(itemId));
         while (st.step()) arquivos.push_back(st.columnText(0));
     }
-    std::optional<long long> tamanhoMaster;
-    {
-        auto st = reg.prepare("SELECT tamanho_bytes FROM arquivo WHERE id = ?");
-        st.bind(1, matriz::db::Value::of(masterId));
-        if (st.step() && !st.columnIsNull(0)) tamanhoMaster = st.columnInt(0);
-    }
-    const std::string ondeDerivada = "item_id = ? AND derivada_de_arquivo_id IS NOT NULL";
-    const std::string ondeDoItem = "arquivo_id IN (SELECT value FROM json_each(?))";
-    const std::string jsonArquivos = idsEmJson(arquivos);
-    const std::string tDer = guardarLinhasParaUndo(reg, "arquivo", ondeDerivada, {matriz::db::Value::of(itemId)});
-    const std::string tCache = guardarLinhasParaUndo(reg, "cache_arquivo", ondeDoItem, {matriz::db::Value::of(jsonArquivos)});
-    const std::string tMini = guardarLinhasParaUndo(ind, "miniatura", ondeDoItem, {matriz::db::Value::of(jsonArquivos)});
-    ProjetoAberto* p = &pa;
-    registrarUndoNaMessageThread(pa, descricao, [p, itemId, masterId, tamanhoMaster, ondeDerivada, ondeDoItem, tDer, tCache, tMini] {
-        auto& r = p->projeto().registro();
-        auto& i = p->projeto().indice();
-        std::unique_lock<std::recursive_mutex> lock(p->writeMutex());
-        std::vector<std::string> hoje;  // arquivos do item agora (inclui a derivada nova, que sai)
-        {
-            auto st = r.prepare("SELECT id FROM arquivo WHERE item_id = ?");
-            st.bind(1, matriz::db::Value::of(itemId));
-            while (st.step()) hoje.push_back(st.columnText(0));
-        }
-        const std::string jsonHoje = idsEmJson(hoje);
-        try {
-            r.run("BEGIN TRANSACTION", {});
-            r.run("DELETE FROM cache_arquivo WHERE " + ondeDoItem, {matriz::db::Value::of(jsonHoje)});
-            voltarLinhasDoUndo(r, tDer, "arquivo", ondeDerivada, {matriz::db::Value::of(itemId)});
-            r.run("INSERT OR REPLACE INTO cache_arquivo SELECT * FROM temp.\"" + tCache + "\"", {});
-            r.run("UPDATE arquivo SET tamanho_bytes = ? WHERE id = ?",
-                  {tamanhoMaster ? matriz::db::Value::of(*tamanhoMaster) : matriz::db::Value::null(), matriz::db::Value::of(masterId)});
-            r.run("COMMIT", {});
-        } catch (...) {
-            try { r.run("ROLLBACK", {}); } catch (...) {}
-            return;
-        }
-        try {
-            i.run("DELETE FROM miniatura WHERE " + ondeDoItem, {matriz::db::Value::of(jsonHoje)});
-            i.run("INSERT OR IGNORE INTO miniatura SELECT * FROM temp.\"" + tMini + "\"", {});
-        } catch (...) {}
-        for (const auto& t : {tDer, tCache}) try { r.run("DROP TABLE IF EXISTS temp.\"" + t + "\"", {}); } catch (...) {}
-        try { i.run("DROP TABLE IF EXISTS temp.\"" + tMini + "\"", {}); } catch (...) {}
-        EventBus::obterInstancia().dispararItemAlterado(itemId, "miniatura");
-        EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
-    });
+    ProjetoAberto::ParteUndo master;
+    master.tipo = ProjetoAberto::ParteUndo::Tipo::Colunas;
+    master.tabela = "arquivo";
+    master.onde = "id = ?";
+    master.params = {matriz::db::Value::of(masterId)};
+    master.colunas = {"tamanho_bytes"};
+    registrarUndoDeLinhas(pa, descricao,
+                          {{"arquivo", "item_id = ? AND derivada_de_arquivo_id IS NOT NULL", {matriz::db::Value::of(itemId)}, false},
+                           {"cache_arquivo", "arquivo_id IN (SELECT value FROM json_each(?))", {matriz::db::Value::of(idsEmJson(arquivos))}, false},
+                           {"miniatura", "item_id = ?", {matriz::db::Value::of(itemId)}, true}},
+                          {itemId}, "miniatura", {master});
 }
 
 bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, const juce::File& novoCaminho,
@@ -3453,19 +3480,8 @@ int ProjetoAberto::restaurarDuplicatas(const std::vector<std::string>& itemIds) 
     const std::string bloco = "\n\n[RESTORED FROM RESOLVED DUPLICATES] " + agora +
                               " - the user dismissed this duplicate; item returned to the grid. [USER_VERIFIED_NOT_DUPLICATE]";
     int restaurados = 0;
-    {   // Undo: estado e notas de cada item como estavam (o item volta a ser duplicata e sai da grade).
-        std::map<std::string, std::optional<std::string>> estadoAntes, notasAntes;
-        auto st = db.prepare("SELECT id, estado, notas_livres FROM item WHERE id IN (SELECT value FROM json_each(?))");
-        st.bind(1, Value::of(idsEmJson(itemIds)));
-        while (st.step()) {
-            estadoAntes[st.columnText(0)] = st.columnIsNull(1) ? std::nullopt : std::optional<std::string>(st.columnText(1));
-            notasAntes[st.columnText(0)] = st.columnIsNull(2) ? std::nullopt : std::optional<std::string>(st.columnText(2));
-        }
-        iniciarGrupoUndo("Restore Duplicates");
-        registrarUndoDeColunaDoItem("Restore Duplicates", "notas_livres", std::move(notasAntes));
-        registrarUndoDeColunaDoItem("Restore Duplicates", "estado", std::move(estadoAntes));
-        finalizarGrupoUndo();
-    }
+    // Undo: estado e notas de cada item como estavam (o item volta a ser duplicata e sai da grade).
+    registrarUndoDeColunasDosItens("Restore Duplicates", {"estado", "notas_livres"}, itemIds);
     std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
     try {
         db.exec("BEGIN IMMEDIATE");  // N itens = uma transação
@@ -4749,16 +4765,20 @@ void ProjetoAberto::registrarUndoVinculosDePasta(const std::string& descricao, c
         st.bind(1, matriz::db::Value::of(mapaId));
         while (st.step()) pastasAntes.insert(st.columnText(0));
     }
-    registrarUndoDeRetrato(descricao, std::move(retrato), itemIds, [this, mapaId, pastasAntes] {
-        if (mapaId.empty() || !projeto_) return;
-        auto& d = projeto_->registro();
-        std::vector<std::string> novas;
-        auto st = d.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ?");
-        st.bind(1, matriz::db::Value::of(mapaId));
-        while (st.step()) if (!pastasAntes.count(st.columnText(0))) novas.push_back(st.columnText(0));
-        for (const auto& id : novas)
-            try { d.run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(id)}); } catch (...) {}
-    });
+    std::vector<ParteUndo> acoes;
+    if (!mapaId.empty()) {
+        juce::DynamicObject::Ptr o = new juce::DynamicObject();
+        o->setProperty("mapa", juce::String::fromUTF8(mapaId.c_str()));
+        juce::Array<juce::var> antes;
+        for (const auto& id : pastasAntes) antes.add(juce::String::fromUTF8(id.c_str()));
+        o->setProperty("antes", antes);
+        ParteUndo a;
+        a.tipo = ParteUndo::Tipo::Acao;
+        a.tabela = "pastas_novas";  // as pastas que a operação criou (o _trash, a recriada pelo nome) somem
+        a.onde = juce::JSON::toString(juce::var(o.get()), true).toStdString();
+        acoes.push_back(std::move(a));
+    }
+    registrarUndoDeRetrato(descricao, std::move(retrato), itemIds, std::move(acoes));
 }
 
 void ProjetoAberto::moverItensParaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId, const std::string& nomePastaOrigem) {
@@ -5397,64 +5417,6 @@ void ProjetoAberto::registrarUndoDeRemocao(const std::string& token, std::vector
     });
 }
 
-ProjetoAberto::Retrato ProjetoAberto::retratar(const std::vector<TabelaDoRetrato>& tabelas,
-                                               const std::vector<std::string>& ids) {
-    Retrato r;
-    if (!projeto_ || ids.empty() || desfazendo_) return r;
-    juce::Array<juce::var> lista;
-    for (const auto& id : ids) lista.add(juce::String::fromUTF8(id.c_str()));
-    const std::string json = juce::JSON::toString(juce::var(lista), true).toStdString();
-    auto& d = projeto_->registro();
-    std::unique_lock<std::recursive_mutex> lock(writeMutex());
-    for (const auto& t : tabelas) {
-        ParteRetrato p{t.tabela, t.chave, "undo_rt_" + std::to_string(++contadorSnapUndo_), json, t.soAtualizar};
-        d.run("CREATE TEMP TABLE \"" + p.temp + "\" AS SELECT * FROM \"" + p.tabela + "\" WHERE 0", {});
-        d.run("INSERT INTO temp.\"" + p.temp + "\" SELECT * FROM \"" + p.tabela + "\" WHERE \"" + p.chave +
-                  "\" IN (SELECT value FROM json_each(?))",
-              {matriz::db::Value::of(json)});
-        r.push_back(std::move(p));
-    }
-    return r;
-}
-
-void ProjetoAberto::registrarUndoDeRetrato(const std::string& descricao, Retrato retrato, std::vector<std::string> idsAvisar,
-                                           std::function<void()> depois) {
-    if (retrato.empty()) return;
-    registrarUndo(descricao, [this, retrato = std::move(retrato), idsAvisar = std::move(idsAvisar), depois = std::move(depois)] {
-        if (!projeto_) return;
-        auto& d = projeto_->registro();
-        std::unique_lock<std::recursive_mutex> lock(writeMutex());
-        bool voltou = false;
-        try {
-            d.run("BEGIN TRANSACTION", {});
-            for (const auto& p : retrato) {
-                const std::string cols = colunasDe(d, p.tabela);
-                const std::string t = "\"" + p.tabela + "\"", k = "\"" + p.chave + "\"", tmp = "temp.\"" + p.temp + "\"";
-                if (p.soAtualizar) {
-                    d.run("UPDATE " + t + " SET (" + cols + ") = (SELECT " + cols + " FROM " + tmp + " AS r WHERE r." + k + " = " +
-                              t + "." + k + ") WHERE " + k + " IN (SELECT " + k + " FROM " + tmp + ")",
-                          {});
-                } else {
-                    d.run("DELETE FROM " + t + " WHERE " + k + " IN (SELECT value FROM json_each(?))",
-                          {matriz::db::Value::of(p.chavesJson)});
-                    d.run("INSERT INTO " + t + " (" + cols + ") SELECT " + cols + " FROM " + tmp, {});
-                }
-            }
-            d.run("COMMIT", {});
-            voltou = true;
-        } catch (...) {
-            try { d.run("ROLLBACK", {}); } catch (...) {}
-        }
-        for (const auto& p : retrato)
-            try { d.run("DROP TABLE IF EXISTS temp.\"" + p.temp + "\"", {}); } catch (...) {}
-        if (!voltou) return;
-        if (depois) depois();
-        auto& bus = EventBus::obterInstancia();
-        bus.iniciarLote();
-        for (const auto& id : idsAvisar) bus.dispararItemAlterado(id, "metadado");
-        bus.finalizarLote();
-    });
-}
 
 void ProjetoAberto::removerItensDoProjetoEmSegundoPlano(
     std::vector<std::string> itemIds, std::shared_ptr<std::atomic<bool>> cancelar,
@@ -6078,7 +6040,7 @@ void ProjetoAberto::removerDoContainer(const std::vector<std::string>& itemIds) 
     registrarUndoDeRetrato(itemIds.size() == 1 ? "Remove from Container" : "Remove " + std::to_string(itemIds.size()) + " Items from Container",
                            retratar({{"nest", "id", false}, {"nest_item", "nest_id", false}},
                                     std::vector<std::string>(nests.begin(), nests.end())),
-                           itemIds, [] { EventBus::obterInstancia().dispararItemAlterado("", "nest"); });
+                           {""}, {}, "nest");
     db.run("BEGIN TRANSACTION", {});
     try {
         for (const auto& id : itemIds) db.run("DELETE FROM nest_item WHERE item_id = ?", {matriz::db::Value::of(id)});
@@ -6466,21 +6428,19 @@ void ProjetoAberto::alternarMarcaR(const std::vector<std::string>& itemIds) {
         ++gravacoesMarcasPendentes_;
     }
     // Undo (Intake, item a item): cada item volta a ter ou não ter R, pelo mesmo caminho (memória + fila serial).
-    if (!desfazendo_)
-        registrarUndo(itemIds.size() == 1 ? "Mark R" : "Mark R (" + std::to_string(itemIds.size()) + " items)",
-                      [this, itemIds, marcadosAntes] {
-                          std::vector<std::string> ligar, desligar;
-                          {
-                              std::lock_guard<std::mutex> lock(marcacoesMutex_);
-                              for (const auto& id : itemIds) {
-                                  const bool agoraTem = marcadosR_.count(id) > 0, tinha = marcadosAntes.count(id) > 0;
-                                  if (tinha && !agoraTem) ligar.push_back(id);
-                                  else if (!tinha && agoraTem) desligar.push_back(id);
-                              }
-                          }
-                          if (!ligar.empty()) alternarMarcaR(ligar);       // todos sem R: liga
-                          if (!desligar.empty()) alternarMarcaR(desligar); // todos com R: desliga
-                      });
+    if (!desfazendo_) {  // persistente: ação "marca_r" com quem tinha R antes
+        juce::DynamicObject::Ptr o = new juce::DynamicObject();
+        juce::Array<juce::var> ids, marc;
+        for (const auto& id : itemIds) ids.add(juce::String::fromUTF8(id.c_str()));
+        for (const auto& id : marcadosAntes) marc.add(juce::String::fromUTF8(id.c_str()));
+        o->setProperty("ids", ids);
+        o->setProperty("marcados", marc);
+        ParteUndo a;
+        a.tipo = ParteUndo::Tipo::Acao;
+        a.tabela = "marca_r";
+        a.onde = juce::JSON::toString(juce::var(o.get()), true).toStdString();
+        registrarUndoPersistente(itemIds.size() == 1 ? "Mark R" : "Mark R (" + std::to_string(itemIds.size()) + " items)", {a}, {}, "marca_r");
+    }
     const std::string agora = matriz::model::agoraIso8601();
     std::weak_ptr<bool> vivo = vivo_;
     poolMarcas_.addJob([this, itemIds, remover, agora, vivo]() {
@@ -6666,30 +6626,8 @@ void ProjetoAberto::renomearItensComTitulos(const std::vector<std::pair<std::str
 
 void ProjetoAberto::registrarUndoRevisado(const std::vector<std::string>& itemIds) {
     if (!projeto_ || itemIds.empty() || desfazendo_) return;
-    std::set<std::string> marcados;
-    auto st = projeto_->registro().prepare("SELECT COALESCE(marcado_revisado, 0) FROM item WHERE id = ?");
-    for (const auto& id : itemIds) {
-        st.reset();
-        st.bind(1, matriz::db::Value::of(id));
-        if (st.step() && st.columnInt(0) != 0) marcados.insert(id);
-    }
-    registrarUndo(itemIds.size() == 1 ? "Mark E" : "Mark E (" + std::to_string(itemIds.size()) + " items)",
-                  [this, ids = itemIds, marcados = std::move(marcados)] {
-                      if (!projeto_) return;
-                      auto& db = projeto_->registro();
-                      std::unique_lock<std::recursive_mutex> lock(writeMutex());
-                      try {
-                          db.run("BEGIN TRANSACTION", {});
-                          for (const auto& id : ids)
-                              db.run("UPDATE item SET marcado_revisado = ? WHERE id = ?",
-                                     {matriz::db::Value::of(marcados.count(id) ? 1 : 0), matriz::db::Value::of(id)});
-                          db.run("COMMIT", {});
-                      } catch (...) {
-                          try { db.run("ROLLBACK", {}); } catch (...) {}
-                          return;
-                      }
-                      for (const auto& id : ids) EventBus::obterInstancia().dispararItemAlterado(id, "marcado_revisado");
-                  });
+    registrarUndoDeColunasDosItens(itemIds.size() == 1 ? "Mark E" : "Mark E (" + std::to_string(itemIds.size()) + " items)",
+                                   {"marcado_revisado"}, itemIds, "marcado_revisado");
 }
 
 void ProjetoAberto::alternarMarcadoRevisado(const std::vector<std::string>& itemIds) {
@@ -6777,28 +6715,17 @@ std::shared_ptr<matriz::vault::ResolvedorEmLote> ProjetoAberto::criarResolvedorE
     return std::make_shared<matriz::vault::ResolvedorEmLote>(projeto_->registro(), projeto_->pasta());
 }
 
-void ProjetoAberto::registrarUndoDeColunaDoItem(const std::string& descricao, const std::string& coluna,
-                                                std::map<std::string, std::optional<std::string>> antes) {
-    if (antes.empty() || desfazendo_) return;
-    registrarUndo(descricao, [this, coluna, antes = std::move(antes)] {
-        if (!projeto_) return;
-        auto& db = projeto_->registro();
-        std::unique_lock<std::recursive_mutex> lock(writeMutex());
-        try {
-            db.run("BEGIN TRANSACTION", {});
-            for (const auto& [id, valor] : antes)
-                db.run("UPDATE item SET \"" + coluna + "\" = ? WHERE id = ?",
-                       {valor ? matriz::db::Value::of(*valor) : matriz::db::Value::null(), matriz::db::Value::of(id)});
-            db.run("COMMIT", {});
-        } catch (...) {
-            try { db.run("ROLLBACK", {}); } catch (...) {}
-            return;
-        }
-        auto& bus = EventBus::obterInstancia();
-        bus.iniciarLote();
-        for (const auto& [id, valor] : antes) bus.dispararItemAlterado(id, "metadado");
-        bus.finalizarLote();
-    });
+void ProjetoAberto::registrarUndoDeColunasDosItens(const std::string& descricao, std::vector<std::string> colunas,
+                                                   const std::vector<std::string>& itemIds, const std::string& tipoEvento) {
+    if (itemIds.empty() || colunas.empty() || desfazendo_) return;
+    ParteUndo p;
+    p.tipo = ParteUndo::Tipo::Colunas;
+    p.tabela = "item";
+    p.onde = "id IN (SELECT value FROM json_each(?))";
+    p.params = {matriz::db::Value::of(idsEmJson(itemIds))};
+    p.colunas = std::move(colunas);
+    p.chave = "id";
+    registrarUndoPersistente(descricao, {p}, itemIds, tipoEvento);
 }
 
 int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::string>& textoPorItem) {
@@ -6807,7 +6734,12 @@ int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::st
     const std::string agora = matriz::model::agoraIso8601();
     std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
     int gravados = 0;
-    std::map<std::string, std::optional<std::string>> notasAntes;  // Undo
+    {   // Undo (antes de gravar): a nota de cada item como está agora.
+        std::vector<std::string> ids;
+        for (const auto& [id, texto] : textoPorItem) ids.push_back(id);
+        registrarUndoDeColunasDosItens(ids.size() == 1 ? "Other Metadata" : "Other Metadata (" + std::to_string(ids.size()) + " items)",
+                                       {"notas_livres"}, ids);
+    }
     try {
         db.exec("BEGIN IMMEDIATE");
         auto ler = db.prepare("SELECT notas_livres FROM item WHERE id = ?");
@@ -6815,9 +6747,7 @@ int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::st
             ler.reset();
             ler.bind(1, matriz::db::Value::of(itemId));
             std::string atual;
-            const bool achou = ler.step();
-            if (achou && !ler.columnIsNull(0)) atual = ler.columnText(0);
-            notasAntes[itemId] = achou && !ler.columnIsNull(0) ? std::optional<std::string>(atual) : std::nullopt;
+            if (ler.step() && !ler.columnIsNull(0)) atual = ler.columnText(0);
             // A automática vai sempre primeiro (como no ingest); as seções do
             // usuário ficam como estavam.
             std::vector<matriz::model::SecaoNota> secoes = {{matriz::model::kOutraMetadataTitulo, texto, true}};
@@ -6833,8 +6763,6 @@ int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::st
         try { db.exec("ROLLBACK"); } catch (...) {}
         return 0;
     }
-    registrarUndoDeColunaDoItem(gravados == 1 ? "Other Metadata" : "Other Metadata (" + std::to_string(gravados) + " items)",
-                                "notas_livres", std::move(notasAntes));
     return gravados;
 }
 
@@ -7047,13 +6975,7 @@ std::vector<ProjetoAberto::ParDuplicatas> ProjetoAberto::listarGruposDuplicados(
 void ProjetoAberto::atualizarEstadoItem(const std::string& itemId, const std::string& novoEstado) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
-    {
-        std::map<std::string, std::optional<std::string>> antes;
-        auto st = projeto_->registro().prepare("SELECT estado FROM item WHERE id = ?");
-        st.bind(1, matriz::db::Value::of(itemId));
-        if (st.step()) antes[itemId] = st.columnIsNull(0) ? std::nullopt : std::optional<std::string>(st.columnText(0));
-        registrarUndoDeColunaDoItem("Change State", "estado", std::move(antes));
-    }
+    registrarUndoDeColunasDosItens("Change State", {"estado"}, {itemId});
     std::string agora = matriz::model::agoraIso8601();
     projeto_->registro().run("UPDATE item SET estado = ?, atualizado_em = ? WHERE id = ?",
                              {matriz::db::Value::of(novoEstado), matriz::db::Value::of(agora),
@@ -8929,13 +8851,20 @@ void ProjetoAberto::registrarUndoMarcacao(TipoMarcacao tipo, std::vector<std::st
     if (itemIds.empty() || desfazendo_) return;  // de outra thread, registrarUndo leva para a message thread
     const char* letra = tipo == TipoMarcacao::Html ? "H" : tipo == TipoMarcacao::Zip ? "K" : tipo == TipoMarcacao::Print ? "P"
                       : tipo == TipoMarcacao::Watermark ? "W" : tipo == TipoMarcacao::Bounce ? "B" : "R";
-    registrarUndo(std::string("Mark ") + letra + (itemIds.size() == 1 ? "" : " (" + std::to_string(itemIds.size()) + " items)"),
-                  [this, tipo, itemIds = std::move(itemIds), marcados = std::move(marcados)] {
-                      std::vector<std::string> ligar, desligar;
-                      for (const auto& id : itemIds) (marcados.count(id) ? ligar : desligar).push_back(id);
-                      if (!ligar.empty()) definirMarcacao(tipo, ligar, true);
-                      if (!desligar.empty()) definirMarcacao(tipo, desligar, false);
-                  });
+    // Persistente: uma ação "marcas" com quem tinha a marca antes; a volta passa por definirMarcacao (memória + fila).
+    juce::DynamicObject::Ptr o = new juce::DynamicObject();
+    o->setProperty("tipo", static_cast<int>(tipo));
+    juce::Array<juce::var> ids, marc;
+    for (const auto& id : itemIds) ids.add(juce::String::fromUTF8(id.c_str()));
+    for (const auto& id : marcados) marc.add(juce::String::fromUTF8(id.c_str()));
+    o->setProperty("ids", ids);
+    o->setProperty("marcados", marc);
+    ParteUndo a;
+    a.tipo = ParteUndo::Tipo::Acao;
+    a.tabela = "marcas";
+    a.onde = juce::JSON::toString(juce::var(o.get()), true).toStdString();
+    registrarUndoPersistente(std::string("Mark ") + letra + (itemIds.size() == 1 ? "" : " (" + std::to_string(itemIds.size()) + " items)"), {a},
+                             {}, "marcacao");
 }
 
 void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds) {

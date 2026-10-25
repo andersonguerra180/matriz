@@ -2107,8 +2107,8 @@ public:
                 antes.front().second->stateProvince == geo.stateProvince && antes.front().second->country == geo.country &&
                 antes.front().second->source == geo.source)
                 return;  // nada mudou (sair do campo sem editar): nem grava nem empilha Undo
+            projeto_.registrarUndoGeo("Edit geo location", {itemId});  // antes de gravar
             matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), geo);
-            projeto_.registrarUndoGeo("Edit geo location", std::move(antes));
             if (aoMudar) aoMudar();
             if (aoAplicarSucesso) aoAplicarSucesso(itemId);
         }
@@ -5955,7 +5955,7 @@ private:
         }
 
         projeto_.iniciarGrupoUndo("Batch edit: geo location");
-        ProjetoAberto::RetratoGeo antesGeo;  // como cada item gravado estava (UNDO)
+        projeto_.registrarUndoGeo("Batch edit: geo location", itemIds_);  // antes de gravar, no grupo do lote
         int concluidos = 0;
         // Fase 2b: uma transação só pros N itens (leitura + mescla + escrita)
         // em vez de uma por INSERT — com seleções grandes (1000+ itens) o
@@ -6025,7 +6025,6 @@ private:
                 // se sobrar algum dado de localização — limpar tudo não
                 // apaga a linha existente, só evita gravar um estado vazio.
                 if (geo.hasAnyLocationData()) {
-                    antesGeo.emplace_back(id, existenteOpt);
                     matriz::analytics::AssetGeolocationRepository::salvar(dbGeoLote, geo);
                 }
             } catch (...) {}
@@ -6035,9 +6034,8 @@ private:
                     kIdTarefa, concluidos, juce::String(concluidos) + " / " + juce::String((int) itemIds_.size()));
             }
         }
-        const bool gravou = !emTransacaoGeo || commitOuReverter(dbGeoLote, itemIds_);
+        if (emTransacaoGeo) commitOuReverter(dbGeoLote, itemIds_);
         writeLock.unlock();
-        if (gravou) projeto_.registrarUndoGeo("Batch edit: geo location", std::move(antesGeo));
         loteEventosGeo.fim();
         projeto_.finalizarGrupoUndo();
         if (ehLote) {

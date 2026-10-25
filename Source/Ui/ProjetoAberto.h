@@ -377,46 +377,49 @@ public:
     //            se não havia linha, a volta a apaga.
     //   Arquivo: uma cópia do arquivo (em <projeto>/.undo/); se ele não existia, a volta o apaga.
     // De outra thread, vira passo próprio na message thread; com um grupo aberto na message thread, entra nele.
+    //   Acao:    código que a volta roda depois das linhas (tags via definirTags, marcas, R, pastas novas): `tabela` é o
+    //            nome da ação e `onde` o JSON com os dados.
+    // Numa ação (uma chamada), as partes voltam na ordem em que foram dadas; num grupo, as ações da última à primeira.
     struct ParteUndo {
-        enum class Tipo { Linhas, Colunas, Arquivo };
+        enum class Tipo { Linhas, Colunas, Arquivo, Acao };
         Tipo tipo = Tipo::Linhas;
         bool noIndice = false;
         std::string tabela, onde;
         std::vector<matriz::db::Value> params;
         std::vector<std::string> colunas;
+        std::string chave;  // Colunas com várias linhas: a coluna que identifica cada uma (ex. "id")
         juce::File arquivo;
     };
     void registrarUndoPersistente(const std::string& descricao, const std::vector<ParteUndo>& partes,
                                   const std::vector<std::string>& itensAvisar = {}, const std::string& tipoEvento = "metadado");
-    // UNDO de GEO LOCATION (ficha, lote, Intake): a gravação vai direto em asset_geolocation, que não passa por
-    // salvarMetadado — sem isto o grupo de Undo ficava vazio e o Undo desfazia a edição ANTERIOR. Tirar o retrato
-    // ANTES de gravar (nullopt = o item não tinha linha) e registrar depois do COMMIT; a volta é uma transação só.
-    // registrarUndoGeo pode ser chamado de outra thread (vai para a message thread).
+    // UNDO de GEO LOCATION (ficha, lote, Intake, GET em lote): a gravação vai direto em asset_geolocation, que não passa
+    // por salvarMetadado. registrarUndoGeo guarda (persistente) as linhas desses itens: chamar ANTES de gravar.
+    // retratoGeo é só a leitura do estado atual (para decidir o que gravar).
     using RetratoGeo = std::vector<std::pair<std::string, std::optional<matriz::analytics::AssetGeolocation>>>;
     RetratoGeo retratoGeo(const std::vector<std::string>& itemIds) const;
-    void registrarUndoGeo(const std::string& descricao, RetratoGeo antes);
+    void registrarUndoGeo(const std::string& descricao, const std::vector<std::string>& itemIds);
     // GET em lote: endereço/cidade/estado/país achados pelas coordenadas de cada item entram só onde o campo está
     // vazio; coordenadas e fonte nunca mudam. Uma transação, um Undo. Devolve quantos itens mudaram.
     int completarEnderecosGeo(const std::vector<matriz::analytics::AssetGeolocation>& achados);
-    // Undo genérico por RETRATO de tabelas (TEMP na conexão do registro, como registrarUndoVisualMapa): guarda, ANTES
-    // de gravar, as linhas de cada tabela cuja `chave` está em `ids`. A volta apaga as linhas atuais dessas chaves e
-    // regrava as guardadas — ou, com soAtualizar (tabela-mãe como `item`, que não se apaga sem cascata), só regrava as
-    // colunas das linhas que existiam. `depois` roda após o COMMIT da volta (ex.: tags via definirTags, que cuida da
-    // busca). registrarUndoDeRetrato pode ser chamado de outra thread (vai para a message thread).
-    struct ParteRetrato {
-        std::string tabela, chave, temp, chavesJson;
-        bool soAtualizar = false;
+    // Undo por RETRATO de tabelas, em dois tempos (persistente): `retratar` guarda AGORA (antes de gravar) as linhas
+    // de cada tabela cuja `chave` está em `ids` — com soAtualizar (tabela-mãe como `item`, que não se apaga sem
+    // cascata) só as colunas, linha a linha; `registrarUndoDeRetrato` empilha o passo depois de gravar, com as ações
+    // (ParteUndo::Tipo::Acao) que a volta roda no fim. Um retrato nunca empilhado não volta ao reabrir.
+    struct Retrato {
+        int64_t passo = 0;
+        int de = 0, ate = -1;
+        bool doGrupo = false;
+        bool empty() const { return passo == 0; }
     };
-    using Retrato = std::vector<ParteRetrato>;
     struct TabelaDoRetrato {
         std::string tabela, chave;
         bool soAtualizar = false;
     };
     Retrato retratar(const std::vector<TabelaDoRetrato>& tabelas, const std::vector<std::string>& ids);
-    // Undo de UMA coluna do item (ex. notas_livres do "Other metadata" em lote): `antes` = valor de cada item ANTES
-    // (nullopt = NULL). Só essa coluna volta. Pode ser chamado de outra thread (vai para a message thread).
-    void registrarUndoDeColunaDoItem(const std::string& descricao, const std::string& coluna,
-                                     std::map<std::string, std::optional<std::string>> antes);
+    // Undo de colunas dos ITENS (ex. notas_livres do "Other metadata", source_media, estado): só essas colunas voltam,
+    // item a item. Chamar ANTES de gravar.
+    void registrarUndoDeColunasDosItens(const std::string& descricao, std::vector<std::string> colunas,
+                                        const std::vector<std::string>& itemIds, const std::string& tipoEvento = "metadado");
     // Undo da marca E (marcado_revisado): só essa coluna volta ao que cada item tinha. Chamar ANTES de gravar.
     void registrarUndoRevisado(const std::vector<std::string>& itemIds);
     // Undo de Trash / tirar de pasta: vínculos item<->pasta e lixeira DESTES itens (todos os mapas) voltam como estavam,
@@ -424,7 +427,7 @@ public:
     void registrarUndoVinculosDePasta(const std::string& descricao, const std::vector<std::string>& itemIds,
                                       const std::string& mapaId);
     void registrarUndoDeRetrato(const std::string& descricao, Retrato retrato, std::vector<std::string> idsAvisar,
-                                std::function<void()> depois = nullptr);
+                                std::vector<ParteUndo> acoesDepois = {}, const std::string& tipoEvento = "metadado");
     // Undo do Folder Map (chamar ANTES de mudar o banco). As cópias ficam em tabelas TEMP da conexão do registro.
     //  - Visual: posição, tamanho (escala_no), ativo, cor das pastas do mapa + fator dos cartões.
     //  - Snapshot: pastas + vínculos do mapa inteiro (e, com incluirLinhaMapa, a linha do folder_map: mapa apagado).
@@ -1514,6 +1517,12 @@ private:
     void garantirTabelasUndo();
     void carregarUndoPersistente();  // na abertura: os últimos kMaxUndo passos completos voltam para a pilha
     void executarPartesPersistentes(int64_t passo, int ordemDe, int ordemAte);
+    // Grava as partes no passo (criando-o se preciso; num grupo aberto, no passo do grupo) e devolve [de, ate].
+    bool capturarPartesPersistentes(const std::string& descricao, const std::vector<ParteUndo>& partes,
+                                    const std::vector<std::string>& itensAvisar, const std::string& tipoEvento,
+                                    bool completo, int64_t& passo, int& de, int& ate, UndoEntry*& grupo);
+    void empilharPassoPersistente(const std::string& descricao, int64_t passo, int de, int ate, UndoEntry* grupo);
+    void executarAcaoDeUndo(const std::string& nome, const std::string& dadosJson);
     void apagarPassoPersistente(int64_t passo);
     void registrarUndoSubarvoreApagada(const std::string& pastaId);
     std::set<std::string> buscarItensNoEscopo(const juce::String& termo, EscopoBusca escopo) const;
