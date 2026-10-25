@@ -715,6 +715,96 @@ void rodarTestesUndoMecanismo(const Checar& checar) {
     raiz.deleteRecursively();
 }
 
+// Histórico de Undo persistente (fase 1): fechar e reabrir o projeto e ainda desfazer.
+void rodarTestesUndoPersistente(const Checar& checar) {
+    using matriz::db::Value;
+    using Parte = ProjetoAberto::ParteUndo;
+    std::cout << "\n-- UNDO history survives closing the project (phase 1) --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_undo_persistente_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "UndoP";
+        params.prefixoNomenclatura = "UNP";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        auto pa = std::make_unique<ProjetoAberto>(std::move(projeto));
+        const juce::File pasta = pa->projeto().pasta();
+        auto reabrir = [&] {
+            pa.reset();
+            pa = std::make_unique<ProjetoAberto>(matriz::model::Project::abrir(pasta));
+        };
+        auto um = [&](const std::string& sql, std::vector<Value> ps) {
+            auto q = pa->projeto().registro().prepare(sql);
+            for (size_t i = 0; i < ps.size(); ++i) q.bind(static_cast<int>(i + 1), ps[i]);
+            return q.step() ? q.columnText(0) : std::string("<none>");
+        };
+        const std::string a = inserirItem(pa->projeto().registro(), projetoId, "UNP-1", false, ".jpg");
+
+        // colunas (tabela-mãe)
+        pa->registrarUndoDeColunas("Allow Overwriting Master", "projeto", "id", projetoId, {"permitir_sobrescrever_master"});
+        pa->projeto().registro().run("UPDATE projeto SET permitir_sobrescrever_master = 1 WHERE id = ?", {Value::of(projetoId)});
+        reabrir();
+        checar(pa->podeDesfazer() && pa->descricaoUndoAtual() == "Allow Overwriting Master", "phase 1: after reopening, the step is still there");
+        pa->desfazer();
+        checar(um("SELECT permitir_sobrescrever_master FROM projeto WHERE id = ?", {Value::of(projetoId)}) == "0" &&
+                   um("SELECT COUNT(*) FROM item WHERE id = ?", {Value::of(a)}) == "1",
+               "phase 1: Undo after reopening restores the column (and nothing else)");
+
+        // linhas
+        const auto obs = pa->adicionarObservacao(a, "first", std::nullopt, "user");
+        Parte linhas;
+        linhas.tabela = "item_observacao";
+        linhas.onde = "id = ?";
+        linhas.params = {Value::of(obs)};
+        pa->registrarUndoPersistente("Edit Note (test)", {linhas});
+        pa->projeto().registro().run("UPDATE item_observacao SET texto = 'second' WHERE id = ?", {Value::of(obs)});
+        reabrir();
+        pa->desfazer();
+        checar(um("SELECT texto FROM item_observacao WHERE id = ?", {Value::of(obs)}) == "first", "phase 1: Undo of rows after reopening");
+
+        // coluna binária (cache_arquivo.miniatura)
+        const std::string arq = um("SELECT id FROM arquivo WHERE item_id = ? LIMIT 1", {Value::of(a)});
+        pa->projeto().registro().run("INSERT OR REPLACE INTO cache_arquivo (arquivo_id, miniatura, calculado_em) VALUES (?, X'0102FF', '2026-10-24')", {Value::of(arq)});
+        Parte blob;
+        blob.tabela = "cache_arquivo";
+        blob.onde = "arquivo_id = ?";
+        blob.params = {Value::of(arq)};
+        pa->registrarUndoPersistente("Cache (test)", {blob});
+        pa->projeto().registro().run("UPDATE cache_arquivo SET miniatura = X'00' WHERE arquivo_id = ?", {Value::of(arq)});
+        reabrir();
+        pa->desfazer();
+        checar(um("SELECT hex(miniatura) FROM cache_arquivo WHERE arquivo_id = ?", {Value::of(arq)}) == "0102FF",
+               "phase 1: a binary column comes back byte for byte");
+
+        // arquivo
+        const juce::File capa = pasta.getChildFile(".miniaturas/teste_undo.bin");
+        capa.getParentDirectory().createDirectory();
+        capa.replaceWithText("old");
+        Parte arquivo;
+        arquivo.tipo = Parte::Tipo::Arquivo;
+        arquivo.arquivo = capa;
+        pa->registrarUndoPersistente("File (test)", {arquivo});
+        capa.replaceWithText("new");
+        reabrir();
+        pa->desfazer();
+        checar(capa.loadFileAsString() == "old", "phase 1: a file comes back after reopening");
+
+        // grupo com uma parte só na memória não volta (seria Undo pela metade); passo desfeito não volta
+        pa->iniciarGrupoUndo("Mixed");
+        pa->registrarUndoPersistente("Mixed", {linhas});
+        pa->registrarUndo("Mixed", [] {});
+        pa->finalizarGrupoUndo();
+        reabrir();
+        checar(!pa->podeDesfazer(), "phase 1: a group with an in-memory-only part is not reloaded");
+        checar(um("SELECT COUNT(*) FROM undo_passo", {}) == "0", "phase 1: undone and incomplete steps leave no rows behind");
+        pa.reset();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("persistent undo selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesNomesCanonicos(const Checar& checar) {
     namespace nomes = matriz::model::nomes;
     using matriz::db::Value;
@@ -6489,6 +6579,7 @@ int rodarLoteSelfTest() {
     rodarTestesUndoAuditoria(checar);
     rodarTestesUndoAuditoriaMedios(checar);
     rodarTestesUndoMecanismo(checar);
+    rodarTestesUndoPersistente(checar);
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();

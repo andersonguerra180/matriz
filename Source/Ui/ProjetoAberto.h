@@ -352,6 +352,8 @@ public:
     struct UndoEntry {
         std::string descricao;
         std::vector<std::function<void()>> acoesReversas;
+        int64_t passoPersistente = 0;  // undo_passo.id quando o passo (ou parte dele) está gravado no banco
+        bool tudoPersistente = true;   // grupo: false se alguma ação só existe na memória (não volta ao reabrir)
     };
     void registrarUndo(const std::string& descricao, std::function<void()> acaoReversa);
     void iniciarGrupoUndo(const std::string& descricao = {});
@@ -366,6 +368,26 @@ public:
                                 const std::string& valorChave, std::vector<std::string> colunas);
     // A pilha passou de 100 passos e o mais antigo saiu — avisado uma vez por projeto aberto (MainComponent mostra).
     std::function<void()> aoDescartarUndoAntigo;
+
+    // Undo PERSISTENTE (sobrevive a fechar e reabrir o projeto): o "antes" vai para tabelas do próprio registro
+    // (undo_passo / undo_parte / undo_linha), não para a memória nem para TEMP. Chamar ANTES de gravar.
+    //   Linhas:  as linhas de `tabela` que batem com `onde` (no registro ou, com noIndice, no índice); a volta apaga o
+    //            que bate hoje e regrava as guardadas. Só para tabelas sem filhas em cascata.
+    //   Colunas: só estas colunas da(s) linha(s) que batem com `onde` (tabela-mãe: projeto, vault, backup_destino...);
+    //            se não havia linha, a volta a apaga.
+    //   Arquivo: uma cópia do arquivo (em <projeto>/.undo/); se ele não existia, a volta o apaga.
+    // De outra thread, vira passo próprio na message thread; com um grupo aberto na message thread, entra nele.
+    struct ParteUndo {
+        enum class Tipo { Linhas, Colunas, Arquivo };
+        Tipo tipo = Tipo::Linhas;
+        bool noIndice = false;
+        std::string tabela, onde;
+        std::vector<matriz::db::Value> params;
+        std::vector<std::string> colunas;
+        juce::File arquivo;
+    };
+    void registrarUndoPersistente(const std::string& descricao, const std::vector<ParteUndo>& partes,
+                                  const std::vector<std::string>& itensAvisar = {}, const std::string& tipoEvento = "metadado");
     // UNDO de GEO LOCATION (ficha, lote, Intake): a gravação vai direto em asset_geolocation, que não passa por
     // salvarMetadado — sem isto o grupo de Undo ficava vazio e o Undo desfazia a edição ANTERIOR. Tirar o retrato
     // ANTES de gravar (nullopt = o item não tinha linha) e registrar depois do COMMIT; a volta é uma transação só.
@@ -1488,6 +1510,11 @@ private:
     int contadorSnapUndo_ = 0;
     bool avisouDescarteUndo_ = false;
     void aparaPilhaUndo();  // limite kMaxUndo + aviso (uma vez)
+    // Undo persistente (ver registrarUndoPersistente).
+    void garantirTabelasUndo();
+    void carregarUndoPersistente();  // na abertura: os últimos kMaxUndo passos completos voltam para a pilha
+    void executarPartesPersistentes(int64_t passo, int ordemDe, int ordemAte);
+    void apagarPassoPersistente(int64_t passo);
     void registrarUndoSubarvoreApagada(const std::string& pastaId);
     std::set<std::string> buscarItensNoEscopo(const juce::String& termo, EscopoBusca escopo) const;
     void registrarUndoEnvioAoGrid(const std::vector<std::string>& itemIds);

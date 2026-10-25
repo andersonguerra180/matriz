@@ -1,4 +1,6 @@
 #include "ProjetoAberto.h"
+
+#include <limits>
 #include "FichasEmbutidas.h"
 #include "TiposContainer.h"
 #include "TraducaoContent.h"
@@ -16,6 +18,7 @@
 #include "../Consolidacao/Consolidacao.h"
 #include "../Model/ProjectLog.h"
 #include "../Model/NomesCanonicos.h"
+#include "../Model/CaminhosBanco.h"
 #include "../Consolidacao/PacoteCollection.h"
 
 #include "../I18n/Strings.h"
@@ -187,6 +190,9 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
     somenteLeitura_ = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
     // Rebuild do MAIN em andamento (persistido: destino com papel FONTE_REBUILD) — o modo sobrevive ao fechar/reabrir.
     editandoMain_ = !somenteLeitura_ && projeto_->modo() != matriz::model::Modo::Catalogo && fonteRebuild().has_value();
+    // Undo persistente: as tabelas e os passos que sobraram da sessão anterior (fecharam o projeto sem desfazer).
+    garantirTabelasUndo();
+    carregarUndoPersistente();
     poolMarcas_.addJob([this]() { carregarMarcasRDoBanco(); });  // marcas R: carga em background
     poolMarcas_.addJob([this]() { carregarMarcacoesDoBanco(); }); // P/W/K/HTML: idem
     poolMarcas_.addJob([this]() { carregarSessoesPrintDoBanco(); }); // histórico de impressão: idem
@@ -1730,6 +1736,7 @@ void ProjetoAberto::registrarUndo(const std::string& descricao, std::function<vo
     }
     if (grupoAberto_) {
         grupoAberto_->acoesReversas.push_back(std::move(acaoReversa));
+        grupoAberto_->tudoPersistente = false;  // esta ação só existe na memória: o grupo não volta ao reabrir
     } else {
         pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acaoReversa)}});
         aparaPilhaUndo();
@@ -1747,6 +1754,7 @@ void ProjetoAberto::registrarUndoComoPassoProprio(const std::string& descricao, 
 void ProjetoAberto::aparaPilhaUndo() {
     bool descartou = false;
     while (static_cast<int>(pilhaUndo_.size()) > kMaxUndo) {
+        apagarPassoPersistente(pilhaUndo_.front().passoPersistente);
         pilhaUndo_.erase(pilhaUndo_.begin());
         descartou = true;
     }
@@ -1759,30 +1767,319 @@ void ProjetoAberto::aparaPilhaUndo() {
 void ProjetoAberto::registrarUndoDeColunas(const std::string& descricao, const std::string& tabela, const std::string& colunaChave,
                                            const std::string& valorChave, std::vector<std::string> colunas) {
     if (!projeto_ || desfazendo_ || colunas.empty()) return;
-    auto& d = projeto_->registro();
-    const std::string t = "undo_co_" + std::to_string(++contadorSnapUndo_);
+    // Persistente (fase 1 do histórico que sobrevive a fechar o projeto).
+    ParteUndo p;
+    p.tipo = ParteUndo::Tipo::Colunas;
+    p.tabela = tabela;
+    p.onde = "\"" + colunaChave + "\" = ?";
+    p.params = {matriz::db::Value::of(valorChave)};
+    p.colunas = std::move(colunas);
+    registrarUndoPersistente(descricao, {p}, {}, "metadado");
+}
+
+// ---------------------------------------------------------------------------
+// Undo persistente (ver ProjetoAberto.h, registrarUndoPersistente).
+// ---------------------------------------------------------------------------
+namespace {
+// Uma linha como JSON (colunas binárias em hex, num objeto {"$b": ...}).
+std::string expressaoJsonDaLinha(matriz::db::Database& d, const std::string& tabela, const std::vector<std::string>& soEstas) {
+    std::vector<std::string> cols = soEstas;
+    if (cols.empty()) {
+        auto st = d.prepare("SELECT name FROM pragma_table_info(?)");
+        st.bind(1, matriz::db::Value::of(tabela));
+        while (st.step()) cols.push_back(st.columnText(0));
+    }
+    std::string e = "json_object(";
+    for (size_t i = 0; i < cols.size(); ++i) {
+        const std::string c = "\"" + cols[i] + "\"";
+        e += (i ? ", '" : "'") + cols[i] + "', CASE WHEN typeof(" + c + ") = 'blob' THEN json_object('$b', hex(" + c + ")) ELSE " + c + " END";
+    }
+    return e + ")";
+}
+
+// O valor da coluna `c` a partir do JSON no parâmetro ?1.
+std::string valorDoJson(const std::string& c) {
+    const std::string caminho = "'$.\"" + c + "\"'";
+    return "CASE WHEN json_type(?1, " + caminho + ") = 'object' THEN unhex(json_extract(?1, '$.\"" + c + "\".\"$b\"')) "
+           "ELSE json_extract(?1, " + caminho + ") END";
+}
+
+std::string paramsParaJson(const std::vector<matriz::db::Value>& ps) {
+    juce::Array<juce::var> a;
+    for (const auto& v : ps) {
+        switch (v.kind) {
+            case matriz::db::Value::Kind::Text: a.add(juce::String::fromUTF8(v.text.c_str())); break;
+            case matriz::db::Value::Kind::Int: a.add(static_cast<juce::int64>(v.integer)); break;
+            case matriz::db::Value::Kind::Real: a.add(v.real); break;
+            default: a.add(juce::var()); break;
+        }
+    }
+    return juce::JSON::toString(juce::var(a), true).toStdString();
+}
+
+std::vector<matriz::db::Value> paramsDoJson(const std::string& json) {
+    std::vector<matriz::db::Value> out;
+    const auto v = juce::JSON::parse(juce::String::fromUTF8(json.c_str()));
+    if (auto* a = v.getArray())
+        for (const auto& x : *a) {
+            if (x.isVoid() || x.isUndefined()) out.push_back(matriz::db::Value::null());
+            else if (x.isInt() || x.isInt64()) out.push_back(matriz::db::Value::of(static_cast<long long>(static_cast<juce::int64>(x))));
+            else if (x.isDouble()) out.push_back(matriz::db::Value::of(static_cast<double>(x)));
+            else out.push_back(matriz::db::Value::of(x.toString().toStdString()));
+        }
+    return out;
+}
+
+std::vector<matriz::db::Value> comJsonNaFrente(const std::string& json, const std::vector<matriz::db::Value>& ps) {
+    std::vector<matriz::db::Value> out{matriz::db::Value::of(json)};
+    out.insert(out.end(), ps.begin(), ps.end());
+    return out;
+}
+} // namespace
+
+void ProjetoAberto::garantirTabelasUndo() {
+    if (!projeto_ || somenteLeitura_) return;
     try {
-        d.run("CREATE TEMP TABLE \"" + t + "\" AS SELECT * FROM \"" + tabela + "\" WHERE \"" + colunaChave + "\" = ?",
-              {matriz::db::Value::of(valorChave)});
-    } catch (...) { return; }
-    std::string cols;
-    for (const auto& c : colunas) cols += (cols.empty() ? "\"" : ", \"") + c + "\"";
-    registrarUndo(descricao, [this, t, tabela, colunaChave, valorChave, cols] {
-        if (!projeto_) return;
-        auto& r = projeto_->registro();
-        std::unique_lock<std::recursive_mutex> lock(writeMutex());
-        try {
-            auto st = r.prepare("SELECT COUNT(*) FROM temp.\"" + t + "\"");
-            const bool existia = st.step() && st.columnInt(0) > 0;
-            if (existia)
-                r.run("UPDATE \"" + tabela + "\" SET (" + cols + ") = (SELECT " + cols + " FROM temp.\"" + t + "\") WHERE \"" +
-                          colunaChave + "\" = ?",
-                      {matriz::db::Value::of(valorChave)});
-            else
-                r.run("DELETE FROM \"" + tabela + "\" WHERE \"" + colunaChave + "\" = ?", {matriz::db::Value::of(valorChave)});
-            r.run("DROP TABLE IF EXISTS temp.\"" + t + "\"", {});
-        } catch (...) {}
-    });
+        projeto_->registro().execScript(
+            "CREATE TABLE IF NOT EXISTS undo_passo (id INTEGER PRIMARY KEY AUTOINCREMENT, descricao TEXT NOT NULL, "
+            "  completo INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS undo_parte (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "  passo_id INTEGER NOT NULL REFERENCES undo_passo(id) ON DELETE CASCADE, ordem INTEGER NOT NULL, tipo TEXT NOT NULL, "
+            "  banco TEXT NOT NULL DEFAULT 'registro', tabela TEXT, onde TEXT, params_json TEXT, colunas_json TEXT, "
+            "  arquivo TEXT, copia TEXT, linhas INTEGER NOT NULL DEFAULT 0, itens_json TEXT, tipo_evento TEXT);"
+            "CREATE TABLE IF NOT EXISTS undo_linha (parte_id INTEGER NOT NULL REFERENCES undo_parte(id) ON DELETE CASCADE, "
+            "  dados_json TEXT NOT NULL);"
+            "CREATE INDEX IF NOT EXISTS idx_undo_parte_passo ON undo_parte(passo_id, ordem);"
+            "CREATE INDEX IF NOT EXISTS idx_undo_linha_parte ON undo_linha(parte_id);");
+    } catch (...) {}
+}
+
+void ProjetoAberto::registrarUndoPersistente(const std::string& descricao, const std::vector<ParteUndo>& partes,
+                                             const std::vector<std::string>& itensAvisar, const std::string& tipoEvento) {
+    if (desfazendo_ || somenteLeitura_ || !projeto_ || partes.empty()) return;
+    const bool naMessageThread = juce::MessageManager::getInstance()->isThisTheMessageThread();
+    UndoEntry* grupo = (naMessageThread && grupoAberto_) ? &*grupoAberto_ : nullptr;
+    auto& r = projeto_->registro();
+    auto& ind = projeto_->indice();
+    const juce::File pasta = projeto_->pasta();
+    std::unique_lock<std::recursive_mutex> lock(writeMutex());
+    juce::Array<juce::var> itens;
+    for (const auto& id : itensAvisar) itens.add(juce::String::fromUTF8(id.c_str()));
+    const std::string itensJson = juce::JSON::toString(juce::var(itens), true).toStdString();
+    int64_t passo = 0;
+    int ordem = 0;
+    try {
+        if (grupo && grupo->passoPersistente) {
+            passo = grupo->passoPersistente;
+            auto st = r.prepare("SELECT COALESCE(MAX(ordem), -1) + 1 FROM undo_parte WHERE passo_id = ?");
+            st.bind(1, matriz::db::Value::of(static_cast<long long>(passo)));
+            if (st.step()) ordem = static_cast<int>(st.columnInt(0));
+        } else {
+            // Num grupo, o passo só vale ao reabrir se o grupo inteiro for persistente (finalizarGrupoUndo decide).
+            r.run("INSERT INTO undo_passo (descricao, completo, criado_em) VALUES (?, ?, ?)",
+                  {matriz::db::Value::of(grupo ? grupo->descricao : descricao), matriz::db::Value::of(grupo ? 0 : 1),
+                   matriz::db::Value::of(matriz::model::agoraIso8601())});
+            auto st = r.prepare("SELECT last_insert_rowid()");
+            if (st.step()) passo = st.columnInt(0);
+            if (grupo) grupo->passoPersistente = passo;
+        }
+        const int de = ordem;
+        for (const auto& pt : partes) {
+            const char* tipo = pt.tipo == ParteUndo::Tipo::Linhas ? "linhas" : pt.tipo == ParteUndo::Tipo::Colunas ? "colunas" : "arquivo";
+            juce::Array<juce::var> cols;
+            for (const auto& c : pt.colunas) cols.add(juce::String::fromUTF8(c.c_str()));
+            r.run("INSERT INTO undo_parte (passo_id, ordem, tipo, banco, tabela, onde, params_json, colunas_json, itens_json, tipo_evento) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  {matriz::db::Value::of(static_cast<long long>(passo)), matriz::db::Value::of(ordem++), matriz::db::Value::of(tipo),
+                   matriz::db::Value::of(pt.noIndice ? "indice" : "registro"), matriz::db::Value::of(pt.tabela),
+                   matriz::db::Value::of(pt.onde), matriz::db::Value::of(paramsParaJson(pt.params)),
+                   matriz::db::Value::of(juce::JSON::toString(juce::var(cols), true).toStdString()),
+                   matriz::db::Value::of(itensJson), matriz::db::Value::of(tipoEvento)});
+            long long parte = 0;
+            {
+                auto st = r.prepare("SELECT last_insert_rowid()");
+                if (st.step()) parte = st.columnInt(0);
+            }
+            if (pt.tipo == ParteUndo::Tipo::Arquivo) {
+                const juce::String rel = matriz::caminhos::relativoParaBanco(pt.arquivo, pasta);
+                juce::String copia;
+                if (pt.arquivo.existsAsFile()) {
+                    copia = ".undo/" + juce::String(parte) + ".bin";
+                    pasta.getChildFile(".undo").createDirectory();
+                    pt.arquivo.copyFileTo(pasta.getChildFile(copia));
+                }
+                r.run("UPDATE undo_parte SET arquivo = ?, copia = ? WHERE id = ?",
+                      {matriz::db::Value::of(rel.toStdString()), copia.isEmpty() ? matriz::db::Value::null() : matriz::db::Value::of(copia.toStdString()),
+                       matriz::db::Value::of(parte)});
+                continue;
+            }
+            auto& d = pt.noIndice ? ind : r;
+            const std::string expr = expressaoJsonDaLinha(d, pt.tabela, pt.tipo == ParteUndo::Tipo::Colunas ? pt.colunas : std::vector<std::string>{});
+            const std::string sel = "SELECT " + expr + " FROM \"" + pt.tabela + "\" WHERE " + pt.onde;
+            auto st = d.prepare(sel);
+            for (size_t k = 0; k < pt.params.size(); ++k) st.bind(static_cast<int>(k + 1), pt.params[k]);
+            long long n = 0;
+            while (st.step()) {
+                r.run("INSERT INTO undo_linha (parte_id, dados_json) VALUES (?, ?)", {matriz::db::Value::of(parte), matriz::db::Value::of(st.columnText(0))});
+                ++n;
+            }
+            r.run("UPDATE undo_parte SET linhas = ? WHERE id = ?", {matriz::db::Value::of(n), matriz::db::Value::of(parte)});
+        }
+        const int ate = ordem - 1;
+        lock.unlock();
+        auto acao = [this, passo, de, ate] { executarPartesPersistentes(passo, de, ate); };
+        if (grupo) {
+            grupo->acoesReversas.push_back(std::move(acao));
+        } else if (naMessageThread) {
+            pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acao)}, passo, true});
+            aparaPilhaUndo();
+            if (aoMudarUndo) aoMudarUndo();
+        } else {
+            std::weak_ptr<bool> vivo = vivo_;
+            juce::MessageManager::callAsync([this, vivo, descricao, passo, acao = std::move(acao)]() mutable {
+                if (!vivo.lock() || desfazendo_) return;
+                pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acao)}, passo, true});
+                aparaPilhaUndo();
+                if (aoMudarUndo) aoMudarUndo();
+            });
+        }
+    } catch (...) {
+        // A captura falhou: sem Undo para esta ação (antes um passo pela metade). O passo incompleto sai na próxima abertura.
+        try { if (passo && !grupo) r.run("UPDATE undo_passo SET completo = 0 WHERE id = ?", {matriz::db::Value::of(static_cast<long long>(passo))}); } catch (...) {}
+        if (grupo) grupo->tudoPersistente = false;
+    }
+}
+
+void ProjetoAberto::executarPartesPersistentes(int64_t passo, int ordemDe, int ordemAte) {
+    if (!projeto_) return;
+    auto& r = projeto_->registro();
+    auto& ind = projeto_->indice();
+    const juce::File pasta = projeto_->pasta();
+    std::unique_lock<std::recursive_mutex> lock(writeMutex());
+    struct Parte {
+        long long id = 0;
+        std::string tipo, banco, tabela, onde, paramsJson, colunasJson, arquivo, copia, itensJson, tipoEvento;
+        long long linhas = 0;
+    };
+    std::vector<Parte> partes;
+    {
+        auto st = r.prepare("SELECT id, tipo, banco, COALESCE(tabela, ''), COALESCE(onde, ''), COALESCE(params_json, '[]'), "
+                            "COALESCE(colunas_json, '[]'), COALESCE(arquivo, ''), COALESCE(copia, ''), linhas, COALESCE(itens_json, '[]'), "
+                            "COALESCE(tipo_evento, '') FROM undo_parte WHERE passo_id = ? AND ordem BETWEEN ? AND ? ORDER BY ordem DESC");
+        st.bind(1, matriz::db::Value::of(static_cast<long long>(passo)));
+        st.bind(2, matriz::db::Value::of(ordemDe));
+        st.bind(3, matriz::db::Value::of(ordemAte));
+        while (st.step())
+            partes.push_back({st.columnInt(0), st.columnText(1), st.columnText(2), st.columnText(3), st.columnText(4), st.columnText(5),
+                              st.columnText(6), st.columnText(7), st.columnText(8), st.columnText(10), st.columnText(11), st.columnInt(9)});
+    }
+    auto linhasDa = [&](long long parte) {
+        std::vector<std::string> out;
+        auto st = r.prepare("SELECT dados_json FROM undo_linha WHERE parte_id = ?");
+        st.bind(1, matriz::db::Value::of(parte));
+        while (st.step()) out.push_back(st.columnText(0));
+        return out;
+    };
+    auto restaurar = [&](matriz::db::Database& d, const Parte& p) {
+        const auto params = paramsDoJson(p.paramsJson);
+        const std::string t = "\"" + p.tabela + "\"";
+        if (p.tipo == "colunas") {
+            if (p.linhas == 0) { d.run("DELETE FROM " + t + " WHERE " + p.onde, params); return; }
+            std::string sets;
+            const auto cols = juce::JSON::parse(juce::String::fromUTF8(p.colunasJson.c_str()));
+            if (auto* a = cols.getArray())
+                for (const auto& c : *a) {
+                    const std::string nome = c.toString().toStdString();
+                    sets += (sets.empty() ? "\"" : ", \"") + nome + "\" = " + valorDoJson(nome);
+                }
+            for (const auto& j : linhasDa(p.id)) d.run("UPDATE " + t + " SET " + sets + " WHERE " + p.onde, comJsonNaFrente(j, params));
+            return;
+        }
+        // linhas: o que bate hoje sai, as guardadas voltam
+        d.run("DELETE FROM " + t + " WHERE " + p.onde, params);
+        std::vector<std::string> cols;
+        {
+            auto st = d.prepare("SELECT name FROM pragma_table_info(?)");
+            st.bind(1, matriz::db::Value::of(p.tabela));
+            while (st.step()) cols.push_back(st.columnText(0));
+        }
+        std::string nomes, valores;
+        for (const auto& c : cols) {
+            nomes += (nomes.empty() ? "\"" : ", \"") + c + "\"";
+            valores += (valores.empty() ? "" : ", ") + valorDoJson(c);
+        }
+        for (const auto& j : linhasDa(p.id))
+            d.run("INSERT INTO " + t + " (" + nomes + ") VALUES (" + valores + ")", {matriz::db::Value::of(j)});
+    };
+    try {
+        r.run("BEGIN TRANSACTION", {});
+        for (const auto& p : partes)
+            if (p.tipo != "arquivo" && p.banco == "registro") restaurar(r, p);
+        r.run("COMMIT", {});
+    } catch (...) {
+        try { r.run("ROLLBACK", {}); } catch (...) {}
+        return;
+    }
+    for (const auto& p : partes)
+        if (p.tipo != "arquivo" && p.banco == "indice") {
+            try { restaurar(ind, p); } catch (...) {}
+        }
+    for (const auto& p : partes)
+        if (p.tipo == "arquivo" && !p.arquivo.empty()) {
+            const juce::File alvo = pasta.getChildFile(juce::String::fromUTF8(p.arquivo.c_str()));
+            if (!p.copia.empty()) pasta.getChildFile(juce::String::fromUTF8(p.copia.c_str())).copyFileTo(alvo);
+            else alvo.deleteFile();
+        }
+    lock.unlock();
+    auto& bus = EventBus::obterInstancia();
+    bus.iniciarLote();
+    for (const auto& p : partes) {
+        const auto itens = juce::JSON::parse(juce::String::fromUTF8(p.itensJson.c_str()));
+        if (auto* a = itens.getArray())
+            for (const auto& id : *a) bus.dispararItemAlterado(id.toString().toStdString(), p.tipoEvento);
+    }
+    bus.finalizarLote();
+}
+
+void ProjetoAberto::apagarPassoPersistente(int64_t passo) {
+    if (!projeto_ || passo == 0 || somenteLeitura_) return;
+    auto& r = projeto_->registro();
+    const juce::File pasta = projeto_->pasta();
+    std::unique_lock<std::recursive_mutex> lock(writeMutex());
+    try {
+        auto st = r.prepare("SELECT copia FROM undo_parte WHERE passo_id = ? AND copia IS NOT NULL");
+        st.bind(1, matriz::db::Value::of(static_cast<long long>(passo)));
+        while (st.step()) pasta.getChildFile(juce::String::fromUTF8(st.columnText(0).c_str())).deleteFile();
+        r.run("DELETE FROM undo_linha WHERE parte_id IN (SELECT id FROM undo_parte WHERE passo_id = ?)", {matriz::db::Value::of(static_cast<long long>(passo))});
+        r.run("DELETE FROM undo_parte WHERE passo_id = ?", {matriz::db::Value::of(static_cast<long long>(passo))});
+        r.run("DELETE FROM undo_passo WHERE id = ?", {matriz::db::Value::of(static_cast<long long>(passo))});
+    } catch (...) {}
+}
+
+void ProjetoAberto::carregarUndoPersistente() {
+    if (!projeto_ || somenteLeitura_) return;
+    auto& r = projeto_->registro();
+    try {
+        std::vector<long long> incompletos;
+        {
+            auto st = r.prepare("SELECT id FROM undo_passo WHERE completo = 0");
+            while (st.step()) incompletos.push_back(st.columnInt(0));
+        }
+        for (auto id : incompletos) apagarPassoPersistente(id);  // grupo com parte só na memória, ou captura pela metade
+        std::vector<std::pair<long long, std::string>> passos;
+        {
+            auto st = r.prepare("SELECT id, descricao FROM undo_passo ORDER BY id");
+            while (st.step()) passos.push_back({st.columnInt(0), st.columnText(1)});
+        }
+        while (static_cast<int>(passos.size()) > kMaxUndo) {
+            apagarPassoPersistente(passos.front().first);
+            passos.erase(passos.begin());
+        }
+        for (const auto& [id, desc] : passos) {
+            const int64_t passo = id;
+            pilhaUndo_.push_back(UndoEntry{desc, {[this, passo] { executarPartesPersistentes(passo, 0, std::numeric_limits<int>::max()); }}, passo, true});
+        }
+    } catch (...) {}
 }
 
 ProjetoAberto::RetratoGeo ProjetoAberto::retratoGeo(const std::vector<std::string>& itemIds) const {
@@ -1859,9 +2156,15 @@ void ProjetoAberto::iniciarGrupoUndo(const std::string& descricao) {
 
 void ProjetoAberto::finalizarGrupoUndo() {
     if (!grupoAberto_ || grupoAberto_->acoesReversas.empty()) {
+        if (grupoAberto_) apagarPassoPersistente(grupoAberto_->passoPersistente);
         grupoAberto_.reset();
         return;
     }
+    if (grupoAberto_->passoPersistente && grupoAberto_->tudoPersistente && projeto_)
+        try {
+            projeto_->registro().run("UPDATE undo_passo SET completo = 1 WHERE id = ?",
+                                     {matriz::db::Value::of(static_cast<long long>(grupoAberto_->passoPersistente))});
+        } catch (...) {}
     pilhaUndo_.push_back(std::move(*grupoAberto_));
     grupoAberto_.reset();
     aparaPilhaUndo();
@@ -1956,6 +2259,7 @@ bool ProjetoAberto::desfazer() {
         if (*it) (*it)();
     }
     desfazendo_ = false;
+    apagarPassoPersistente(entry.passoPersistente);  // desfeito: não volta ao reabrir
     if (aoMudarUndo) aoMudarUndo();
     return true;
 }
