@@ -32,6 +32,8 @@ public:
 
     // Seleção atual do grid (para o escopo "Selected files"). Quem hospeda liga ao grid de verdade (aba METADATA).
     std::function<std::set<std::string>()> fornecerSelecaoDoGrid;
+    // "SELECTED FILES (N)" no escopo: relê quantos itens estão selecionados no grid agora.
+    void atualizarContagemSelecionados();
     // Fim de uma verificação (message thread): quantos grupos achou (0 = nenhuma). Alimenta o selo do Find duplicates.
     std::function<void(int grupos)> aoConcluirScan;
 

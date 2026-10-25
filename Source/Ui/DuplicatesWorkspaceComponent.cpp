@@ -1400,6 +1400,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbScope_->addItem(matriz::i18n::t("duplicatas.scope_all"), 1);
         cbScope_->addItem(matriz::i18n::t("duplicatas.scope_selected"), 2);
         cbScope_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
+        atualizarContagemSelecionados();
         cbScope_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
         cbScope_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         cbScope_->setColour(juce::ComboBox::outlineColourId, tk.borda);
@@ -1526,8 +1527,15 @@ void DuplicatesWorkspaceComponent::atualizarContagemResolvidas() {
                                       .replace("{n}", juce::String(projeto_.contarDuplicatasResolvidas())));
 }
 
+void DuplicatesWorkspaceComponent::atualizarContagemSelecionados() {
+    if (!cbScope_) return;
+    const auto n = fornecerSelecaoDoGrid ? fornecerSelecaoDoGrid().size() : projeto_.obterItensSelecionadosNoGrid().size();
+    cbScope_->changeItemText(2, matriz::i18n::t("duplicatas.scope_selected_n").replace("{n}", juce::String((int) n)));
+}
+
 void DuplicatesWorkspaceComponent::recarregar() {
     atualizarContagemResolvidas();
+    atualizarContagemSelecionados();
     if (isThreadRunning() || estado_ == State::Results) {
         return; // Don't interrupt active scan or clear results on view reload
     }
@@ -1551,6 +1559,8 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     // A seleção vem do grid de verdade (aba METADATA) — antes vinha de projeto_.obterItensSelecionadosNoGrid(), que só o
     // MosaicoComponent antigo do MainComponent atualizava: com "Selected files" o scan recebia uma seleção vazia.
     activeFilters_.selecionadosNoGrid = fornecerSelecaoDoGrid ? fornecerSelecaoDoGrid() : projeto_.obterItensSelecionadosNoGrid();
+    cbScope_->changeItemText(2, matriz::i18n::t("duplicatas.scope_selected_n")
+                                    .replace("{n}", juce::String((int) activeFilters_.selecionadosNoGrid.size())));
     if (activeFilters_.scope == 2 && activeFilters_.selecionadosNoGrid.empty()) {
         const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "DUPLICATES",

@@ -30,6 +30,12 @@ public:
         toFront(true);
     }
     void closeButtonPressed() override { setVisible(false); }
+    // Voltar para a janela (ex.: depois de mudar a seleção no grid): quem hospeda atualiza o que depende do grid.
+    std::function<void()> aoAtivar;
+    void activeWindowStatusChanged() override {
+        DocumentWindow::activeWindowStatusChanged();
+        if (isActiveWindow() && aoAtivar) aoAtivar();
+    }
     bool keyPressed(const juce::KeyPress& key) override {
         if (key == juce::KeyPress::escapeKey) { closeButtonPressed(); return true; }
         return DocumentWindow::keyPressed(key);

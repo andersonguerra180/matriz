@@ -1194,6 +1194,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"duplicatas.lbl_scope", "Varredura:"},
         {"duplicatas.scope_all", "TODOS OS ARQUIVOS"},
         {"duplicatas.scope_selected", "ARQUIVOS SELECIONADOS"},
+        {"duplicatas.scope_selected_n", "ARQUIVOS SELECIONADOS ({n})"},
         {"duplicatas.lbl_type", "Tipo:"},
         {"duplicatas.type_all", "TODOS OS ARQUIVOS"},
         {"duplicatas.type_image", "IMAGEM"},

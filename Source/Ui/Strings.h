@@ -1181,6 +1181,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.lbl_scope", "Scan:"},
         {"duplicatas.scope_all", "ALL FILES"},
         {"duplicatas.scope_selected", "SELECTED FILES"},
+        {"duplicatas.scope_selected_n", "SELECTED FILES ({n})"},
         {"duplicatas.lbl_type", "Type:"},
         {"duplicatas.type_all", "ALL FILES"},
         {"duplicatas.type_image", "IMAGE"},

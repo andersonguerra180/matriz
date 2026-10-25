@@ -1956,10 +1956,15 @@ void MainComponent::mostrarDuplicates() {
         };
         duplicatesWorkspace_->setSize(1280, 800);
     }
-    if (!janelaDuplicatas_)
+    if (!janelaDuplicatas_) {
         janelaDuplicatas_ = std::make_unique<JanelaDuplicatas>(*duplicatesWorkspace_, matriz::i18n::t("duplicatas.janela_titulo"));
+        janelaDuplicatas_->aoAtivar = [this] {
+            if (duplicatesWorkspace_) duplicatesWorkspace_->atualizarContagemSelecionados();
+        };
+    }
     duplicatesWorkspace_->setVisible(true);
     if (!novo) duplicatesWorkspace_->recarregar();
+    else duplicatesWorkspace_->atualizarContagemSelecionados();
     janelaDuplicatas_->mostrar();
 }
 

@@ -5289,6 +5289,18 @@ int rodarLoteSelfTest() {
                        "SELECTED FILES: only the 2 selected files take part (1 pair, nothing from outside the selection)");
                 const auto selUm = varrer([](DuplicatesWorkspaceComponent& d) { d.cbScope_->setSelectedId(2); }, {rOrig});
                 checar(selUm.empty(), "SELECTED FILES with a single file: its copies outside the selection are NOT compared");
+                {
+                    DuplicatesWorkspaceComponent dwC(pa);
+                    std::set<std::string> selecao = {rOrig, rExata};
+                    dwC.fornecerSelecaoDoGrid = [&selecao] { return selecao; };
+                    dwC.atualizarContagemSelecionados();
+                    const auto antes = dwC.cbScope_->getItemText(1);
+                    selecao.insert("outro");
+                    dwC.atualizarContagemSelecionados();
+                    checar(antes.endsWith("(2)") && dwC.cbScope_->getItemText(1).endsWith("(3)"),
+                           "SELECTED FILES shows how many files are selected in the grid (" + antes + " / " +
+                               dwC.cbScope_->getItemText(1) + ")");
+                }
                 // Tipo de arquivo
                 checar(varrer([](DuplicatesWorkspaceComponent& d) { d.tiposSelecionados_ = {4}; }  /* o interruptor Audio no painel FILE TYPE */, {}).empty(),
                        "file type = Audio: no image pair appears");
