@@ -3064,9 +3064,17 @@ private:
                 acaoObterExifNotas_ = [this, itemId, edSafe] {
                     // aoConcluir só roda com o projeto vivo (ver obterExif).
                     ProjetoAberto* proj = &projeto_;
-                    acoes::obterExif(projeto_, {itemId}, [proj, itemId, edSafe](int) {
+                    juce::Component::SafePointer<FichaConteudo> fichaSafe(this);
+                    acoes::obterExif(projeto_, {itemId}, [proj, itemId, edSafe, fichaSafe](int) {
                         // Relê as notas gravadas, se o editor ainda existir.
-                        if (edSafe) edSafe->setTexto(proj->lerMetadado(itemId, "notas_livres").value_or(""));
+                        const auto notas = proj->lerMetadado(itemId, "notas_livres").value_or("");
+                        if (edSafe) edSafe->setTexto(notas);
+                        // NOTES fica recolhido numa linha: abre as notas para o resultado aparecer como a seção
+                        // OTHER METADATA (recolhida, expande no clique), se a ficha ainda é a deste item.
+                        if (fichaSafe && fichaSafe->itemId_ == itemId) {
+                            fichaSafe->atualizarTextoEntradaNotas(notas);
+                            fichaSafe->definirNotasExpandidas(true);
+                        }
                     });
                 };
             }
