@@ -1706,13 +1706,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     const std::set<std::string> listaSelValores = listasSelecionadas_;
     const int geracao = ++geracaoContagens_;
 
-    std::set<std::string> itensExtraidos;
-    try {
-        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
-    } catch (...) {}
-
     const bool ocultarGeo = ocultarComGeo_;
-    poolContagens_.addJob([ocultarGeo, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSelValores, listaSelValores, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
+    poolContagens_.addJob([ocultarGeo, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSelValores, listaSelValores, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
