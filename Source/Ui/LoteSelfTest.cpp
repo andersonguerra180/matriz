@@ -5327,6 +5327,17 @@ int rodarLoteSelfTest() {
             esperarAte([&] { return acharGrupo(rOrig, rExata) == nullptr; }, 30000);
             checar(acharGrupo(rOrig, rBytes) != nullptr, "VALIDATE ALL never resolves a PROBABLE group");
 
+            // ----- Busca por tamanho (fase A do Duplicates, ingest): pelo índice, nunca varrendo a tabela arquivo
+            {
+                auto plano = reg.prepare("EXPLAIN QUERY PLAN SELECT a.id FROM item i JOIN arquivo a ON a.item_id = i.id "
+                                         "WHERE a.eh_master = 1 AND a.tamanho_bytes = ? AND a.tamanho_bytes > 0");
+                plano.bind(1, Value::of(static_cast<long long>(12345)));
+                std::string detalhes;
+                while (plano.step()) detalhes += plano.columnText(3) + "; ";
+                checar(detalhes.find("idx_arquivo_tamanho") != std::string::npos,
+                       "the same-size lookup uses idx_arquivo_tamanho (" + juce::String(detalhes) + ")");
+            }
+
             // ----- SEQUENCES: nome sequencial perto no tempo = rajada, fora da lista de duplicatas
             {
                 using D = DuplicatesWorkspaceComponent;

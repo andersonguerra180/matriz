@@ -308,6 +308,9 @@ CREATE INDEX IF NOT EXISTS idx_arquivo_checksum_sha256 ON arquivo(checksum_sha25
 CREATE INDEX IF NOT EXISTS idx_arquivo_caminho_absoluto_origem ON arquivo(caminho_absoluto_origem);
 CREATE INDEX IF NOT EXISTS idx_arquivo_item_master ON arquivo(item_id, eh_master);
 CREATE INDEX IF NOT EXISTS idx_arquivo_estado_sincronizacao ON arquivo(estado_sincronizacao);
+-- Duplicates (fase A) e o ingest procuram "outro arquivo com este tamanho" (buscarAssetPorMetadados): sem índice,
+-- cada busca varria a tabela inteira (79 MB num acervo de 25 mil arquivos) e o scan ficava minutos em 0%.
+CREATE INDEX IF NOT EXISTS idx_arquivo_tamanho ON arquivo(tamanho_bytes);
 
 -- ---------------------------------------------------------------------------
 -- Sinalizador de reconciliação em curso (§8).
