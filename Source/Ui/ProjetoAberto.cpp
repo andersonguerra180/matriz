@@ -581,6 +581,14 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
     using matriz::db::Value;
     ResultadoSanitizacao r;
     if (manterId.empty() || descartarId.empty() || manterId == descartarId) return r;
+    // Par com algum lado já duplicata (resolvido antes, no mesmo lote ou noutro): não faz nada. Resolver de novo,
+    // ainda mais com a escolha invertida, escondia as duas cópias — a foto saía do app e do backup.
+    {
+        auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE id IN (?, ?) AND estado = 'duplicata'");
+        st.bind(1, Value::of(manterId));
+        st.bind(2, Value::of(descartarId));
+        if (st.step() && st.columnInt(0) > 0) return r;
+    }
     r.idMantido = manterId;
     const std::string agora = matriz::model::agoraIso8601();
 

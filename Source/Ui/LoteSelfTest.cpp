@@ -1955,6 +1955,34 @@ void rodarTestesMerge(const Checar& checar) {
                        pa.conflitosMergePendentes(g).size() == 1 && pa.itensDaColecaoEmbutida("merge_conflitos").count(g) == 1,
                    "repair: a conflict stuck on a resolved duplicate goes to the kept item, following the chain");
             checar(mg::levarConflitosPresosAoMantido(reg) == 0, "repair: running it again changes nothing");
+
+            // O mesmo par resolvido de novo, com a escolha invertida: nunca esconde as duas cópias.
+            const std::string h = inserirItem(reg, projetoId, "MRG-8", false);
+            const std::string i = inserirItem(reg, projetoId, "MRG-9", false);
+            checar(resolverPar(h, i) && colunaDoItem(reg, "estado", i) == "duplicata", "re-resolve: H keeps I");
+            const auto notasAntes = colunaDoItem(reg, "notas_livres", i);
+            resolverPar(i, h);  // invertido: I já é duplicata
+            resolverPar(h, i);  // repetido
+            checar(colunaDoItem(reg, "estado", h) != "duplicata" && colunaDoItem(reg, "notas_livres", i) == notasAntes,
+                   "re-resolve: a pair already resolved (inverted or repeated) changes nothing; one copy always stays visible");
+            // Grupo de 3 num lote só, cada par com um mantido diferente: sobra ao menos uma cópia visível.
+            const std::string x = inserirItem(reg, projetoId, "MRG-10", false);
+            const std::string y = inserirItem(reg, projetoId, "MRG-11", false);
+            const std::string z = inserirItem(reg, projetoId, "MRG-12", false);
+            std::optional<bool> okTrio;
+            pa.resolverDuplicatasEmSegundoPlano(
+                {x, y, z},
+                [x, y, z](matriz::db::Database& db) {
+                    return std::vector<ProjetoAberto::ResultadoSanitizacao>{ProjetoAberto::sanitizarDuplicata(db, x, y),
+                                                                            ProjetoAberto::sanitizarDuplicata(db, z, x),
+                                                                            ProjetoAberto::sanitizarDuplicata(db, y, z)};
+                },
+                [&](bool r, std::vector<ProjetoAberto::ResultadoSanitizacao>) { okTrio = r; });
+            esperarAte([&] { return okTrio.has_value(); }, 20000);
+            int visiveis = 0;
+            for (const auto& id : {x, y, z}) visiveis += colunaDoItem(reg, "estado", id) != "duplicata" ? 1 : 0;
+            checar(visiveis == 1, "re-resolve: 3 copies with contradictory choices in one batch leave exactly one visible (" +
+                                      juce::String(visiveis) + ")");
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("merge selftest: ") + e.what());
