@@ -985,6 +985,32 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
         pa.salvarMetadado(i1, "dc_creator", "JOSE");
         checar(colunaDoItem(reg, "dc_creator", i1) == "jos\xc3\xa9" && colunaDoItem(reg, "dc_creator", i2) == "jos\xc3\xa9",
                juce::String::fromUTF8("CREATOR \"JOSE\" takes the existing \"jos\xc3\xa9\" (batch and single)"));
+        // DEVICE é do item, não do meio: um lote de SOURCE MEDIUM sem DEVICE mantém o de cada um.
+        {
+            OriginalSourceMediumInfo comDevice;
+            comDevice.medium = "Internal Storage / Smartphone";
+            comDevice.recordingDevice = "samsung SM-A307GT";
+            pa.salvarMetadado(i1, "source_media", comDevice.serialize());
+            pa.salvarMetadado(i2, "source_media", OriginalSourceMediumInfo{}.serialize());
+            reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'raiz', 0, 'recording_device', 'Canon EOS REBEL T5', 'leitura_tecnica', '2026-10-25')",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(i2)});
+            OriginalSourceMediumInfo lote;
+            lote.medium = kMediumPhoneDump;
+            pa.salvarMetadadoEmLote({i1, i2}, {{"source_media", lote.serialize()}});
+            auto d1 = OriginalSourceMediumInfo::deserialize(colunaDoItem(reg, "source_media", i1));
+            auto d2 = OriginalSourceMediumInfo::deserialize(colunaDoItem(reg, "source_media", i2));
+            checar(d1.medium == kMediumPhoneDump && d1.recordingDevice == "samsung SM-A307GT",
+                   "batch SOURCE MEDIUM without DEVICE keeps the item's DEVICE (" + juce::String(d1.recordingDevice) + ")");
+            checar(d2.medium == kMediumPhoneDump && d2.recordingDevice == "Canon EOS REBEL T5",
+                   "batch SOURCE MEDIUM fills DEVICE from the EXIF camera when the medium had none (" +
+                       juce::String(d2.recordingDevice) + ")");
+            lote.recordingDevice = "LG-P716";
+            pa.salvarMetadadoEmLote({i1, i2}, {{"source_media", lote.serialize()}});
+            checar(OriginalSourceMediumInfo::deserialize(colunaDoItem(reg, "source_media", i1)).recordingDevice == "LG-P716" &&
+                       OriginalSourceMediumInfo::deserialize(colunaDoItem(reg, "source_media", i2)).recordingDevice == "LG-P716",
+                   "a DEVICE typed in the batch is written to every item");
+        }
         checar(nomes::levantarUnificacao(reg).empty(), "data written through the app never needs unifying");
     } catch (const std::exception& e) {
         checar(false, juce::String("names selftest (writes): ") + e.what());

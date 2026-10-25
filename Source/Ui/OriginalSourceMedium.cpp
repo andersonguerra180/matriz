@@ -347,6 +347,29 @@ void gravarOrigemPhoneDump(matriz::db::Database& registro, const std::vector<std
     }
 }
 
+std::string manterDeviceDoItem(const std::string& valorDoLote, const std::string& deviceDoItem) {
+    if (deviceDoItem.empty()) return valorDoLote;
+    auto info = OriginalSourceMediumInfo::deserialize(valorDoLote);
+    if (!info.recordingDevice.empty()) return valorDoLote;
+    info.recordingDevice = deviceDoItem;
+    return info.serialize();
+}
+
+std::string deviceDoItem(matriz::db::Database& registro, const std::string& itemId) {
+    using matriz::db::Value;
+    auto leitura = registro.prepare("SELECT campo_id, valor FROM item_campo WHERE item_id = ? AND nivel = 'raiz' "
+                                    "AND nivel_indice = 0 AND campo_id IN ('source_media', 'recording_device')");
+    leitura.bind(1, Value::of(itemId));
+    std::string doMedium, doExif;
+    while (leitura.step()) {
+        if (leitura.columnText(0) == "source_media")
+            doMedium = OriginalSourceMediumInfo::deserialize(leitura.columnText(1)).recordingDevice;
+        else
+            doExif = leitura.columnText(1);
+    }
+    return doMedium.empty() ? doExif : doMedium;
+}
+
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
 void OriginalSourceMediumVocabulary::populateMediumCombo(juce::ComboBox& combo, bool includeNone) {
     combo.clear(juce::dontSendNotification);

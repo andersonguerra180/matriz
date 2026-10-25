@@ -5820,6 +5820,9 @@ private:
                     projeto_.salvarMetadado(id, "collection_type", canon.toStdString());
                 } else if (linha->colunaDb == "ai_generated") {
                     definirIaNoItem(projeto_, id, val.containsIgnoreCase("SIM") || val.containsIgnoreCase("YES"));
+                } else if (linha->ehOriginalSourceMedium) {
+                    // O lote troca o meio; o DEVICE (aparelho que gerou o arquivo) continua o de cada item.
+                    projeto_.salvarMetadado(id, linha->colunaDb, manterDeviceDoItem(val.toStdString(), deviceDoItem(dbLote, id)));
                 } else if (!linha->colunaDb.empty()) {
                     projeto_.salvarMetadado(id, linha->colunaDb, val.toStdString());
                 }

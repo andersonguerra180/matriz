@@ -2947,7 +2947,9 @@ void IntakeWorkspaceComponent::aplicarOriginalSourceMediumAosSelecionados(const 
         auto& item = todosItens_[static_cast<size_t>(idx)];
         if (item.selecionado) {
             ids.push_back(item.id);
-            item.sourceMedia = juce::String::fromUTF8(sourceMediaJson.c_str());
+            // Mesmo DEVICE que salvarMetadadoEmLote mantém no banco (o lote troca só o meio).
+            const auto device = OriginalSourceMediumInfo::deserialize(item.sourceMedia.toStdString()).recordingDevice;
+            item.sourceMedia = juce::String::fromUTF8(manterDeviceDoItem(sourceMediaJson, device).c_str());
         }
     }
     if (!ids.empty()) {

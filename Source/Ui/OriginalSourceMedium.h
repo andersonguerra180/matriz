@@ -82,6 +82,13 @@ public:
 // transação e do writeMutex; roda em qualquer thread.
 void gravarOrigemPhoneDump(matriz::db::Database& registro, const std::vector<std::string>& itemIds);
 
+// DEVICE é o aparelho que gerou o arquivo (lido do EXIF no ingest), não o meio por onde ele chegou (USB, web,
+// SD card, Phone Dump...): um lote de ORIGINAL SOURCE MEDIUM sem DEVICE mantém o DEVICE de cada item.
+// Devolve valorDoLote com deviceDoItem quando o lote não traz DEVICE; senão, valorDoLote como veio.
+std::string manterDeviceDoItem(const std::string& valorDoLote, const std::string& deviceDoItem);
+// DEVICE gravado do item: o do ORIGINAL SOURCE MEDIUM ou, sem ele, o recording_device lido do EXIF no ingest.
+std::string deviceDoItem(matriz::db::Database& registro, const std::string& itemId);
+
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
 class OriginalSourceMediumEditorComponent : public juce::Component {
 public:

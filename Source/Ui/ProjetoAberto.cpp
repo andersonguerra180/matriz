@@ -2429,8 +2429,11 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
         for (const auto& itemId : itemIds) {
             for (const auto& campoValor : camposEValores) {
                 const std::string& coluna = campoValor.first;
-                const std::string& valor = campoValor.second;
                 if (pular.count({itemId, coluna})) continue;
+                // O lote troca o meio; o DEVICE (aparelho que gerou o arquivo) continua o de cada item.
+                const std::string valor = coluna == "source_media"
+                    ? matriz::ui::manterDeviceDoItem(campoValor.second, matriz::ui::deviceDoItem(db, itemId))
+                    : campoValor.second;
                 try {
                     db.run(
                         "UPDATE item SET " + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
