@@ -1711,6 +1711,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"painel_lista.buscar", "Search..."},
         {"undo.desfeito", "Undone: {x}"},
         {"undo.nada", "Nothing to undo"},
+        {"undo.limite", "Undo keeps the last 100 steps: older steps can no longer be undone."},
         {"painel_lista.escolher", "CHOOSE"},
         {"ficha.painel_midia_origem", "ORIGINAL SOURCE MEDIUM"},
         {"catwork.painel_busca_em", "SEARCH IN"},

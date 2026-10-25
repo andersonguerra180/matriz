@@ -690,6 +690,12 @@ void rodarTestesUndoMecanismo(const Checar& checar) {
         pa.desfazer();
         checar(um("SELECT COUNT(*) FROM backup_destino WHERE id = 'bd1'", {}) == "0", "F Undo of Add Backup Destination removes the new destination");
 
+        // H: passar de 100 passos avisa (uma vez)
+        int avisos = 0;
+        pa.aoDescartarUndoAntigo = [&avisos] { ++avisos; };
+        for (int i = 0; i < 103; ++i) pa.registrarUndo("passo " + std::to_string(i), [] {});
+        checar(avisos == 1, "H going past 100 Undo steps warns once (" + juce::String(avisos) + ")");
+        pa.aoDescartarUndoAntigo = nullptr;
     } catch (const std::exception& e) {
         checar(false, juce::String("undo mechanism selftest: ") + e.what());
     }

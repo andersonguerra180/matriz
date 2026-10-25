@@ -361,6 +361,8 @@ public:
     // regrava só essas colunas; se a linha não existia, ela sai. Pode ser chamado de outra thread.
     void registrarUndoDeColunas(const std::string& descricao, const std::string& tabela, const std::string& colunaChave,
                                 const std::string& valorChave, std::vector<std::string> colunas);
+    // A pilha passou de 100 passos e o mais antigo saiu — avisado uma vez por projeto aberto (MainComponent mostra).
+    std::function<void()> aoDescartarUndoAntigo;
     // UNDO de GEO LOCATION (ficha, lote, Intake): a gravação vai direto em asset_geolocation, que não passa por
     // salvarMetadado — sem isto o grupo de Undo ficava vazio e o Undo desfazia a edição ANTERIOR. Tirar o retrato
     // ANTES de gravar (nullopt = o item não tinha linha) e registrar depois do COMMIT; a volta é uma transação só.
@@ -1481,6 +1483,8 @@ private:
 
     static constexpr int kMaxUndo = 100;
     int contadorSnapUndo_ = 0;
+    bool avisouDescarteUndo_ = false;
+    void aparaPilhaUndo();  // limite kMaxUndo + aviso (uma vez)
     void registrarUndoSubarvoreApagada(const std::string& pastaId);
     std::set<std::string> buscarItensNoEscopo(const juce::String& termo, EscopoBusca escopo) const;
     void registrarUndoEnvioAoGrid(const std::vector<std::string>& itemIds);

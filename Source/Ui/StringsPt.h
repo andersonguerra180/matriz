@@ -1723,6 +1723,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"painel_lista.buscar", "Buscar..."},
         {"undo.desfeito", "Desfeito: {x}"},
         {"undo.nada", "Nada para desfazer"},
+        {"undo.limite", "O Undo guarda os últimos 100 passos: os mais antigos não podem mais ser desfeitos."},
         {"painel_lista.escolher", "ESCOLHER"},
         {"ficha.painel_midia_origem", "MÍDIA DE ORIGEM"},
         {"catwork.painel_busca_em", "BUSCAR EM"},

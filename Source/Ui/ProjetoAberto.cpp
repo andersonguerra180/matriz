@@ -1731,9 +1731,20 @@ void ProjetoAberto::registrarUndo(const std::string& descricao, std::function<vo
         grupoAberto_->acoesReversas.push_back(std::move(acaoReversa));
     } else {
         pilhaUndo_.push_back(UndoEntry{descricao, {std::move(acaoReversa)}});
-        while (static_cast<int>(pilhaUndo_.size()) > kMaxUndo)
-            pilhaUndo_.erase(pilhaUndo_.begin());
+        aparaPilhaUndo();
         if (aoMudarUndo) aoMudarUndo();
+    }
+}
+
+void ProjetoAberto::aparaPilhaUndo() {
+    bool descartou = false;
+    while (static_cast<int>(pilhaUndo_.size()) > kMaxUndo) {
+        pilhaUndo_.erase(pilhaUndo_.begin());
+        descartou = true;
+    }
+    if (descartou && !avisouDescarteUndo_) {
+        avisouDescarteUndo_ = true;
+        if (aoDescartarUndoAntigo) aoDescartarUndoAntigo();
     }
 }
 
@@ -1851,8 +1862,7 @@ void ProjetoAberto::finalizarGrupoUndo() {
     }
     pilhaUndo_.push_back(std::move(*grupoAberto_));
     grupoAberto_.reset();
-    while (static_cast<int>(pilhaUndo_.size()) > kMaxUndo)
-        pilhaUndo_.erase(pilhaUndo_.begin());
+    aparaPilhaUndo();
     if (aoMudarUndo) aoMudarUndo();
 }
 
