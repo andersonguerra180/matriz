@@ -5326,6 +5326,66 @@ int rodarLoteSelfTest() {
             dwRec.aplicarEscolhaGlobal(1);
             esperarAte([&] { return acharGrupo(rOrig, rExata) == nullptr; }, 30000);
             checar(acharGrupo(rOrig, rBytes) != nullptr, "VALIDATE ALL never resolves a PROBABLE group");
+
+            // ----- SEQUENCES: nome sequencial perto no tempo = rajada, fora da lista de duplicatas
+            {
+                using D = DuplicatesWorkspaceComponent;
+                checar(D::ehSequenciaDeFotos("FF-006", -1, "", "FF-007", -1, "") && D::ehSequenciaDeFotos("FF-006", -1, "", "FF-009", -1, ""),
+                       "sequence rule: FF-006/FF-007 and FF-006/FF-009 are a sequence");
+                checar(!D::ehSequenciaDeFotos("FF-006", -1, "", "FF-006 copy", -1, "") && !D::ehSequenciaDeFotos("FF-006", -1, "", "FF-006-2", -1, ""),
+                       "sequence rule: the same number with a suffix is a copy, not a sequence");
+                checar(D::ehSequenciaDeFotos("FF-006", -1, "", "FF-016", -1, "") && !D::ehSequenciaDeFotos("FF-006", -1, "", "FF-017", -1, ""),
+                       "sequence rule: counter gap up to 10");
+                checar(D::ehSequenciaDeFotos("DSC09998", -1, "", "DSC00002", -1, ""), "sequence rule: the camera counter wrapping 9999 -> 0001");
+                checar(!D::ehSequenciaDeFotos("IMG_0012", -1, "iPhone 6", "IMG_0013", -1, "Canon EOS REBEL T5"),
+                       "sequence rule: different cameras are not a sequence");
+                checar(D::ehSequenciaDeFotos("FF-006", 0, "X", "FF-007", 60, "x") && !D::ehSequenciaDeFotos("FF-006", 0, "", "FF-007", 61, ""),
+                       "sequence rule: EXIF up to 60 s apart");
+                checar(D::ehSequenciaDeFotos("20200826_165859", -1, "", "20200826_165901", -1, "") &&
+                           !D::ehSequenciaDeFotos("20200826_165804", -1, "", "20200826_170004", -1, ""),
+                       "sequence rule: phone time names compare in seconds (2 s across the minute yes, 2 min no)");
+                checar(!D::ehSequenciaDeFotos("IMG_A", -1, "", "IMG_B", -1, ""), "sequence rule: names without a counter never match");
+
+                // Scan de verdade: 3 fotos quase iguais FF-006/007/008 com 1 s entre elas viram UMA rajada.
+                std::vector<std::string> rajada;
+                for (int i = 6; i <= 8; ++i) {
+                    const auto f = raizQ.getChildFile("FF-00" + juce::String(i) + ".png");
+                    fOrig.copyFileTo(f);
+                    const auto extra = juce::String::repeatedString("RAJADA", i);  // tamanhos diferentes, como numa rajada de verdade
+                    f.appendData(extra.toRawUTF8(), static_cast<size_t>(extra.length()));
+                    const auto id = inserirItemComArquivo(reg, projetoId, "SEQ-" + std::to_string(i), f);
+                    reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                            {Value::of("{\"exifDataOriginal\":\"2016-01-02T10:00:0" + std::to_string(i) + "\"}"), Value::of(id)});
+                    rajada.push_back(id);
+                }
+                DuplicatesWorkspaceComponent dwSeq(pa);
+                dwSeq.tbTamanho_->setToggleState(false, juce::dontSendNotification);  // fotos da rajada têm tamanhos diferentes
+                dwSeq.iniciarScan();
+                esperarAte([&] { return !dwSeq.isThreadRunning(); }, 120000);
+                bombear(300);
+                const auto ehDaRajada = [&](const std::string& id) { return std::find(rajada.begin(), rajada.end(), id) != rajada.end(); };
+                int paresRajadaNaLista = 0;
+                for (const auto& g : dwSeq.gruposDetectados_)
+                    if (ehDaRajada(g.original.itemId) && ehDaRajada(g.duplicata.itemId)) ++paresRajadaNaLista;
+                const D::GrupoSequencia* seq = nullptr;
+                for (const auto& s : dwSeq.sequenciasDetectadas_)
+                    if (s.fotos.size() == 3 && std::all_of(s.fotos.begin(), s.fotos.end(), [&](const auto& m) { return ehDaRajada(m.itemId); })) seq = &s;
+                juce::String criteriosNaLista;
+                for (const auto& g : dwSeq.gruposDetectados_)
+                    if (ehDaRajada(g.original.itemId) && ehDaRajada(g.duplicata.itemId)) criteriosNaLista << " [" << g.criterio << "]";
+                checar(paresRajadaNaLista == 0,
+                       "a burst FF-006/007/008 is NOT in the duplicates list (" + juce::String(paresRajadaNaLista) + criteriosNaLista + ")");
+                checar(seq != nullptr && seq->pares.size() == 3 && juce::String(seq->fotos.front().fullPath).endsWith("FF-006.png"),
+                       "the burst is ONE sequence of 3 photos, in name order");
+                const auto antes = dwSeq.gruposDetectados_.size();
+                for (size_t i = 0; i < dwSeq.sequenciasDetectadas_.size(); ++i)
+                    if (&dwSeq.sequenciasDetectadas_[i] == seq) { dwSeq.enviarSequenciaParaDuplicatas(i); break; }
+                checar(dwSeq.gruposDetectados_.size() == antes + 3,
+                       "IT IS A DUPLICATE sends the burst's 3 pairs to the duplicates list");
+                auto notas = reg.prepare("SELECT COUNT(*) FROM item WHERE id IN (?, ?, ?) AND (estado = 'duplicata' OR notas_livres LIKE '%USER_VERIFIED%')");
+                for (int i = 0; i < 3; ++i) notas.bind(i + 1, Value::of(rajada[static_cast<size_t>(i)]));
+                checar(notas.step() && notas.columnInt(0) == 0, "detecting a sequence writes nothing to the items");
+            }
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("criteria selftest: ") + e.what());

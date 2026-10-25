@@ -64,7 +64,9 @@ private:
         std::string fullPath;
         std::string collectionNome;
         std::string collectionCaminho;
-        
+        std::string dataOriginal;  // EXIF DateTimeOriginal (aba SEQUENCES)
+        std::string camera;        // EXIF Model (ou Make)
+
         // Match flags
         bool nomeCoincide = false;
         bool extCoincide = false;
@@ -91,6 +93,23 @@ private:
         bool pastaMesmoConteudo = false;
     };
 
+    // Rajada (fotos em sequência): pares do pHash cujos arquivos têm nome sequencial. Ficam FORA da lista de
+    // duplicatas e de qualquer ação em lote, sem marca nenhuma no banco: só para conferir na aba SEQUENCES.
+    struct GrupoSequencia {
+        std::vector<DuplicateMatch> fotos;  // em ordem de nome
+        std::vector<DuplicateGroup> pares;  // os pares do pHash que formaram a rajada ("é duplicata sim" os devolve)
+    };
+    // nome = nome do arquivo sem extensão; segundos = horário EXIF (-1 = sem data); camera vazia = desconhecida.
+    // Sequência: mesmo prefixo e sufixo, contador diferente a até 10 (com volta 9999 -> 0001) ou nome-horário
+    // (20200826_165804) a até 60 s; EXIF a até 60 s quando os dois têm data; mesma câmera quando os dois têm.
+    static bool ehSequenciaDeFotos(const std::string& nomeA, long long segundosA, const std::string& cameraA,
+                                   const std::string& nomeB, long long segundosB, const std::string& cameraB);
+    std::vector<GrupoSequencia> sequenciasDetectadas_;
+    // "É duplicata sim": os pares da rajada vão para a lista principal, para decidir um a um.
+    void enviarSequenciaParaDuplicatas(size_t indice);
+    bool abaSequencias_ = false;
+    void mostrarAba(bool sequencias);
+
     void resolverDuplicata(int grupoIdx, bool ehDuplicataReal);
 
     ProjetoAberto& projeto_;
@@ -105,6 +124,8 @@ public:
     };
 private:
     State estado_ = State::Idle;
+    // Sem duplicatas na lista: Results enquanto houver rajadas para conferir, senão Clean.
+    State estadoSemDuplicatas() const { return sequenciasDetectadas_.empty() ? State::Clean : State::Results; }
     std::atomic<int> faseScan_{0};  // 1 critérios, 2 checksums, 3 pHash, 4 comparação — só para o texto de status
     std::atomic<double> progressoScan_{0.0};  // escrito pela thread do scan, lido pelo timer da UI
     // Contador ao vivo (a partir da fase de checksums): pares achados e bytes do lado "duplicata". gruposDetectados_
@@ -210,6 +231,12 @@ private:
     class ListaResultadosComponent;
     std::unique_ptr<juce::Viewport> viewport_;
     std::unique_ptr<ListaResultadosComponent> listaComponent_;
+    // Aba SEQUENCES: abas DUPLICATES (N) | SEQUENCES (N) na linha do resumo e a lista das rajadas.
+    class ListaSequenciasComponent;
+    std::unique_ptr<ListaSequenciasComponent> listaSequencias_;
+    std::unique_ptr<juce::TextButton> btnAbaDuplicatas_;
+    std::unique_ptr<juce::TextButton> btnAbaSequencias_;
+    void atualizarTextoAbas();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DuplicatesWorkspaceComponent)
 };

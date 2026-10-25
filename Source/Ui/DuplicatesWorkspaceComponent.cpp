@@ -1002,6 +1002,168 @@ private:
     juce::OwnedArray<CardComponent> cards_;
 };
 
+// Aba SEQUENCES: uma linha por rajada (miniaturas em ordem de nome) e "É DUPLICATA" para mandar os pares dela à
+// lista principal. Nada aqui grava no banco.
+class DuplicatesWorkspaceComponent::ListaSequenciasComponent : public juce::Component {
+public:
+    explicit ListaSequenciasComponent(DuplicatesWorkspaceComponent& owner) : owner_(owner) {}
+
+    void atualizar(const std::vector<GrupoSequencia>& sequencias) {
+        cards_.clear();
+        for (size_t i = 0; i < sequencias.size(); ++i) {
+            auto* card = cards_.add(new Card(owner_, i, sequencias[i]));
+            addAndMakeVisible(card);
+        }
+        setSize(getWidth(), 20 + static_cast<int>(cards_.size()) * (kAlturaCard + 10));
+        resized();
+    }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        const bool isLight = tk.fundo.getBrightness() > 0.5f;
+        g.fillAll((isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f));
+    }
+
+    void resized() override {
+        int y = 10;
+        for (auto* card : cards_) {
+            card->setBounds(10, y, getWidth() - 20, kAlturaCard);
+            y += kAlturaCard + 10;
+        }
+    }
+
+private:
+    static constexpr int kAlturaCard = 150;
+    static constexpr int kLadoMiniatura = 96;
+
+    class Card : public juce::Component {
+    public:
+        Card(DuplicatesWorkspaceComponent& owner, size_t indice, const GrupoSequencia& seq)
+            : owner_(owner), indice_(indice), seq_(seq) {
+            btnEnviar_.setButtonText(matriz::i18n::t("duplicatas.seq_enviar"));
+            btnEnviar_.setTooltip(matriz::i18n::t("duplicatas.seq_enviar_dica"));
+            btnEnviar_.setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+            btnEnviar_.setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+            btnEnviar_.onClick = [this] {
+                // O card some com a própria lista: o envio roda depois do clique.
+                auto* dono = &owner_;
+                const auto i = indice_;
+                juce::Component::SafePointer<DuplicatesWorkspaceComponent> seguro(dono);
+                juce::MessageManager::callAsync([seguro, i] { if (seguro) seguro->enviarSequenciaParaDuplicatas(i); });
+            };
+            addAndMakeVisible(btnEnviar_);
+            for (const auto& foto : seq_.fotos) {
+                juce::Image img;
+                if (auto caminho = owner_.projeto_.caminhoMiniaturaPrincipal(foto.itemId)) {
+                    juce::File f(caminho->toStdString());
+                    if (f.existsAsFile()) img = juce::ImageFileFormat::loadFrom(f);
+                }
+                miniaturas_.push_back(img);
+            }
+        }
+
+        void paint(juce::Graphics& g) override {
+            const auto& tk = tema();
+            const juce::Colour corSequencia(0xff32bced);
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
+            g.setColour(corSequencia.withAlpha(0.8f));
+            g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), tk.raioMedio, 1.5f);
+
+            auto area = getLocalBounds().reduced(12, 8);
+            area.removeFromRight(kLarguraBotao + 12);
+            juce::String titulo = matriz::i18n::t("duplicatas.seq_titulo").replace("{n}", juce::String((int) seq_.fotos.size()));
+            const auto ponto = juce::String::fromUTF8("  \xc2\xb7  ");
+            if (const auto camera = cameraDaSequencia(); camera.isNotEmpty()) titulo << ponto << camera;
+            if (const auto horario = horarioDaSequencia(); horario.isNotEmpty()) titulo << ponto << horario;
+            g.setColour(tk.textoPrimario);
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            g.drawText(titulo, area.removeFromTop(20), juce::Justification::centredLeft, true);
+            area.removeFromTop(6);
+
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro)));
+            int x = area.getX();
+            const int cabem = juce::jmax(1, (area.getWidth() + 8) / (kLadoMiniatura + 8));
+            const int mostrar = juce::jmin(cabem, static_cast<int>(seq_.fotos.size()));
+            for (int i = 0; i < mostrar; ++i) {
+                const bool ultimaComResto = i == mostrar - 1 && mostrar < static_cast<int>(seq_.fotos.size());
+                juce::Rectangle<int> quadro(x, area.getY(), kLadoMiniatura, kLadoMiniatura);
+                g.setColour(tk.painelAlt);
+                g.fillRect(quadro);
+                if (miniaturas_[static_cast<size_t>(i)].isValid())
+                    g.drawImage(miniaturas_[static_cast<size_t>(i)], quadro.toFloat(), juce::RectanglePlacement::centred);
+                if (ultimaComResto) {
+                    g.setColour(juce::Colours::black.withAlpha(0.6f));
+                    g.fillRect(quadro);
+                    g.setColour(juce::Colours::white);
+                    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+                    g.drawText("+" + juce::String(static_cast<int>(seq_.fotos.size()) - mostrar + 1), quadro, juce::Justification::centred);
+                    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro)));
+                }
+                g.setColour(tk.textoSecundario);
+                g.drawText(nomeDe(seq_.fotos[static_cast<size_t>(i)]), x, quadro.getBottom() + 2, kLadoMiniatura, 14,
+                           juce::Justification::centred, true);
+                x += kLadoMiniatura + 8;
+            }
+        }
+
+        void resized() override {
+            btnEnviar_.setBounds(getWidth() - kLarguraBotao - 12, (getHeight() - 30) / 2, kLarguraBotao, 30);
+        }
+
+        // Botão direito numa miniatura: mostrar a origem / copiar o caminho (mesmo menu da lista de duplicatas).
+        void mouseDown(const juce::MouseEvent& e) override {
+            if (!e.mods.isPopupMenu()) return;
+            const int i = (e.x - 12) / (kLadoMiniatura + 8);
+            if (e.x < 12 || i < 0 || i >= static_cast<int>(seq_.fotos.size())) return;
+            const auto itemId = seq_.fotos[static_cast<size_t>(i)].itemId;
+            juce::PopupMenu menu;
+            menu.addItem(1, matriz::i18n::t("duplicatas.show_source"));
+            menu.addItem(2, matriz::i18n::t("duplicatas.copy_path"));
+            juce::Component::SafePointer<Card> seguro(this);
+            menu.showMenuAsync(juce::PopupMenu::Options(), [seguro, itemId](int res) {
+                if (!seguro || res == 0) return;
+                const auto caminho = seguro->owner_.projeto_.caminhoDeOrigem(itemId);
+                if (!caminho || caminho->isEmpty()) return;
+                if (res == 1) juce::File(*caminho).revealToUser();
+                else juce::SystemClipboard::copyTextToClipboard(*caminho);
+            });
+        }
+
+    private:
+        static constexpr int kLarguraBotao = 150;
+
+        static juce::String nomeDe(const DuplicateMatch& m) {
+            return juce::File(juce::String::fromUTF8((m.fullPath.empty() ? m.caminhoRelativo : m.fullPath).c_str())).getFileName();
+        }
+        juce::String cameraDaSequencia() const {
+            for (const auto& f : seq_.fotos)
+                if (!f.camera.empty()) return juce::String::fromUTF8(f.camera.c_str());
+            return {};
+        }
+        // "2015:04:05 11:18:36 → 11:18:52": primeiro e último horário EXIF da rajada.
+        juce::String horarioDaSequencia() const {
+            std::vector<std::string> datas;
+            for (const auto& f : seq_.fotos)
+                if (!f.dataOriginal.empty()) datas.push_back(f.dataOriginal);
+            if (datas.empty()) return {};
+            std::sort(datas.begin(), datas.end());
+            const auto primeira = juce::String::fromUTF8(datas.front().c_str()).replaceCharacter('T', ' ');
+            const auto ultima = juce::String::fromUTF8(datas.back().c_str()).replaceCharacter('T', ' ');
+            return datas.size() == 1 || primeira == ultima ? primeira : primeira + juce::String::fromUTF8(" \xe2\x86\x92 ") + ultima.fromLastOccurrenceOf(" ", false, false);
+        }
+
+        DuplicatesWorkspaceComponent& owner_;
+        size_t indice_;
+        GrupoSequencia seq_;
+        std::vector<juce::Image> miniaturas_;
+        juce::TextButton btnEnviar_;
+    };
+
+    DuplicatesWorkspaceComponent& owner_;
+    juce::OwnedArray<Card> cards_;
+};
+
 DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projeto)
     : Thread("BkrDuplicatesScan"), projeto_(projeto) {
     
@@ -1175,6 +1337,16 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     listaComponent_ = std::make_unique<ListaResultadosComponent>(*this);
     listaComponent_->onSelectionChanged = [this] { atualizarBotoesSelecionados(); };
     viewport_->setViewedComponent(listaComponent_.get(), false);
+
+    // Abas da área de resultados: DUPLICATES (N) | SEQUENCES (N).
+    listaSequencias_ = std::make_unique<ListaSequenciasComponent>(*this);
+    btnAbaDuplicatas_ = std::make_unique<juce::TextButton>();
+    btnAbaDuplicatas_->onClick = [this] { mostrarAba(false); };
+    addChildComponent(*btnAbaDuplicatas_);
+    btnAbaSequencias_ = std::make_unique<juce::TextButton>();
+    btnAbaSequencias_->setTooltip(matriz::i18n::t("duplicatas.seq_aba_dica"));
+    btnAbaSequencias_->onClick = [this] { mostrarAba(true); };
+    addChildComponent(*btnAbaSequencias_);
 }
 
 DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
@@ -1188,6 +1360,7 @@ DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
     if (estado_ == State::Scanning)
         ProgressoGlobal::obterInstancia().concluirTarefa("duplicates_scan", "Scan interrupted");
     listaComponent_.reset();
+    listaSequencias_.reset();
     viewport_.reset();
 }
 
@@ -1596,6 +1769,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     achadosScan_ = 0;
     bytesScan_ = 0;
     gruposDetectados_.clear();
+    sequenciasDetectadas_.clear();
     btnScan_->setEnabled(false);
     btnScan_->setButtonText(matriz::i18n::t("duplicatas.scanning"));
     lblStatus_->setText(matriz::i18n::t("duplicatas.scanning"), juce::dontSendNotification);  // dá altura ao status antes do resized()
@@ -1640,6 +1814,7 @@ void DuplicatesWorkspaceComponent::run() {
         std::string arquivoId;
         std::string sha256;
         std::string dataOriginal;  // EXIF DateTimeOriginal (só imagens), se houver
+        std::string camera;        // EXIF Model (ou Make), para a regra de sequência
     };
     std::vector<ItemInfo> items;
 
@@ -1701,6 +1876,8 @@ void DuplicatesWorkspaceComponent::run() {
                         if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
                             if (info.dataOriginal.empty() && exif->hasProperty("Exif.Photo.DateTimeOriginal"))
                                 info.dataOriginal = exif->getProperty("Exif.Photo.DateTimeOriginal").toString().toStdString();
+                            info.camera = exif->getProperty("Exif.Image.Model").toString().trim().toStdString();
+                            if (info.camera.empty()) info.camera = exif->getProperty("Exif.Image.Make").toString().trim().toStdString();
                             if (exif->hasProperty("Exif.Image.Orientation")) {
                                 info.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
                             }
@@ -2054,6 +2231,7 @@ void DuplicatesWorkspaceComponent::run() {
                 m.tamanhoBytes = it.tamanhoBytes; m.orientation = it.orientation; m.colorSpace = it.colorSpace;
                 m.caminhoRelativo = it.caminhoRelativo; m.fullPath = it.fullPath;
                 m.collectionNome = it.collectionNome; m.collectionCaminho = it.collectionCaminho;
+                m.dataOriginal = it.dataOriginal; m.camera = it.camera;
             };
             preencher(group.original, a);
             preencher(group.duplicata, b);
@@ -2093,6 +2271,7 @@ void DuplicatesWorkspaceComponent::run() {
 
         std::unordered_set<std::string> paresIdenticos;
         std::unordered_set<std::string> paresVistos;
+        std::vector<DuplicateGroup> paresSequencia;  // pHash + nome sequencial: vão para sequenciasDetectadas_
         if (activeFilters_.coincidirSha256) {
             // ---- B1: checksums que faltam (em background, em blocos de 100 por transação)
             faseScan_ = 2;
@@ -2346,11 +2525,54 @@ void DuplicatesWorkspaceComponent::run() {
                         auto grupo = gruposParaPar(*o, *d);
                         grupo.criterio = similar ? "SIMILAR" : "PROBABLE";
                         grupo.distanciaPHash = dist;
+                        // Nome sequencial (FF-006/FF-009) perto no tempo: foto da mesma rajada, não duplicata.
+                        auto nomeDe = [](const ItemInfo& x) {
+                            return juce::File(juce::String::fromUTF8((x.fullPath.empty() ? x.caminhoRelativo : x.fullPath).c_str()))
+                                .getFileNameWithoutExtension().toStdString();
+                        };
+                        if (ehSequenciaDeFotos(nomeDe(a), segundosExif(a.dataOriginal), a.camera,
+                                               nomeDe(b), segundosExif(b.dataOriginal), b.camera)) {
+                            paresSequencia.push_back(std::move(grupo));
+                            continue;
+                        }
                         contarAchado(grupo);
                         gruposDetectados_.push_back(std::move(grupo));
                     }
                 }
             }
+        }
+        // Rajadas: os pares de sequência ligados por uma foto em comum viram um grupo só.
+        {
+            std::unordered_map<std::string, std::string> pai;
+            std::function<std::string(const std::string&)> raiz = [&](const std::string& x) -> std::string {
+                auto it = pai.find(x);
+                if (it == pai.end() || it->second == x) return x;
+                const auto r = raiz(it->second);
+                pai[x] = r;
+                return r;
+            };
+            std::unordered_map<std::string, DuplicateMatch> fotoDe;
+            for (const auto& p : paresSequencia) {
+                for (const auto* m : {&p.original, &p.duplicata}) {
+                    pai.emplace(m->itemId, m->itemId);
+                    fotoDe.emplace(m->itemId, *m);
+                }
+                pai[raiz(p.original.itemId)] = raiz(p.duplicata.itemId);
+            }
+            std::map<std::string, size_t> grupoDaRaiz;
+            for (auto& p : paresSequencia) {
+                auto [it, novo] = grupoDaRaiz.emplace(raiz(p.original.itemId), sequenciasDetectadas_.size());
+                if (novo) sequenciasDetectadas_.emplace_back();
+                sequenciasDetectadas_[it->second].pares.push_back(std::move(p));
+            }
+            for (const auto& [id, foto] : fotoDe) sequenciasDetectadas_[grupoDaRaiz[raiz(id)]].fotos.push_back(foto);
+            auto nomeArquivo = [](const DuplicateMatch& m) {
+                return juce::File(juce::String::fromUTF8((m.fullPath.empty() ? m.caminhoRelativo : m.fullPath).c_str())).getFileName();
+            };
+            for (auto& s : sequenciasDetectadas_)
+                std::sort(s.fotos.begin(), s.fotos.end(), [&](const DuplicateMatch& x, const DuplicateMatch& y) {
+                    return nomeArquivo(x).compareNatural(nomeArquivo(y)) < 0;
+                });
         }
         // PROVÁVEIS e depois SIMILARES vão ao fim (categorias separadas na lista).
         std::stable_partition(gruposDetectados_.begin(), gruposDetectados_.end(),
@@ -2452,10 +2674,13 @@ void DuplicatesWorkspaceComponent::timerCallback() {
             btnScan_->setButtonText(matriz::i18n::t("duplicatas.btn_scan"));
             
             juce::String msgFinal;
+            listaSequencias_->atualizar(sequenciasDetectadas_);
+            abaSequencias_ = gruposDetectados_.empty() && !sequenciasDetectadas_.empty();
             if (gruposDetectados_.empty()) {
-                estado_ = State::Clean;
+                estado_ = estadoSemDuplicatas();
                 msgFinal = matriz::i18n::t("duplicatas.nenhuma");
                 lblStatus_->setText(msgFinal, juce::dontSendNotification);
+                listaComponent_->updateList(gruposDetectados_);
             } else {
                 estado_ = State::Results;
                 msgFinal = matriz::i18n::t("duplicatas.encontradas").replace("{n}", juce::String(gruposDetectados_.size()));
@@ -2502,7 +2727,8 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         
         bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
         if (gruposDetectados_.empty()) {
-            estado_ = State::Clean;
+            estado_ = estadoSemDuplicatas();
+            listaComponent_->updateList(gruposDetectados_);
             lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
                                      : "All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
             viewport_->setVisible(false);
@@ -2589,7 +2815,8 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
                 grupos.erase(it);
 
                 if (safeThis->gruposDetectados_.empty()) {
-                    safeThis->estado_ = State::Clean;
+                    safeThis->estado_ = safeThis->estadoSemDuplicatas();
+                    safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
                     safeThis->lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
                                              : "All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
                     safeThis->viewport_->setVisible(false);
@@ -2660,6 +2887,9 @@ void DuplicatesWorkspaceComponent::resetarAba() {
     // lista voltam a ser "não resolvidos" e reaparecem num próximo SCAN.
     gruposDetectados_.clear();
     if (listaComponent_) listaComponent_->updateList(gruposDetectados_);
+    sequenciasDetectadas_.clear();
+    if (listaSequencias_) listaSequencias_->atualizar(sequenciasDetectadas_);
+    abaSequencias_ = false;
     estado_ = State::Idle;
     lblStatus_->setText("", juce::dontSendNotification);
     if (viewport_) viewport_->setVisible(false);
@@ -2669,6 +2899,89 @@ void DuplicatesWorkspaceComponent::resetarAba() {
 }
 
 bool DuplicatesWorkspaceComponent::loteTodasCategorias() { return matriz::app::lerLoteDuplicatasTodasCategorias(); }
+
+void DuplicatesWorkspaceComponent::mostrarAba(bool sequencias) {
+    abaSequencias_ = sequencias && !sequenciasDetectadas_.empty();
+    resized();
+    repaint();
+}
+
+void DuplicatesWorkspaceComponent::atualizarTextoAbas() {
+    const auto& tk = tema();
+    auto pintar = [&](juce::TextButton& b, const juce::String& texto, bool ativa) {
+        b.setButtonText(texto);
+        b.setColour(juce::TextButton::buttonColourId, ativa ? tk.acento : tk.painelAlt);
+        b.setColour(juce::TextButton::textColourOffId, ativa ? juce::Colours::white : tk.textoSecundario);
+    };
+    pintar(*btnAbaDuplicatas_, matriz::i18n::t("duplicatas.aba_duplicatas").replace("{n}", juce::String((int) gruposDetectados_.size())),
+           !abaSequencias_);
+    pintar(*btnAbaSequencias_, matriz::i18n::t("duplicatas.aba_sequencias").replace("{n}", juce::String((int) sequenciasDetectadas_.size())),
+           abaSequencias_);
+}
+
+void DuplicatesWorkspaceComponent::enviarSequenciaParaDuplicatas(size_t indice) {
+    if (isThreadRunning() || indice >= sequenciasDetectadas_.size()) return;
+    // Os pares voltam como estavam (PROBABLE/SIMILAR): decisão um a um na lista principal.
+    auto pares = std::move(sequenciasDetectadas_[indice].pares);
+    sequenciasDetectadas_.erase(sequenciasDetectadas_.begin() + static_cast<std::ptrdiff_t>(indice));
+    for (auto& p : pares) gruposDetectados_.push_back(std::move(p));
+    listaSequencias_->atualizar(sequenciasDetectadas_);
+    if (sequenciasDetectadas_.empty()) abaSequencias_ = false;
+    estado_ = State::Results;
+    if (aoConcluirScan) aoConcluirScan(static_cast<int>(gruposDetectados_.size()));
+    atualizarListaEStatusAposResolucao();
+}
+
+bool DuplicatesWorkspaceComponent::ehSequenciaDeFotos(const std::string& nomeA, long long segundosA, const std::string& cameraA,
+                                                      const std::string& nomeB, long long segundosB, const std::string& cameraB) {
+    constexpr long long kMaxSegundos = 60;
+    constexpr long long kMaxSaltoContador = 10;
+    if (!cameraA.empty() && !cameraB.empty() &&
+        !juce::String::fromUTF8(cameraA.c_str()).trim().equalsIgnoreCase(juce::String::fromUTF8(cameraB.c_str()).trim()))
+        return false;
+    if (segundosA >= 0 && segundosB >= 0 && std::llabs(segundosA - segundosB) > kMaxSegundos) return false;
+
+    // Nome = antes + contador (último bloco de dígitos) + depois: "FF-006" -> "FF-", "006", "".
+    struct Partes { juce::String antes, contador, depois; };
+    auto partir = [](const std::string& nome) -> std::optional<Partes> {
+        const auto s = juce::String::fromUTF8(nome.c_str());
+        int fim = s.length();
+        while (fim > 0 && !juce::CharacterFunctions::isDigit(s[fim - 1])) --fim;
+        int ini = fim;
+        while (ini > 0 && juce::CharacterFunctions::isDigit(s[ini - 1])) --ini;
+        if (ini == fim) return std::nullopt;
+        return Partes{s.substring(0, ini), s.substring(ini, fim), s.substring(fim)};
+    };
+    const auto a = partir(nomeA), b = partir(nomeB);
+    if (!a || !b || !a->antes.equalsIgnoreCase(b->antes) || !a->depois.equalsIgnoreCase(b->depois)) return false;
+
+    // Nome-horário do celular (20200826_165804): o "contador" é a hora, compara em segundos.
+    auto ehNomeHorario = [](const Partes& p) {
+        if (p.contador.length() != 6 || p.antes.length() < 9) return false;
+        const auto sep = p.antes.getLastCharacter();
+        return (sep == '_' || sep == '-') && p.antes.dropLastCharacters(1).getLastCharacters(8).containsOnly("0123456789");
+    };
+    if (ehNomeHorario(*a) && ehNomeHorario(*b)) {
+        auto segundosDoDia = [](const juce::String& hhmmss) {
+            return hhmmss.substring(0, 2).getIntValue() * 3600 + hhmmss.substring(2, 4).getIntValue() * 60 + hhmmss.substring(4, 6).getIntValue();
+        };
+        const long long d = std::llabs(static_cast<long long>(segundosDoDia(a->contador) - segundosDoDia(b->contador)));
+        return d > 0 && d <= kMaxSegundos;
+    }
+
+    if (a->contador.length() > 9 || b->contador.length() > 9) return false;
+    const long long na = a->contador.getLargeIntValue(), nb = b->contador.getLargeIntValue();
+    const long long salto = std::llabs(na - nb);
+    if (salto == 0) return false;  // mesmo número: cópia ("FF-006 copy"), não sequência
+    if (salto <= kMaxSaltoContador) return true;
+    // Contador da câmera que volta ao começo (DSC09998 -> DSC00002: volta em 10000, não em 100000).
+    if (a->contador.length() == b->contador.length()) {
+        long long volta = 10;
+        while (volta <= std::max(na, nb)) volta *= 10;
+        return volta - salto <= kMaxSaltoContador;
+    }
+    return false;
+}
 
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
     if (gruposDetectados_.empty()) return;
@@ -2713,7 +3026,8 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
             repaint();
             return;
         }
-        estado_ = State::Clean;
+        estado_ = estadoSemDuplicatas();
+        listaComponent_->updateList(gruposDetectados_);
         lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
         viewport_->setVisible(false);
         resized();
@@ -2823,7 +3137,8 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
             safeThis->repaint();
             return;
         }
-        safeThis->estado_ = State::Clean;
+        safeThis->estado_ = safeThis->estadoSemDuplicatas();
+        safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
         safeThis->lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
         safeThis->viewport_->setVisible(false);
         safeThis->resized();
@@ -2841,7 +3156,8 @@ void DuplicatesWorkspaceComponent::atualizarBotoesSelecionados() {
 void DuplicatesWorkspaceComponent::atualizarListaEStatusAposResolucao() {
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (gruposDetectados_.empty()) {
-        estado_ = State::Clean;
+        estado_ = estadoSemDuplicatas();
+        listaComponent_->updateList(gruposDetectados_);
         lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
                                  : "All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
         viewport_->setVisible(false);
@@ -3030,6 +3346,14 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
         case State::Results:
             g.setColour(tk.textoPrimario);
             g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
+            if (abaSequencias_) {  // aba SEQUENCES: o que ela é, no lugar do resumo (as abas ficam à direita)
+                auto linha = direita.removeFromTop(kAlturaResumo);
+                linha.removeFromRight(juce::jmin(380, linha.getWidth() / 2) + 8);
+                g.setColour(tk.textoSecundario);
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
+                g.drawFittedText(matriz::i18n::t("duplicatas.seq_dica"), linha, juce::Justification::centredLeft, 2, 1.0f);
+                break;
+            }
             g.drawText(matriz::i18n::t("duplicatas.resumo").replace("{n}", juce::String(gruposDetectados_.size())),
                        direita.removeFromTop(kAlturaResumo), juce::Justification::centredLeft, true);
             if (const int previstos = contarPrevistos(gruposDetectados_); previstos > 0) {
@@ -3149,11 +3473,26 @@ void DuplicatesWorkspaceComponent::resized() {
 
     // Área da direita.
     auto direita = area.reduced(20);
+    const bool comSequencias = emResultados && !sequenciasDetectadas_.empty();
+    if (!comSequencias) abaSequencias_ = false;
+    btnAbaDuplicatas_->setVisible(comSequencias);
+    btnAbaSequencias_->setVisible(comSequencias);
     if (emResultados) {
-        direita.removeFromTop(kAlturaResumo + (contarPrevistos(gruposDetectados_) > 0 ? kAlturaBannerRisco : 0));
+        auto linhaResumo = direita.removeFromTop(kAlturaResumo);
+        if (comSequencias) {
+            atualizarTextoAbas();
+            auto abas = linhaResumo.removeFromRight(juce::jmin(380, linhaResumo.getWidth() / 2)).withSizeKeepingCentre(
+                juce::jmin(380, linhaResumo.getWidth() / 2), 24);
+            btnAbaSequencias_->setBounds(abas.removeFromRight((abas.getWidth() - 4) / 2));
+            abas.removeFromRight(4);
+            btnAbaDuplicatas_->setBounds(abas);
+        }
+        if (!abaSequencias_ && contarPrevistos(gruposDetectados_) > 0) direita.removeFromTop(kAlturaBannerRisco);
+        juce::Component* lista = abaSequencias_ ? static_cast<juce::Component*>(listaSequencias_.get()) : listaComponent_.get();
+        viewport_->setViewedComponent(lista, false);
         viewport_->setBounds(direita);
         viewport_->setVisible(true);
-        listaComponent_->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), listaComponent_->getHeight());
+        lista->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), lista->getHeight());
     } else {
         viewport_->setVisible(false);
     }
