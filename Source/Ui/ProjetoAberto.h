@@ -442,6 +442,10 @@ public:
     // --- Unified Metadata (direct item columns) ---
     // Reads a direct column from the item table (ano, caminho_catalogo, content_type, source_media, collection_type, isrc, notas_livres)
     std::optional<std::string> lerMetadado(const std::string& itemId, const std::string& coluna) const;
+    // O valor de `coluna` (a mesma leitura de lerMetadado) comum a todos os itens, numa consulta só: nullopt quando
+    // divergem, "" quando todos estão vazios. A ficha de lote fazia uma ou duas consultas POR ITEM na message thread
+    // (1.309 itens x cada campo = minutos parada num HD USB).
+    std::optional<std::string> valorComumEmLote(const std::vector<std::string>& itemIds, const std::string& coluna) const;
     // Writes a direct column on the item table
     void salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor);
     // Fase 2b (freeze de edição em lote): grava N itens x M campos numa

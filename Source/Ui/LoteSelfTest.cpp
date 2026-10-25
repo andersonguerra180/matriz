@@ -1011,6 +1011,30 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
                        OriginalSourceMediumInfo::deserialize(colunaDoItem(reg, "source_media", i2)).recordingDevice == "LG-P716",
                    "a DEVICE typed in the batch is written to every item");
         }
+        // Ficha de lote: o valor comum numa consulta só dá o mesmo que lerMetadado item por item.
+        {
+            auto comumPorItem = [&](const std::vector<std::string>& ids, const std::string& coluna) -> std::optional<std::string> {
+                const auto primeiro = pa.lerMetadado(ids.front(), coluna).value_or("");
+                for (const auto& id : ids)
+                    if (pa.lerMetadado(id, coluna).value_or("") != primeiro) return std::nullopt;
+                return primeiro;
+            };
+            reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'raiz', 0, 'data_criacao', '2020-08-26 16:58:04', 'leitura_tecnica', '2026-10-25')",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(i1)});
+            bool iguaisAoLaco = true;
+            juce::String divergentes;
+            for (const auto* coluna : {"dc_subject", "dc_title", "lista", "dc_creator", "source_media", "ano", "data_criacao", "notas_livres"}) {
+                const auto lote = pa.valorComumEmLote({i1, i2}, coluna);
+                if (lote != comumPorItem({i1, i2}, coluna)) { iguaisAoLaco = false; divergentes << " " << coluna; }
+            }
+            checar(iguaisAoLaco, "batch common value in one query = the per-item loop, field by field" + divergentes);
+            checar(pa.valorComumEmLote({i1, i2}, "dc_subject") == std::optional<std::string>("Show") &&
+                       pa.valorComumEmLote({i1, i2}, "dc_title") == std::optional<std::string>("") &&
+                       !pa.valorComumEmLote({i1, i2}, "data_criacao").has_value() &&
+                       pa.valorComumEmLote({i1}, "data_criacao") == std::optional<std::string>("2020-08-26 16:58:04"),
+                   "batch common value: same value, all empty, different (item_campo only) and a single item");
+        }
         checar(nomes::levantarUnificacao(reg).empty(), "data written through the app never needs unifying");
     } catch (const std::exception& e) {
         checar(false, juce::String("names selftest (writes): ") + e.what());

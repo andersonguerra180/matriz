@@ -1596,8 +1596,9 @@ std::vector<std::string> ProjetoAberto::valoresUsadosNoCampo(const std::string& 
     return out;
 }
 
-std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId, const std::string& coluna) const {
-    if (!projeto_) return std::nullopt;
+namespace {
+// Colunas que lerMetadado/valorComumEmLote leem (o nome entra no SQL: nada fora desta lista).
+bool colunaDeMetadadoLegivel(const std::string& coluna) {
     static const std::set<std::string> kColunasPermitidas = {
         "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo", "lista",
         "ai_generated",  // sem isto a ficha nunca via o campo (sempre nullopt) e o seletor AI generated aparecia desmarcado
@@ -1614,7 +1615,13 @@ std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId,
         // linha), só somente-leitura aqui, nunca gravado via salvarMetadado.
         "criado_em"
     };
-    if (kColunasPermitidas.find(coluna) == kColunasPermitidas.end()) return std::nullopt;
+    return kColunasPermitidas.count(coluna) > 0;
+}
+}  // namespace
+
+std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId, const std::string& coluna) const {
+    if (!projeto_) return std::nullopt;
+    if (!colunaDeMetadadoLegivel(coluna)) return std::nullopt;
 
     try {
         auto stmt = leitura().prepare("SELECT " + coluna + " FROM item WHERE id = ?");
@@ -1636,6 +1643,32 @@ std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId,
     } catch (...) {}
 
     return std::nullopt;
+}
+
+std::optional<std::string> ProjetoAberto::valorComumEmLote(const std::vector<std::string>& itemIds, const std::string& coluna) const {
+    if (itemIds.empty()) return std::string();
+    if (!projeto_ || !colunaDeMetadadoLegivel(coluna)) return std::string();
+    // Mesma regra de lerMetadado por item: a coluna do item, senão o item_campo; vazio conta como "".
+    // Coluna que não existe na tabela item (ex.: data_criacao) só tem o item_campo.
+    auto consulta = [&](const std::string& valorDoItem) {
+        return leitura().prepare(
+            "SELECT COUNT(DISTINCT v), MIN(v) FROM ("
+            "  SELECT COALESCE(NULLIF(" + valorDoItem + ", ''), "
+            "         NULLIF(CAST((SELECT c.valor FROM item_campo c WHERE c.item_id = j.value AND c.campo_id = ? LIMIT 1) AS TEXT), ''), '') AS v "
+            "  FROM json_each(?) j LEFT JOIN item i ON i.id = j.value)");
+    };
+    try {
+        std::optional<matriz::db::Statement> stmt;
+        try { stmt.emplace(consulta("CAST(i." + coluna + " AS TEXT)")); }
+        catch (...) { stmt.emplace(consulta("NULL")); }
+        stmt->bind(1, matriz::db::Value::of(coluna));
+        stmt->bind(2, matriz::db::Value::of(idsEmJson(itemIds)));
+        if (!stmt->step()) return std::string();
+        if (stmt->columnInt(0) > 1) return std::nullopt;
+        return stmt->columnIsNull(1) ? std::string() : stmt->columnText(1);
+    } catch (...) {
+        return std::nullopt;  // na dúvida, "valores múltiplos": nunca grava um valor que não era de todos
+    }
 }
 
 void ProjetoAberto::registrarUndo(const std::string& descricao, std::function<void()> acaoReversa) {

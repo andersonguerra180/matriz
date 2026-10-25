@@ -4682,13 +4682,9 @@ private:
                             matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), "lista", v);
                         // O campo passa a mostrar o valor comum (ou "valores múltiplos") e não conta como pendência.
                         if (auto* ed = dynamic_cast<juce::TextEditor*>(linhaPtr->editor.get())) {
-                            std::string comum;
-                            bool iguais = true, primeiro = true;
-                            for (const auto& id : itemIds_) {
-                                const std::string v = projeto_.lerMetadado(id, "lista").value_or("");
-                                if (primeiro) { comum = v; primeiro = false; }
-                                else if (v != comum) { iguais = false; break; }
-                            }
+                            const auto valorLote = projeto_.valorComumEmLote(itemIds_, "lista");
+                            const bool iguais = valorLote.has_value();
+                            const std::string comum = valorLote.value_or("");
                             ed->setText(iguais ? juce::String::fromUTF8(comum.c_str()) : juce::String(), false);
                             ed->setTextToShowWhenEmpty(iguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff7d766c));
                             linhaPtr->valorSeed = ed->getText();
@@ -4940,14 +4936,10 @@ private:
                 ed->setReturnKeyStartsNewLine(true);
                 ed->setTextToShowWhenEmpty("Type notes to add/append to all selected items...", juce::Colour(0xff7d766c));
             } else {
-                std::string valorComum;
-                bool todosIguais = true;
-                bool primeiro = true;
-                for (const auto& id : itemIds_) {
-                    std::string v = projeto_.lerMetadado(id, dbColuna).value_or("");
-                    if (primeiro) { valorComum = v; primeiro = false; }
-                    else if (v != valorComum) { todosIguais = false; break; }
-                }
+                // Uma consulta para todos os itens (era uma por item, na message thread).
+                const auto valorLote = projeto_.valorComumEmLote(itemIds_, dbColuna);
+                const bool todosIguais = valorLote.has_value();
+                const std::string valorComum = valorLote.value_or("");
                 if (todosIguais && !valorComum.empty()) {
                     ed->setText(valorComum, false);
                 } else {
@@ -5006,7 +4998,6 @@ private:
 
             std::string valorComum;
             bool todosIguais = true;
-            bool primeiro = true;
             if (dbColuna == "ai_generated") {
                 // Estado real (campo OU tags de IA), como no seletor da ficha individual: todos ligados = YES,
                 // todos desligados = NO, mistura = "Multiple values". Opções: 1 = YES, 2 = NO.
@@ -5030,11 +5021,9 @@ private:
                 linha->editor = std::move(cb);
                 return;
             }
-            for (const auto& itemId : itemIds_) {
-                std::string v = projeto_.lerMetadado(itemId, dbColuna).value_or("");
-                if (primeiro) { valorComum = v; primeiro = false; }
-                else if (v != valorComum) { todosIguais = false; break; }
-            }
+            // Uma consulta para todos os itens (era uma por item, na message thread).
+            if (const auto valorLote = projeto_.valorComumEmLote(itemIds_, dbColuna)) valorComum = *valorLote;
+            else todosIguais = false;
 
             if (todosIguais && !valorComum.empty()) {
                 cb->setText(juce::String::fromUTF8(valorComum.c_str()), juce::dontSendNotification);
@@ -6440,16 +6429,9 @@ void FichaPanelComponent::abrirPresets() {
                 // O preset mora no card ASSET & USER METADATA e guarda só os campos dele (Subject, Event date, List,
                 // Creator, Content, Source medium, AI generated); identidade, GPS e Dublin Core ficam de fora.
                 for (const auto* campo : {"dc_subject", "ano", "lista", "dc_creator", "collection_type", "source_media", "ai_generated"}) {
-                    const auto valorComum = seguro->projeto_.lerMetadado(ids.front(), campo).value_or("");
-                    bool igualEmTodos = true;
-                    for (size_t i = 1; i < ids.size(); ++i) {
-                        if (seguro->projeto_.lerMetadado(ids[i], campo).value_or("") != valorComum) {
-                            igualEmTodos = false;
-                            break;
-                        }
-                    }
-                    if (igualEmTodos && !valorComum.empty())
-                        valores->setProperty(juce::Identifier(campo), juce::String::fromUTF8(valorComum.c_str()));
+                    const auto valorComum = seguro->projeto_.valorComumEmLote(ids, campo);
+                    if (valorComum && !valorComum->empty())
+                        valores->setProperty(juce::Identifier(campo), juce::String::fromUTF8(valorComum->c_str()));
                 }
                 dados.getDynamicObject()->setProperty(juce::Identifier(nome), juce::var(valores));
                 if (!arquivo.replaceWithText(juce::JSON::toString(dados)))
