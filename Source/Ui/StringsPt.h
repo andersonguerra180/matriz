@@ -1721,6 +1721,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"catwork.secao_filters", "FILTROS"},
         {"filtro_opcoes.titulo", "OPÇÕES DE FILTRO"},
         {"painel_lista.buscar", "Buscar..."},
+        {"undo.desfeito", "Desfeito: {x}"},
+        {"undo.nada", "Nada para desfazer"},
         {"painel_lista.escolher", "ESCOLHER"},
         {"ficha.painel_midia_origem", "MÍDIA DE ORIGEM"},
         {"catwork.painel_busca_em", "BUSCAR EM"},

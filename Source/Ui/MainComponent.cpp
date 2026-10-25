@@ -63,6 +63,8 @@
 
 namespace matriz::ui {
 
+namespace { void mostrarAvisoDeUndo(juce::Component& dono, const juce::String& texto); }  // definida junto do executarUndo
+
 
 // Faixa de ações no topo do painel direito (item 5 das correções de
 // operação: "resolver tudo no mesmo lugar"). Com o arquivo selecionado, dá
@@ -5157,9 +5159,26 @@ bool MainComponent::podeDesfazer() const {
     return projetoAberto_ && projetoAberto_->podeDesfazer();
 }
 
+namespace {
+// Aviso rápido do Undo (some sozinho, ou com um clique): o que foi desfeito, ou que não havia o que desfazer. Antes era
+// só o título da janela por 1,5 s — dava para desfazer outra coisa sem perceber.
+void mostrarAvisoDeUndo(juce::Component& dono, const juce::String& texto) {
+    auto* bolha = new juce::BubbleMessageComponent(300);
+    dono.addChildComponent(bolha);
+    juce::AttributedString a;
+    a.append(texto, juce::Font(juce::FontOptions(15.0f, juce::Font::bold)), juce::Colours::black);
+    a.setJustification(juce::Justification::centred);
+    bolha->showAt(juce::Rectangle<int>(dono.getWidth() / 2 - 1, 56, 2, 2), a, 3500, true, true);
+}
+} // namespace
+
 void MainComponent::executarUndo() {
     if (!projetoAberto_) return;
     auto desc = projetoAberto_->descricaoUndoAtual();
+    if (!projetoAberto_->podeDesfazer()) {
+        mostrarAvisoDeUndo(*this, matriz::i18n::t("undo.nada"));
+        return;
+    }
     if (projetoAberto_->desfazer()) {
         if (mosaico_) mosaico_->recarregar();
         if (arvoreOrigem_) arvoreOrigem_->recarregar();
@@ -5173,16 +5192,7 @@ void MainComponent::executarUndo() {
         if (filtros_) filtros_->recarregar();
         atualizarPainelDeApoio();
         repaint();
-        if (auto* win = findParentComponentOfClass<juce::DocumentWindow>()) {
-            auto titulo = win->getName();
-            if (!titulo.contains("[Undo:")) {
-                win->setName(titulo + "  [Undo: " + juce::String(desc) + "]");
-                juce::Component::SafePointer<juce::DocumentWindow> safeWin(win);
-                juce::Timer::callAfterDelay(1500, [safeWin, titulo] {
-                    if (safeWin) safeWin->setName(titulo);
-                });
-            }
-        }
+        mostrarAvisoDeUndo(*this, matriz::i18n::t("undo.desfeito").replace("{x}", juce::String::fromUTF8(desc.c_str())));
     }
 }
 
