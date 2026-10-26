@@ -1178,6 +1178,8 @@ void ArvoreBackupComponent::recarregar() {
         bool mudou = mapas.size() != mapasCache_.size();
         for (size_t i = 0; !mudou && i < mapas.size(); ++i)
             mudou = mapas[i].id != mapasCache_[i].id || mapas[i].nome != mapasCache_[i].nome;
+        // O primeiro Make Backup (ou um rebuild) atrela/solta o mapa do MAIN: a marca acompanha.
+        if (!mudou) mudou = projeto_.mapaDoMainId() != mapaDoMainCache_;
         if (mudou) {
             recarregarComboMapas();
             atualizarEstadoBotoesParaMapa();
@@ -2779,6 +2781,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         desenharPastaSemPastaVirtual(g);
         desenharIndicadorZoom(g);
         desenharBarraDeAbas(g);
+        desenharMarcaMapaDoMain(g);
         return;
     }
 
@@ -3063,6 +3066,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     desenharPastaSemPastaVirtual(g);
     desenharIndicadorZoom(g);
     desenharBarraDeAbas(g);
+    desenharMarcaMapaDoMain(g);
 }
 
 void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
@@ -4769,11 +4773,15 @@ void ArvoreBackupComponent::importarPresetDeArquivo() {
 
 void ArvoreBackupComponent::recarregarComboMapas() {
     mapasCache_ = projeto_.listarFolderMaps();
+    mapaDoMainCache_ = projeto_.mapaDoMainId();
     comboMapas_->clear(juce::dontSendNotification);
     int idSelecionar = -1;
     for (size_t i = 0; i < mapasCache_.size(); ++i) {
         int itemId = static_cast<int>(i) + 1; // juce::ComboBox: ids começam em 1
-        comboMapas_->addItem(mapasCache_[i].nome, itemId);
+        const bool doMain = !mapaDoMainCache_.empty() && mapasCache_[i].id == mapaDoMainCache_;
+        comboMapas_->addItem(doMain ? i18n::t("arvore_backup.mapa_do_main_item").replace("{nome}", mapasCache_[i].nome)
+                                    : mapasCache_[i].nome,
+                             itemId);
         if (mapasCache_[i].id == mapaAtivoId_) idSelecionar = itemId;
     }
     if (idSelecionar < 0 && !mapasCache_.empty()) {
@@ -4784,6 +4792,34 @@ void ArvoreBackupComponent::recarregarComboMapas() {
         idSelecionar = static_cast<int>(idx) + 1;
     }
     comboMapas_->setSelectedId(idSelecionar, juce::dontSendNotification);
+    atualizarMarcaMapaDoMain();
+}
+
+// O mapa do MAIN aberto: combo em âmbar com a etiqueta MAIN, moldura e selo no canvas (paint).
+void ArvoreBackupComponent::atualizarMarcaMapaDoMain() {
+    const auto& tk = tema();
+    const bool doMain = mapaAtivoEhDoMain();
+    comboMapas_->setColour(juce::ComboBox::backgroundColourId, doMain ? tk.alerta : juce::Colours::white);
+    comboMapas_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+    comboMapas_->setColour(juce::ComboBox::outlineColourId, doMain ? tk.alerta.darker(0.35f) : tk.borda);
+    comboMapas_->setTooltip(doMain ? i18n::t("arvore_backup.mapa_do_main_dica") : juce::String());
+    repaint();
+}
+
+void ArvoreBackupComponent::desenharMarcaMapaDoMain(juce::Graphics& g) const {
+    if (!mapaAtivoEhDoMain()) return;
+    const auto& tk = tema();
+    g.setColour(tk.alerta);
+    g.drawRect(areaCanvas(), 3);
+    const juce::String texto = i18n::t("arvore_backup.mapa_do_main_selo");
+    const auto fonte = juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold));
+    const int largura = juce::GlyphArrangement::getStringWidthInt(fonte, texto) + 20;
+    auto faixa = sobreposto_ ? areaCanvas().removeFromTop(kAlturaBarraAbas).reduced(6, 4) : areaBarraAbas().reduced(6, 4);
+    const auto selo = faixa.removeFromRight(largura).toFloat();
+    g.fillRoundedRectangle(selo, 4.0f);
+    g.setColour(juce::Colours::black);
+    g.setFont(fonte);
+    g.drawText(texto, selo, juce::Justification::centred, false);
 }
 
 void ArvoreBackupComponent::selecionarMapaPorId(const std::string& mapaId) {
@@ -4794,6 +4830,7 @@ void ArvoreBackupComponent::selecionarMapaPorId(const std::string& mapaId) {
     editingNodeId_.clear();
     selectedFolderId_.clear();
     atualizarEstadoBotoesParaMapa();
+    atualizarMarcaMapaDoMain();
     recarregar();
 }
 

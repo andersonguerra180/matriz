@@ -268,6 +268,12 @@ private:
     std::string mapaAtivoId_;
     std::vector<ProjetoAberto::FolderMapInfo> mapasCache_; // espelha comboMapas_, id por índice
     bool mapaAtivoEhOriginal() const { return mapaAtivoId_ == ProjetoAberto::kMapaOriginal; }
+    // Mapa a que o MAIN está atrelado (backup_config_main.mapa_id; "" = MAIN por regra ou sem MAIN).
+    // Lido em recarregarComboMapas/recarregar, nunca no paint (é consulta ao banco).
+    std::string mapaDoMainCache_;
+    bool mapaAtivoEhDoMain() const { return !mapaDoMainCache_.empty() && mapaAtivoId_ == mapaDoMainCache_; }
+    void atualizarMarcaMapaDoMain();
+    void desenharMarcaMapaDoMain(juce::Graphics& g) const;
     void recarregarComboMapas();
     void selecionarMapaPorId(const std::string& mapaId);
     void atualizarEstadoBotoesParaMapa();
