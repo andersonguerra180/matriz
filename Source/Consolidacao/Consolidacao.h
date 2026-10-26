@@ -111,6 +111,10 @@ struct ItemPlanejado {
     // do MAIN: caminho atual no MAIN (a ser movido pra caminhoRelativoDestino,
     // nunca recopiado). Vazio = sem movimento.
     juce::String moverDe;
+    // Reorganização: o arquivo já está no MAIN, mas fora da pasta que o mapa do MAIN dá hoje
+    // (pasta renomeada/movida/apagada, item trocado de pasta). Move pra pasta nova mantendo o
+    // nome registrado; vale pra todo o MAIN, não só pra seleção do backup.
+    bool reorganizacao = false;
 };
 
 // Manifesto de checksums do MAIN (formato `shasum -a 256 -c` / `sha256sum -c`, rodado a partir da pasta Media):
@@ -137,7 +141,8 @@ struct PlanoConsolidacao {
     // fora do plano (não existe _SEM_PASTA em export); ids pra o aviso final.
     std::set<std::string> semPastaExcluidos;
     // Fase 2 — itens a mover de _SEM_PASTA (oferta no backup seguinte).
-    // Cada item aparece uma vez, com moverDe preenchido.
+    // Cada item aparece uma vez, com moverDe preenchido. Também leva os moves de
+    // reorganização (ItemPlanejado::reorganizacao), pela mesma lista de confirmação.
     std::vector<ItemPlanejado> movimentosSemPasta;
     int conflitosAutoResolvidos = 0;           // Nomes duplicados auto-resolvidos com sufixo único
     juce::int64 espacoNecessarioBytes = 0;     // soma dos itens que NÃO estão jaConsolidado

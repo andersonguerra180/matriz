@@ -303,6 +303,108 @@ int rodarRebuildSelfTest() {
             checar(prev2.itemEValor.size() == 1 && prev2.itemEValor[0].second == "2027", "list-from-folder: 'replace all' at level 2 gives the parent folder");
             checar(pb.previaListaPelasPastas({idDentro}, 5, false).semNivel == 1, "list-from-folder: a level above the root is reported, not invented");
         }
+
+        // ---- 6) Reorganizar o MAIN pelo folder map: pasta renomeada (inclusive só a caixa), pasta apagada,
+        // item trocado de pasta e colisão de nome viram MOVES no backup seguinte — nunca recópia, nunca apaga.
+        {
+            matriz::model::NovoProjetoParams params3;
+            params3.nome = "Reorg";
+            params3.prefixoNomenclatura = "REO";
+            auto projeto3 = matriz::model::Project::criar(raiz.getChildFile("P3"), params3);
+            const std::string projetoId3 = projeto3->projetoId();
+            ProjetoAberto pc(std::move(projeto3));
+            auto& regc = pc.projeto().registro();
+            const juce::File mediaC = pc.projeto().pastaMedia();
+            const std::string mapa = pc.criarFolderMap("Mapa do MAIN", std::nullopt);
+            const std::string pShows = pc.criarPastaAcervo("Shows", std::nullopt, mapa);
+            const std::string p2027 = pc.criarPastaAcervo("2027", pShows, mapa);
+            const std::string pFotos = pc.criarPastaAcervo("fotos", std::nullopt, mapa);
+            const std::string pVelha = pc.criarPastaAcervo("Velha", std::nullopt, mapa);
+            const std::string pA = pc.criarPastaAcervo("A", std::nullopt, mapa);
+            const std::string pB = pc.criarPastaAcervo("B", std::nullopt, mapa);
+            const std::string pC = pc.criarPastaAcervo("C", std::nullopt, mapa);
+            const juce::File s3 = raiz.getChildFile("SOURCE3");
+            auto novoArq = [&](const juce::String& rel, int semente) {
+                const juce::File f = s3.getChildFile(rel);
+                escreverArquivo(f, semente, 40000 + semente * 1000);
+                return f;
+            };
+            const auto f1 = novoArq("show.wav", 21), f2 = novoArq("foto.wav", 22), f3 = novoArq("velha.wav", 23);
+            const auto f4 = novoArq("a/x.wav", 24), f5 = novoArq("duas.wav", 25), f6 = novoArq("c/x.wav", 26);
+            const auto i1 = inserirItem(regc, projetoId3, "REO-1", f1), i2 = inserirItem(regc, projetoId3, "REO-2", f2);
+            const auto i3 = inserirItem(regc, projetoId3, "REO-3", f3), i4 = inserirItem(regc, projetoId3, "REO-4", f4);
+            const auto i5 = inserirItem(regc, projetoId3, "REO-5", f5), i6 = inserirItem(regc, projetoId3, "REO-6", f6);
+            pc.adicionarItensAPasta({i1}, p2027);
+            pc.adicionarItensAPasta({i2}, pFotos);
+            pc.adicionarItensAPasta({i3}, pVelha);
+            pc.adicionarItensAPasta({i4, i5}, pA);
+            pc.adicionarItensAPasta({i6}, pC);
+            // MAIN por folder map (o que o primeiro Make Backup grava).
+            regc.run("UPDATE projeto SET backup_config_main = ?", {Value::of("{\"mapa_id\": \"" + mapa + "\"}")});
+            const auto hierMapa = cons::HierarquiaBackup{cons::NivelHierarquia::PastaManual};
+            auto planejarC = [&] {
+                return cons::planejarConsolidacao(regc, pc.projeto().pasta(), mediaC, hierMapa, {}, cons::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                  false, false, false, mapa, false);
+            };
+            auto res0 = cons::executarConsolidacao(regc, pc.projeto().pasta(), mediaC, planejarC());
+            checar(res0.consolidados == 6 && res0.falhas.empty() && mediaC.getChildFile("Shows/2027/show.wav").existsAsFile() &&
+                       mediaC.getChildFile("A/x.wav").existsAsFile() && mediaC.getChildFile("C/x.wav").existsAsFile(),
+                   "reorganize: first backup lays the MAIN out by the folder map");
+            mediaC.getChildFile("Shows/2027/show.wav.xmp").replaceWithText("<x:xmpmeta/>");
+            checar(planejarC().movimentosSemPasta.empty(), "reorganize: nothing to move right after a backup");
+
+            // Pastas do mapa do MAIN agora ficam livres.
+            checar(!pc.pastaTemArquivosNoMain(pShows), "reorganize: a MAIN map folder with files is no longer locked");
+            checar(pc.renomearPastaAcervo(pShows, "Concerts"), "reorganize: renaming a folder that has files in the MAIN is allowed");
+            checar(pc.renomearPastaAcervo(pFotos, "Fotos"), "reorganize: case-only rename is allowed");
+            checar(pc.apagarPastaAcervo(pVelha), "reorganize: deleting a folder that has files in the MAIN is allowed");
+            pc.adicionarItensAPasta({i4, i6}, pB);            // A -> B e C -> B (os dois se chamam x.wav)
+            pc.adicionarItemAPastaSemRemoverOutras(i5, pB);   // i5 em A e B, uma cópia só: fica onde está
+            regc.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em) "
+                     "VALUES ('clone3', 'clone3', ?, 'Clone', 'CLONE', 1, ?)",
+                     {Value::of(raiz.getChildFile("CLONE3").getFullPathName().toStdString()), Value::of(matriz::model::agoraIso8601())});
+
+            auto plano = planejarC();
+            std::map<std::string, std::pair<juce::String, juce::String>> mv;  // item -> (de, para)
+            bool todosReorg = true;
+            for (const auto& m : plano.movimentosSemPasta) {
+                mv[m.itemId] = {m.moverDe, m.caminhoRelativoDestino};
+                todosReorg = todosReorg && m.reorganizacao;
+            }
+            checar(plano.movimentosSemPasta.size() == 5 && todosReorg, "reorganize: 5 moves planned (" + juce::String(static_cast<int>(plano.movimentosSemPasta.size())) + ")");
+            checar(mv[i1].second == "Concerts/2027/show.wav", "reorganize: renamed parent folder -> Concerts/2027/show.wav");
+            checar(mv[i2].first == "fotos/foto.wav" && mv[i2].second == "Fotos/foto.wav", "reorganize: case-only rename -> Fotos/foto.wav");
+            checar(mv[i3].second == juce::String(cons::kPastaSemPasta) + "/velha.wav", "reorganize: deleted folder -> _SEM_PASTA/velha.wav");
+            const bool colisaoOk = (mv[i4].second == "B/x.wav" && mv[i6].second == "B/x_1.wav") || (mv[i4].second == "B/x_1.wav" && mv[i6].second == "B/x.wav");
+            checar(colisaoOk, "reorganize: two x.wav moved to B -> one gets _1, nothing is overwritten");
+            checar(mv.count(i5) == 0, "reorganize: an item still in the folder of its copy is not moved");
+            bool copiaNova = false;
+            for (const auto& ip : plano.itens) copiaNova = copiaNova || !ip.jaConsolidado;
+            checar(!copiaNova, "reorganize: nothing is planned to be copied again");
+
+            const std::string sha1 = sha(mediaC.getChildFile("Shows/2027/show.wav"));
+            auto resMv = cons::executarMovimentosSemPasta(regc, pc.projeto().pasta(), mediaC, plano.movimentosSemPasta);
+            checar(resMv.movidos == 5 && resMv.falhas.empty(), "reorganize: 5 files moved, no failures");
+            checar(mediaC.getChildFile("Concerts/2027/show.wav").existsAsFile() && sha(mediaC.getChildFile("Concerts/2027/show.wav")) == sha1,
+                   "reorganize: moved file has the same SHA-256");
+            checar(mediaC.getChildFile("Concerts/2027/show.wav.xmp").existsAsFile(), "reorganize: the .xmp sidecar went along");
+            bool caixaOk = false;
+            for (const auto& f : mediaC.findChildFiles(juce::File::findDirectories, false)) caixaOk = caixaOk || f.getFileName() == "Fotos";
+            checar(caixaOk && mediaC.getChildFile("Fotos/foto.wav").existsAsFile(), "reorganize: the folder on disk is now 'Fotos' (case changed)");
+            checar(mediaC.getChildFile(juce::String(cons::kPastaSemPasta) + "/velha.wav").existsAsFile(), "reorganize: the deleted folder's file is in _SEM_PASTA");
+            checar(!mediaC.getChildFile("Shows").exists() && !mediaC.getChildFile("Velha").exists() && !mediaC.getChildFile("C").exists() &&
+                       mediaC.getChildFile("A/duas.wav").existsAsFile(),
+                   "reorganize: emptied folders are removed, a folder with a file left stays");
+            auto cont = [&](const std::string& sql) { auto st = regc.prepare(sql); st.step(); return static_cast<int>(st.columnInt(0)); };
+            checar(cont("SELECT COUNT(*) FROM consolidacao_registro WHERE caminho_relativo_destino = 'Concerts/2027/show.wav'") == 1 &&
+                       cont("SELECT COUNT(*) FROM consolidacao_registro") == 6,
+                   "reorganize: the registry points to the new paths and keeps all 6 copies");
+            checar(cont("SELECT COUNT(*) FROM clone_move_pendente WHERE clone_id = 'clone3'") == 5, "reorganize: the clone gets the 5 moves for its next sync");
+            auto depois = planejarC();
+            bool nadaACopiar = true;
+            for (const auto& ip : depois.itens) nadaACopiar = nadaACopiar && ip.jaConsolidado;
+            checar(depois.movimentosSemPasta.empty() && nadaACopiar, "reorganize: the next plan has nothing to move and nothing to copy");
+        }
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";
         ++falhas;

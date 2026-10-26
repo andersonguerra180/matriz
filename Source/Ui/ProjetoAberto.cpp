@@ -3742,6 +3742,10 @@ bool ProjetoAberto::pastaTemArquivosNoMain(const std::string& pastaId) const {
             if (sc.step()) temConfig = juce::JSON::parse(juce::String::fromUTF8(sc.columnText(0).c_str())).isObject();
         }
         if (temConfig && mapaIdDaPasta(pastaId) != mapaMain) return false;
+        // MAIN por folder map: a pasta fica livre (renomear, mover, mesclar, apagar). O Make
+        // Backup seguinte reorganiza o MAIN pelo mapa — só move, com lista de confirmação
+        // (planejarConsolidacao, ItemPlanejado::reorganizacao). Pasta apagada = _SEM_PASTA.
+        if (temConfig && !mapaMain.empty()) return false;
         // A pasta e todas as subpastas: algum item dali (hoje ou quando foi
         // copiado) já tem cópia registrada no MAIN.
         auto st = leitura().prepare(

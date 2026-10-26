@@ -568,6 +568,15 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
     std::map<std::string, std::vector<size_t>> indicesPorDestino; // caminho final -> índices em plano.itens, pra achar conflito
     std::unordered_set<std::string> itensProcessados;
+    // Reorganização: por cópia física registrada (arquivo + caminho), as linhas do plano que a
+    // usam e a pasta que o mapa dá a cada uma. Item em duas pastas do mapa com uma cópia só =
+    // duas linhas na mesma chave; cópias antigas por pasta = chaves diferentes.
+    struct CandidatoReorg {
+        size_t indice;
+        juce::String registrado;
+        juce::String pastaPlanejada;
+    };
+    std::map<std::string, std::vector<CandidatoReorg>> candidatosReorg;
 
     while (stmt.step()) {
         std::string itemId = stmt.columnText(0);
@@ -865,6 +874,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     const bool existe = noMain.existsAsFile();
                     ip.registradoDivergente = existe && tamRegistrado > 0 && noMain.getSize() != tamRegistrado;
                     ip.jaConsolidado = !forcarRebackup && existe && !ip.registradoDivergente;
+                    if (semPastaFisica && ip.jaConsolidado)
+                        candidatosReorg[ip.arquivoId + "\n" + registrado.toStdString()].push_back(
+                            {plano.itens.size(), registrado, pastaDestinoStr});
                 }
             } else {
                 ip.jaConsolidado = false;
@@ -885,6 +897,44 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
         plano.nomesEmConflito.push_back(juce::String(caminho));
         for (auto idx : indices) plano.itens[idx].emConflito = true;
+    }
+
+    // MAIN por folder map: o mapa manda. Cópia registrada fora da pasta que o mapa dá hoje (pasta
+    // renomeada/movida/apagada, item trocado de pasta) vira um move — nunca recópia, nunca apaga.
+    // Mantém o nome registrado: só a pasta muda. Pasta apagada / item sem pasta = _SEM_PASTA.
+    // Se alguma linha do item já está na pasta da cópia, ela fica onde está.
+    if (!candidatosReorg.empty()) {
+        std::set<std::string> ocupados;  // sem caixa: APFS e NTFS não distinguem
+        for (const auto& it : plano.itens) ocupados.insert(it.caminhoRelativoDestino.toLowerCase().toStdString());
+        for (const auto& [chave, cands] : candidatosReorg) {
+            const juce::String& registrado = cands.front().registrado;
+            const int barra = registrado.lastIndexOfChar('/');
+            const juce::String dirRegistrado = barra >= 0 ? registrado.substring(0, barra) : juce::String();
+            bool noLugar = false;
+            for (const auto& c : cands)
+                if (c.pastaPlanejada == dirRegistrado) { noLugar = true; break; }
+            if (noLugar) continue;
+            const juce::String nome = registrado.substring(barra + 1);
+            const juce::String dirNovo = cands.front().pastaPlanejada;
+            auto montar = [&dirNovo](const juce::String& n) { return dirNovo.isEmpty() ? n : dirNovo + "/" + n; };
+            juce::String alvo = montar(nome);
+            // Só caixa ("fotos" -> "Fotos"): o mesmo caminho pro disco, sem sufixo.
+            if (!alvo.equalsIgnoreCase(registrado)) {
+                const int ponto = nome.lastIndexOfChar('.');
+                const juce::String base = ponto > 0 ? nome.substring(0, ponto) : nome;
+                const juce::String ext = ponto > 0 ? nome.substring(ponto) : juce::String();
+                int tentativa = 1;
+                while (ocupados.count(alvo.toLowerCase().toStdString()) || destino.getChildFile(alvo).exists())
+                    alvo = montar(base + "_" + juce::String(tentativa++) + ext);
+            }
+            ocupados.insert(alvo.toLowerCase().toStdString());
+            ItemPlanejado mv = plano.itens[cands.front().indice];
+            mv.moverDe = registrado;
+            mv.caminhoRelativoDestino = alvo;
+            mv.reorganizacao = true;
+            plano.movimentosSemPasta.push_back(std::move(mv));
+            for (const auto& c : cands) plano.itens[c.indice].caminhoRelativoDestino = alvo;
+        }
     }
 
     auto stmtNaoOrg = registro.prepare(
@@ -934,6 +984,61 @@ std::map<std::string, std::string> codigosDeSource(matriz::db::Database& registr
     return out;
 }
 
+namespace {
+
+bool ehLixoDeSistema(const juce::File& f) {
+    const auto n = f.getFileName();
+    return n == ".DS_Store" || n.equalsIgnoreCase("Thumbs.db") || n.equalsIgnoreCase("desktop.ini");
+}
+
+// Pasta que ficou vazia depois dos moves (só sobra lixo de sistema): sai, e o pai também,
+// até Media/. Nunca apaga pasta com qualquer outro arquivo.
+void apagarPastasQueFicaramVazias(const juce::File& media, const std::set<juce::String>& dirsRel) {
+    for (const auto& rel : dirsRel) {
+        juce::File d = media.getChildFile(rel);
+        while (d.isDirectory() && d != media && d.isAChildOf(media)) {
+            bool soLixo = true;
+            for (const auto& f : d.findChildFiles(juce::File::findFilesAndDirectories, false))
+                if (!ehLixoDeSistema(f)) { soLixo = false; break; }
+            if (!soLixo) break;
+            for (const auto& f : d.findChildFiles(juce::File::findFiles, false)) f.deleteFile();
+            if (!d.deleteFile()) break;
+            d = d.getParentDirectory();
+        }
+    }
+}
+
+// Rename "só de caixa" ("fotos/a.jpg" -> "Fotos/a.jpg"): no APFS/NTFS os dois caminhos são o
+// mesmo arquivo, então renomeia cada segmento que mudou (pasta e/ou nome) passando por um nome
+// temporário. Já certo no disco (outro arquivo da mesma pasta fez antes) = nada a fazer.
+bool alinharCaixa(const juce::File& media, const juce::String& deRel, const juce::String& paraRel, std::string& erro) {
+    juce::StringArray de, para;
+    de.addTokens(deRel, "/", "");
+    para.addTokens(paraRel, "/", "");
+    if (de.size() != para.size()) { erro = "case-only rename with different depth"; return false; }
+    juce::File base = media;
+    for (int i = 0; i < para.size(); ++i) {
+        juce::String noDisco;  // o nome como está gravado no disco (a caixa real)
+        for (const auto& f : base.findChildFiles(juce::File::findFilesAndDirectories, false))
+            if (f.getFileName().equalsIgnoreCase(para[i])) { noDisco = f.getFileName(); break; }
+        if (noDisco.isEmpty()) { erro = "not found in the MAIN: " + base.getChildFile(de[i]).getFullPathName().toStdString(); return false; }
+        if (noDisco != para[i]) {
+            // moveFileTo apaga o alvo se ele existir: passando pelo temporário, nenhum dos dois existe.
+            const juce::File temp = base.getChildFile(para[i] + ".bkr-caixa-" + juce::String(juce::Random::getSystemRandom().nextInt(1000000)));
+            if (!base.getChildFile(noDisco).moveFileTo(temp)) { erro = "rename failed: " + noDisco.toStdString(); return false; }
+            if (!temp.moveFileTo(base.getChildFile(para[i]))) {
+                temp.moveFileTo(base.getChildFile(noDisco));
+                erro = "rename failed: " + para[i].toStdString();
+                return false;
+            }
+        }
+        base = base.getChildFile(para[i]);
+    }
+    return true;
+}
+
+}  // namespace
+
 ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                                 const juce::File& destino,
                                                 const std::vector<ItemPlanejado>& movimentos,
@@ -941,6 +1046,7 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
     ResultadoMovimentos resultado;
     const int total = static_cast<int>(movimentos.size());
     int feito = 0;
+    std::set<juce::String> dirsDeOrigem;  // reorganização: pastas que podem ter ficado vazias
     for (const auto& mv : movimentos) {
         if (aoProgredir && !aoProgredir(feito, total)) {
             resultado.cancelado = true;
@@ -951,28 +1057,41 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
             if (mv.moverDe.isEmpty()) continue;
             juce::File origem = destino.getChildFile(mv.moverDe);
             juce::File alvo = destino.getChildFile(mv.caminhoRelativoDestino);
-            const bool origemExiste = origem.existsAsFile();
-            const bool alvoExiste = alvo.existsAsFile();
-            if (!origemExiste && !alvoExiste)
-                throw std::runtime_error("file not found in the MAIN (_SEM_PASTA)");
-            if (origemExiste && alvoExiste)
-                throw std::runtime_error("target already exists, not overwritten: " + mv.caminhoRelativoDestino.toStdString());
-            if (origemExiste) {
-                alvo.getParentDirectory().createDirectory();
-                if (!origem.moveFileTo(alvo) || !alvo.existsAsFile())
-                    throw std::runtime_error("move failed: " + mv.caminhoRelativoDestino.toStdString());
-                // Capa que viajou junto da cópia (mesmo nome-base, extensão da capa).
-                try {
-                    auto stCapa = registro.prepare(
-                        "SELECT caminho_relativo FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
-                    stCapa.bind(1, Value::of(mv.itemId));
-                    if (stCapa.step()) {
-                        const juce::String ext = juce::File(juce::String::fromUTF8(stCapa.columnText(0).c_str())).getFileExtension();
-                        juce::File capaOrigem = origem.getParentDirectory().getChildFile(origem.getFileNameWithoutExtension() + ext);
-                        juce::File capaAlvo = alvo.getParentDirectory().getChildFile(alvo.getFileNameWithoutExtension() + ext);
-                        if (capaOrigem.existsAsFile() && !capaAlvo.existsAsFile()) capaOrigem.moveFileTo(capaAlvo);
-                    }
-                } catch (...) {}
+            const bool soCaixa = mv.moverDe != mv.caminhoRelativoDestino && mv.moverDe.equalsIgnoreCase(mv.caminhoRelativoDestino);
+            if (soCaixa) {
+                std::string erro;
+                if (!alinharCaixa(destino, mv.moverDe, mv.caminhoRelativoDestino, erro)) throw std::runtime_error(erro);
+            } else {
+                const bool origemExiste = origem.existsAsFile();
+                const bool alvoExiste = alvo.existsAsFile();
+                if (!origemExiste && !alvoExiste)
+                    throw std::runtime_error(mv.reorganizacao ? "file not found in the MAIN: " + mv.moverDe.toStdString()
+                                                              : "file not found in the MAIN (_SEM_PASTA)");
+                if (origemExiste && alvoExiste)
+                    throw std::runtime_error("target already exists, not overwritten: " + mv.caminhoRelativoDestino.toStdString());
+                if (origemExiste) {
+                    alvo.getParentDirectory().createDirectory();
+                    if (!origem.moveFileTo(alvo) || !alvo.existsAsFile())
+                        throw std::runtime_error("move failed: " + mv.caminhoRelativoDestino.toStdString());
+                    // Sidecar XMP ("<arquivo.ext>.xmp", ver MetadadoEmbutido) vai junto; nunca sobrescreve.
+                    const juce::File xmpOrigem = origem.getSiblingFile(origem.getFileName() + ".xmp");
+                    const juce::File xmpAlvo = alvo.getSiblingFile(alvo.getFileName() + ".xmp");
+                    if (xmpOrigem.existsAsFile() && !xmpAlvo.exists()) xmpOrigem.moveFileTo(xmpAlvo);
+                    // Capa que viajou junto da cópia (mesmo nome-base, extensão da capa).
+                    try {
+                        auto stCapa = registro.prepare(
+                            "SELECT caminho_relativo FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
+                        stCapa.bind(1, Value::of(mv.itemId));
+                        if (stCapa.step()) {
+                            const juce::String ext = juce::File(juce::String::fromUTF8(stCapa.columnText(0).c_str())).getFileExtension();
+                            juce::File capaOrigem = origem.getParentDirectory().getChildFile(origem.getFileNameWithoutExtension() + ext);
+                            juce::File capaAlvo = alvo.getParentDirectory().getChildFile(alvo.getFileNameWithoutExtension() + ext);
+                            if (capaOrigem.existsAsFile() && !capaAlvo.existsAsFile()) capaOrigem.moveFileTo(capaAlvo);
+                        }
+                    } catch (...) {}
+                    if (mv.reorganizacao && mv.moverDe.containsChar('/'))
+                        dirsDeOrigem.insert(mv.moverDe.upToLastOccurrenceOf("/", false, false));
+                }
             }
             // (origem ausente + alvo presente = move já feito, registro atrasado: só atualiza o banco.)
             // Só as gravações no banco seguram o writeMutex (a cópia/move acima não): quem chama de uma thread de
@@ -988,24 +1107,25 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
                 stSha.bind(3, Value::of(mv.moverDe.toStdString()));
                 if (stSha.step()) shaMovido = stSha.columnText(0);
             } catch (...) {}
-            try {
-                registro.run("UPDATE consolidacao_registro SET pasta_id = ?, caminho_relativo_destino = ? "
-                             "WHERE item_id = ? AND arquivo_id = ? AND caminho_relativo_destino = ?",
-                             {Value::of(mv.pastaId), Value::of(mv.caminhoRelativoDestino.toStdString()),
-                              Value::of(mv.itemId), Value::of(mv.arquivoId), Value::of(mv.moverDe.toStdString())});
-            } catch (...) {
-                // Já existe registro (item, pasta nova, arquivo, destino): fica só ele.
-                registro.run("DELETE FROM consolidacao_registro WHERE item_id = ? AND arquivo_id = ? "
-                             "AND caminho_relativo_destino = ?",
-                             {Value::of(mv.itemId), Value::of(mv.arquivoId), Value::of(mv.moverDe.toStdString())});
-            }
+            // Todas as linhas desta cópia (uma por pasta do item) apontam pro caminho novo; a pasta
+            // nova vai pra uma delas, se não colidir com o UNIQUE (item, pasta, arquivo, destino).
+            // Nunca DELETE: perder a linha faria o próximo backup recopiar o arquivo.
+            registro.run("UPDATE consolidacao_registro SET caminho_relativo_destino = ? "
+                         "WHERE item_id = ? AND arquivo_id = ? AND caminho_relativo_destino = ?",
+                         {Value::of(mv.caminhoRelativoDestino.toStdString()), Value::of(mv.itemId),
+                          Value::of(mv.arquivoId), Value::of(mv.moverDe.toStdString())});
+            registro.run("UPDATE OR IGNORE consolidacao_registro SET pasta_id = ? WHERE rowid = ("
+                         "SELECT rowid FROM consolidacao_registro WHERE item_id = ? AND arquivo_id = ? "
+                         "AND caminho_relativo_destino = ? ORDER BY (pasta_id = ?) DESC LIMIT 1)",
+                         {Value::of(mv.pastaId), Value::of(mv.itemId), Value::of(mv.arquivoId),
+                          Value::of(mv.caminhoRelativoDestino.toStdString()), Value::of(mv.pastaId)});
             try {
                 anotarMovePendentePraClones(registro, "arquivo", mv.moverDe.toStdString(),
                                             mv.caminhoRelativoDestino.toStdString(), shaMovido);
             } catch (...) {}
             if (trava.owns_lock()) trava.unlock();
             matriz::model::ProjectLog pLog(pastaProjeto);
-            pLog.appendEntry("Media Moved Out Of _SEM_PASTA",
+            pLog.appendEntry(mv.reorganizacao ? "Media Reorganized In MAIN (folder map)" : "Media Moved Out Of _SEM_PASTA",
                              {"Item: " + juce::String::fromUTF8(mv.codigoAcervo.c_str()), "From: " + mv.moverDe,
                               "To: " + mv.caminhoRelativoDestino});
             ++resultado.movidos;
@@ -1013,6 +1133,7 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
             resultado.falhas.push_back(mv.codigoAcervo + ": " + e.what());
         }
     }
+    apagarPastasQueFicaramVazias(destino, dirsDeOrigem);
     return resultado;
 }
 

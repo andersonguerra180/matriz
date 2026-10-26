@@ -3593,8 +3593,9 @@ void BackupWorkspaceComponent::atualizarResumo() {
                 autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId, /*estritoAoDestino*/ rebuild);
 
             std::vector<matriz::consolidacao::ItemPlanejado> mv;
+            // A reorganização vale pro MAIN inteiro: uma pasta renomeada não pode ficar meio no lugar antigo.
             for (auto& m : r.plano.movimentosSemPasta)
-                if (itemIds.count(m.itemId)) mv.push_back(std::move(m));
+                if (m.reorganizacao || itemIds.count(m.itemId)) mv.push_back(std::move(m));
             r.plano.movimentosSemPasta = std::move(mv);
             std::vector<matriz::consolidacao::ItemPlanejado> filtrados;
             for (auto& item : r.plano.itens) {
@@ -3669,9 +3670,12 @@ void BackupWorkspaceComponent::aplicarPlanoCalculado(ResultadoPlano r, bool forc
     // o motivo vai junto do resumo sempre que o backup não puder rodar.
     const bool soMovimentos = plano_.itens.empty() && !plano_.movimentosSemPasta.empty();
     bool pronto = plano_.podeConsolidar() && (!plano_.itens.empty() || soMovimentos);
-    if (!plano_.movimentosSemPasta.empty())
-        summary += "  -  " + matriz::i18n::t("backup.mover_sem_pasta_resumo")
+    if (!plano_.movimentosSemPasta.empty()) {
+        const bool reorganiza = std::any_of(plano_.movimentosSemPasta.begin(), plano_.movimentosSemPasta.end(),
+                                            [](const auto& m) { return m.reorganizacao; });
+        summary += "  -  " + matriz::i18n::t(reorganiza ? "backup.reorganizar_resumo" : "backup.mover_sem_pasta_resumo")
                                  .replace("{n}", juce::String(static_cast<int>(plano_.movimentosSemPasta.size())));
+    }
     if (plano_.itens.empty() && !soMovimentos)
         summary += isPt ? juce::String::fromUTF8("  -  NÃO É POSSÍVEL EXECUTAR: nenhum item corresponde à seleção.")
                         : "  -  CANNOT RUN: no assets match the selection.";
@@ -4334,7 +4338,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
             movs = matriz::consolidacao::executarMovimentosSemPasta(
                 pProjeto->projeto().registro(), pProjeto->projeto().pasta(), destinoMedia, plano.movimentosSemPasta,
                 [aviso, cancelamento, self](int feito, int total) {
-                    aviso("Moving " + juce::String(feito) + " of " + juce::String(total) + " out of _SEM_PASTA...", feito, total, 0);
+                    aviso("Moving " + juce::String(feito) + " of " + juce::String(total) + " inside the MAIN...", feito, total, 0);
                     return !cancelamento->pedido() && !self->cancelarExport_->load();
                 },
                 &pProjeto->projeto().writeMutex());
@@ -4918,18 +4922,38 @@ void BackupWorkspaceComponent::perguntarApagarMainAntigo(const juce::File& raizA
 }
 
 void BackupWorkspaceComponent::perguntarMoverSemPasta() {
-    juce::String lista;
-    int n = 0;
+    // Agrupado por pasta (de -> para, com a contagem): uma pasta renomeada é uma linha, não mil.
+    auto pastaDe = [](const juce::String& rel) {
+        return rel.containsChar('/') ? rel.upToLastOccurrenceOf("/", false, false) : juce::String("Media");
+    };
+    std::vector<std::pair<std::pair<juce::String, juce::String>, int>> grupos;
+    std::map<std::pair<juce::String, juce::String>, size_t> indiceGrupo;
+    bool reorganiza = false;
     for (const auto& m : plano_.movimentosSemPasta) {
-        if (n++ >= 12) break;
-        lista << "\n" << juce::String::fromUTF8(m.codigoAcervo.c_str()) << ":  " << m.moverDe << "  ->  " << m.caminhoRelativoDestino;
+        reorganiza = reorganiza || m.reorganizacao;
+        const auto chave = std::make_pair(pastaDe(m.moverDe), pastaDe(m.caminhoRelativoDestino));
+        auto it = indiceGrupo.find(chave);
+        if (it == indiceGrupo.end()) {
+            indiceGrupo[chave] = grupos.size();
+            grupos.push_back({chave, 1});
+        } else {
+            ++grupos[it->second].second;
+        }
     }
+    constexpr int kMaxLinhas = 15;
+    juce::String lista;
+    for (size_t g = 0; g < grupos.size() && g < static_cast<size_t>(kMaxLinhas); ++g)
+        lista << "\n" << grupos[g].first.first << "/  ->  " << grupos[g].first.second << "/   ("
+              << matriz::i18n::t("backup.reorganizar_n_arquivos").replace("{n}", juce::String(grupos[g].second)) << ")";
+    if (grupos.size() > static_cast<size_t>(kMaxLinhas))
+        lista << "\n" << matriz::i18n::t("backup.reorganizar_mais_pastas")
+                             .replace("{n}", juce::String(static_cast<int>(grupos.size()) - kMaxLinhas));
     const int total = static_cast<int>(plano_.movimentosSemPasta.size());
-    if (total > 12) lista << "\n... +" << (total - 12);
 
     PainelOverlay::Config cfg;
-    cfg.titulo = matriz::i18n::t("backup.mover_sem_pasta_titulo");
-    cfg.mensagem = matriz::i18n::t("backup.mover_sem_pasta_msg").replace("{n}", juce::String(total)) + "\n" + lista;
+    cfg.titulo = matriz::i18n::t(reorganiza ? "backup.reorganizar_titulo" : "backup.mover_sem_pasta_titulo");
+    cfg.mensagem = matriz::i18n::t(reorganiza ? "backup.reorganizar_msg" : "backup.mover_sem_pasta_msg")
+                       .replace("{n}", juce::String(total)) + "\n" + lista;
     cfg.botoes = {
         { matriz::i18n::t("backup.mover_sem_pasta_mover"), 1, true, false },
         { matriz::i18n::t("backup.mover_sem_pasta_pular"), 2, false, false },
