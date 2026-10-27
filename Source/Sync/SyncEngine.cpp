@@ -351,6 +351,8 @@ PlanoSync SyncEngine::escanearEComparar(const juce::File& referenciaRaiz,
 
         std::vector<ItemSync> novos;
         std::vector<ItemSync> removidos;
+        std::vector<const ArquivoScan*> novosFisicos;
+        std::vector<const ArquivoScan*> removidosFisicos;
 
         // Arquivos presentes na referência
         for (const auto& r : refFiles) {
@@ -394,6 +396,7 @@ PlanoSync SyncEngine::escanearEComparar(const juce::File& referenciaRaiz,
                 item.tamanhoBytes = r.tamanhoBytes;
                 item.sha256Ref = r.sha256;
                 novos.push_back(std::move(item));
+                novosFisicos.push_back(&r);
             }
         }
 
@@ -406,20 +409,46 @@ PlanoSync SyncEngine::escanearEComparar(const juce::File& referenciaRaiz,
                 item.tamanhoBytes = a.tamanhoBytes;
                 item.sha256Alvo = a.sha256;
                 removidos.push_back(std::move(item));
+                removidosFisicos.push_back(&a);
             }
         }
 
         // Pareamento de MOVIDO (mesmo SHA-256 entre novo e removido)
         std::vector<bool> novoUsado(novos.size(), false);
         std::vector<bool> removidoUsado(removidos.size(), false);
+        std::vector<std::string> hashRealNovos(novos.size()), hashRealRemovidos(removidos.size());
+        std::vector<bool> hashNovoCalculado(novos.size(), false), hashRemovidoCalculado(removidos.size(), false);
+        bool canceladoNoPareamento = false;
 
         for (size_t ni = 0; ni < novos.size(); ++ni) {
             for (size_t ri = 0; ri < removidos.size(); ++ri) {
                 if (removidoUsado[ri]) continue;
-                if (!novos[ni].sha256Ref.empty() && novos[ni].sha256Ref == removidos[ri].sha256Alvo) {
+                std::string shaNovo = novos[ni].sha256Ref;
+                std::string shaRemovido = removidos[ri].sha256Alvo;
+                if (!modoCompletoSha256) {
+                    if (novos[ni].tamanhoBytes != removidos[ri].tamanhoBytes) continue;
+                    auto continuar = [&] { return !cancelamento || !cancelamento->pedido(); };
+                    if (!hashNovoCalculado[ni]) {
+                        bool abortado = false;
+                        hashRealNovos[ni] = matriz::ingest::sha256DoArquivo(novosFisicos[ni]->arquivoFisico, continuar, &abortado);
+                        hashNovoCalculado[ni] = true;
+                        if (abortado) { canceladoNoPareamento = true; break; }
+                    }
+                    if (!hashRemovidoCalculado[ri]) {
+                        bool abortado = false;
+                        hashRealRemovidos[ri] = matriz::ingest::sha256DoArquivo(removidosFisicos[ri]->arquivoFisico, continuar, &abortado);
+                        hashRemovidoCalculado[ri] = true;
+                        if (abortado) { canceladoNoPareamento = true; break; }
+                    }
+                    shaNovo = hashRealNovos[ni];
+                    shaRemovido = hashRealRemovidos[ri];
+                }
+                if (!shaNovo.empty() && shaNovo == shaRemovido) {
                     // Pareado como MOVIDO
                     ItemSync item = novos[ni];
                     item.classe = ClasseSync::Movido;
+                    item.sha256Ref = shaNovo;
+                    item.sha256Alvo = shaRemovido;
                     item.caminhoOrigemMovido = removidos[ri].caminhoRelativo;
                     plano.totalMovidos++;
                     plano.itens.push_back(std::move(item));
@@ -428,7 +457,9 @@ PlanoSync SyncEngine::escanearEComparar(const juce::File& referenciaRaiz,
                     break;
                 }
             }
+            if (canceladoNoPareamento) break;
         }
+        if (canceladoNoPareamento) return;
 
         // Os novos não pareados viram NOVO
         for (size_t ni = 0; ni < novos.size(); ++ni) {
@@ -452,7 +483,9 @@ PlanoSync SyncEngine::escanearEComparar(const juce::File& referenciaRaiz,
     };
 
     processarCategoria(refMediaFiles, alvoMediaFiles, CategoriaSync::Media);
+    if (cancelamento && cancelamento->pedido()) return plano;
     processarCategoria(refProjFiles, alvoProjFiles, CategoriaSync::Project);
+    if (cancelamento && cancelamento->pedido()) return plano;
 
     // Validação de espaço livre no alvo
     juce::int64 espacoDisponivel = alvoRaiz.getBytesFreeOnVolume();
@@ -953,7 +986,7 @@ PlanoSync SyncEngine::compararCloneDoMain(matriz::model::Project& projeto, const
         vazio.errosValidacao.push_back("Clone offline or not registered");
         return vazio;
     }
-    return escanearEComparar(matriz::model::normalizarParaRaizDestino(projeto.raiz()), cloneRaiz, false);
+    return escanearEComparar(matriz::model::normalizarParaRaizDestino(projeto.raiz()), cloneRaiz, true);
 }
 
 ResultadoSync SyncEngine::sincronizarCloneDoMain(matriz::model::Project& projeto, const std::string& cloneId,

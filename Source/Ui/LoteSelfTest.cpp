@@ -9,6 +9,7 @@
 #include <thread>
 
 #include <chrono>
+#include <cstring>
 #include <functional>
 #include <future>
 #include <map>
@@ -1458,6 +1459,31 @@ void rodarTestesPacote(const Checar& checar) {
             checar(matriz::model::ProjectLog(pb.projeto().pasta()).readContent().contains("Collection Package Completed"),
                    "COMPLETE PACKAGE is in the project log");
             copia.getParentDirectory().deleteRecursively();
+        }
+
+        {
+            const auto copiaHash = raiz.getChildFile("verificar_hash/Pacote");
+            copiaHash.getParentDirectory().createDirectory();
+            pacote.copyDirectoryTo(copiaHash);
+            const auto arquivoAlterado = copiaHash.getChildFile("Media/Shows/2015/faixa1.wav");
+            std::vector<juce::uint8> bytes(static_cast<size_t>(arquivoAlterado.getSize()), 0x55);
+            arquivoAlterado.replaceWithData(bytes.data(), bytes.size());
+            const std::vector<std::pair<std::string, juce::String>> mapas{{mapa, "Mapa B"}};
+            const auto rapida = pk::verificarPacote(reg, pb.projeto().pasta(), copiaHash, {}, mapas, {});
+            const auto completa = pk::verificarPacote(reg, pb.projeto().pasta(), copiaHash, {}, mapas, {}, {}, true);
+            bool hashDiferente = false;
+            for (const auto& pr : completa.problemas)
+                hashDiferente = hashDiferente || (pr.tipo == pk::TipoProblema::HashDiferente && pr.itemId == ids[0]);
+            checar(!rapida.hashConferido && rapida.ok == 3 && completa.hashConferido && hashDiferente,
+                   "quick package check accepts same-size content; full SHA-256 check finds the changed file");
+            const auto corrigido = pk::completarPacote(reg, pb.projeto().pasta(), copiaHash, {}, mapas, {});
+            const auto conferidoDepois = pk::verificarPacote(reg, pb.projeto().pasta(), copiaHash, {}, mapas, {}, {}, true);
+            bool aindaDiferente = false;
+            for (const auto& pr : conferidoDepois.problemas)
+                aindaDiferente = aindaDiferente || pr.tipo == pk::TipoProblema::HashDiferente;
+            checar(corrigido.copiados == 1 && conferidoDepois.hashConferido && !aindaDiferente && conferidoDepois.completaveis() == 0,
+                   "COMPLETE PACKAGE recopies same-size content that fails SHA-256");
+            copiaHash.getParentDirectory().deleteRecursively();
         }
 
         // Cancelar no meio: a pasta do pacote não fica.
@@ -3129,6 +3155,45 @@ int rodarLoteSelfTest() {
                           .getChildFile("matriz_lote_selftest_" + juce::Uuid().toDashedString());
     try {
         raiz.createDirectory();
+        {
+            const auto raizRef = raiz.getChildFile("sync_hash_ref");
+            const auto raizAlvo = raiz.getChildFile("sync_hash_alvo");
+            raizRef.createDirectory();
+            raizAlvo.createDirectory();
+            matriz::model::DestinationInfo infoRef, infoAlvo;
+            const auto projetoSync = matriz::model::novoUuid();
+            infoRef.destinationId = "sync-hash-ref";
+            infoRef.projetoId = projetoSync;
+            infoRef.papel = "ORIGINAL";
+            infoAlvo.destinationId = "sync-hash-alvo";
+            infoAlvo.projetoId = projetoSync;
+            infoAlvo.papel = "CLONE";
+            infoRef.gravarEmArquivo(raizRef.getChildFile("destination.json"));
+            infoAlvo.gravarEmArquivo(raizAlvo.getChildFile("destination.json"));
+            const auto arqRef = raizRef.getChildFile("Media").getChildFile("a.bin");
+            const auto arqAlvo = raizAlvo.getChildFile("Media").getChildFile("b.bin");
+            auto escreverBytes = [](const juce::File& arquivo, juce::uint8 primeiroByte) {
+                arquivo.getParentDirectory().createDirectory();
+                juce::MemoryBlock bytes(4096);
+                std::memset(bytes.getData(), primeiroByte, bytes.getSize());
+                arquivo.replaceWithData(bytes.getData(), bytes.getSize());
+            };
+            escreverBytes(arqRef, 'A');
+            escreverBytes(arqAlvo, 'B');
+            auto plano = matriz::sync::SyncEngine::escanearEComparar(raizRef, raizAlvo, false);
+            checar(plano.totalMovidos == 0 && plano.totalNovos == 1 && plano.totalRemovidos == 1,
+                   "quick clone sync does not pair different same-size files as moved");
+            escreverBytes(arqAlvo, 'A');
+            plano = matriz::sync::SyncEngine::escanearEComparar(raizRef, raizAlvo, false);
+            bool hashRealNoMove = false;
+            for (const auto& item : plano.itens)
+                if (item.classe == matriz::sync::ClasseSync::Movido)
+                    hashRealNoMove = item.sha256Ref.size() == 64 && item.sha256Ref == item.sha256Alvo;
+            checar(plano.totalMovidos == 1 && hashRealNoMove,
+                   "quick clone sync confirms identical moved bytes and stores their real SHA-256");
+            raizRef.deleteRecursively();
+            raizAlvo.deleteRecursively();
+        }
         {
             const auto raizSync = raiz.getChildFile("legacy_trash_sync");
             const auto legado = raizSync.getChildFile("_lixeira").getChildFile("sub").getChildFile("velho.txt");

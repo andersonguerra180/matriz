@@ -43,7 +43,8 @@ não devem ser revertidas.
   e não é excluído da importação nem da aba Duplicates. `buscarAssetPorMetadados` não foi alterada. Check puro
   adicionado ao `LoteSelfTest.cpp`; build Debug passa, execução do self-test segue bloqueada pelo SIGABRT acima.
 - **F06 corrigido** (`dbb28b4`): Verify Source agora separa hashes apenas catalogados daqueles que têm registro de consolidação no MAIN; a UI/relatório contabiliza ambas as categorias. Self-test DB-backed adicionado, mas não executável no ambiente atual (SIGABRT ao inicializar NSApplication); build Debug passou.
-- **F05 corrigido**: CHECK de Collection Package oferece modo rápido (tamanho) e completo (SHA-256, leitura cancelável); divergência de hash é completável, e COMPLETE só troca o arquivo após recópia verificada. Self-test cobre alteração de mesmo tamanho e reparo; execução bloqueada pelo SIGABRT de inicialização, build Debug passou.
+- **F05 corrigido** (`693fd2e`): CHECK do Collection Package oferece modo rápido por tamanho ou completo por SHA-256 cancelável. Hash divergente é completável; COMPLETE recopia do MAIN e confere antes de trocar. Build Debug passa; self-test de hash adicionado, mas não executável por SIGABRT em NSApplication.
+- **F04 corrigido** (em andamento): o pareamento rápido de MOVED calcula SHA-256 real sob demanda somente para candidatos de mesmo tamanho; clone segue rápido e a comparação manual usa modo completo. Teste adicionado; execução bloqueada pelo SIGABRT em NSApplication.
 - Ordem combinada com o usuário: (1) F02 + F03 → (2) F01 → (3) F06, F05, F04 → (4) F07/F08 → (5) só plano, sem código:
   F09–F11 (journal/staging), F13 (sidecar da INBOX), F15 (trava/durabilidade), F12, F14, F16, F17.
 - **Dado real afetado por F01**: itens marcados como duplicata pelo wizard só por metadados ficaram FORA do MAIN. A
