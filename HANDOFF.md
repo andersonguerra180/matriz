@@ -4,9 +4,7 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
-## Auditoria externa de 2026-10-27: Fases 1 e 2
-
-Estado atual: branch `fix/auditoria-2026-10-27`; F06/F05/F04 em andamento. Build Debug compilou após as alterações da Fase 3. Os self-tests de app continuam sem iniciar por SIGABRT em `juce::initialiseNSApplication` antes do despacho; não foram considerados aprovados. Próximo passo: F07/F08 e plano das Fases 4–5.
+## Auditoria externa de 2026-10-27: Fases 1 a 3
 
 - Documento: `/Volumes/BUNKER 4TB/BUNKER MICHELE/Auditoria_BKR_Matriz_2026-10-27.pdf`; texto extraído em
   `docs/auditoria_2026-10-27_texto.txt`. A auditoria leu o código de um ZIP (não rodou o app), por isso as linhas
@@ -44,6 +42,8 @@ Estado atual: branch `fix/auditoria-2026-10-27`; F06/F05/F04 em andamento. Build
   O primeiro permanece `duplicata`; o segundo entra com `estado='novo'`, nota localizada `Possible duplicate of...`
   e não é excluído da importação nem da aba Duplicates. `buscarAssetPorMetadados` não foi alterada. Check puro
   adicionado ao `LoteSelfTest.cpp`; build Debug passa, execução do self-test segue bloqueada pelo SIGABRT acima.
+- **F06 corrigido** (`dbb28b4`): Verify Source agora separa hashes apenas catalogados daqueles que têm registro de consolidação no MAIN; a UI/relatório contabiliza ambas as categorias. Self-test DB-backed adicionado, mas não executável no ambiente atual (SIGABRT ao inicializar NSApplication); build Debug passou.
+- **F05 corrigido**: CHECK de Collection Package oferece modo rápido (tamanho) e completo (SHA-256, leitura cancelável); divergência de hash é completável, e COMPLETE só troca o arquivo após recópia verificada. Self-test cobre alteração de mesmo tamanho e reparo; execução bloqueada pelo SIGABRT de inicialização, build Debug passou.
 - Ordem combinada com o usuário: (1) F02 + F03 → (2) F01 → (3) F06, F05, F04 → (4) F07/F08 → (5) só plano, sem código:
   F09–F11 (journal/staging), F13 (sidecar da INBOX), F15 (trava/durabilidade), F12, F14, F16, F17.
 - **Dado real afetado por F01**: itens marcados como duplicata pelo wizard só por metadados ficaram FORA do MAIN. A

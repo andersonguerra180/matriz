@@ -555,7 +555,7 @@ std::set<std::string> codigosComFalhaNosRelatorios(const juce::File& pastaProjet
 Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaProjeto, const juce::File& pastaPacote,
                       const std::set<std::string>& selecaoAtual,
                       const std::vector<std::pair<std::string, juce::String>>& mapas, const std::string& mapaPadrao,
-                      const AoProgredir& aoProgredir) {
+                      const AoProgredir& aoProgredir, bool conferirHash) {
     Verificacao v;
     auto& r = v.r;
     r.pasta = pastaPacote;
@@ -567,6 +567,7 @@ Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaPro
     const Pacote& p = v.pacote;
     r.parcial = p.parcial;
     r.exportadoEm = p.exportadoEm;
+    r.hashConferido = conferirHash;
 
     // Mapa: o id gravado; pacote anterior, pelo nome; senão o padrão.
     for (const auto& [id, nome] : mapas)
@@ -710,7 +711,21 @@ Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaPro
             const juce::File f = p.media().getChildFile(e->caminho);
             if (!f.existsAsFile() || f.getSize() == 0) pr.tipo = TipoProblema::ArquivoAusente;
             else if (e->tamanho > 0 && f.getSize() != e->tamanho) pr.tipo = TipoProblema::ArquivoAlterado;
-            else {
+            else if (conferirHash && e->sha256.size() == 64) {
+                bool abortado = false;
+                const auto sha = matriz::ingest::sha256DoArquivo(
+                    f, [&] { return !aoProgredir || aoProgredir(feito - 1, total); }, &abortado);
+                if (abortado) {
+                    r.cancelado = true;
+                    break;
+                }
+                if (sha.empty() || juce::String(sha).toLowerCase() != juce::String(e->sha256).toLowerCase()) {
+                    pr.tipo = TipoProblema::HashDiferente;
+                } else {
+                    ++r.ok;
+                    continue;
+                }
+            } else {
                 ++r.ok;
                 continue;
             }
@@ -735,8 +750,9 @@ Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaPro
 ResultadoVerificacao verificarPacote(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                      const juce::File& pastaPacote, const std::set<std::string>& selecaoAtual,
                                      const std::vector<std::pair<std::string, juce::String>>& mapas,
-                                     const std::string& mapaPadrao, const AoProgredir& aoProgredir) {
-    return verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, aoProgredir).r;
+                                     const std::string& mapaPadrao, const AoProgredir& aoProgredir,
+                                     bool conferirHash) {
+    return verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, aoProgredir, conferirHash).r;
 }
 
 ResultadoCompletar completarPacote(matriz::db::Database& registro, const juce::File& pastaProjeto,
@@ -744,7 +760,7 @@ ResultadoCompletar completarPacote(matriz::db::Database& registro, const juce::F
                                    const std::vector<std::pair<std::string, juce::String>>& mapas,
                                    const std::string& mapaPadrao, const AoProgredir& aoProgredir) {
     ResultadoCompletar rc;
-    auto v = verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, {});
+    auto v = verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, {}, true);
     if (v.r.status != StatusLeitura::Ok) {
         rc.falhas.push_back(v.r.erro.isNotEmpty() ? v.r.erro.toStdString() : std::string("not a package"));
         return rc;

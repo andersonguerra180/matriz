@@ -5403,6 +5403,11 @@ void BackupWorkspaceComponent::verificarPacoteExistente(const juce::File& pasta,
                                                {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
         return;
     }
+    const bool verificacaoRapida = juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::InfoIcon, matriz::i18n::t("export.pacote_verificar_modo_titulo"),
+        matriz::i18n::t("export.pacote_verificar_modo_corpo"),
+        matriz::i18n::t("export.pacote_verificar_rapida"),
+        matriz::i18n::t("export.pacote_verificar_completa"));
     exportando_ = true;
     resized();
     cancelarExport_->store(false);
@@ -5415,18 +5420,20 @@ void BackupWorkspaceComponent::verificarPacoteExistente(const juce::File& pasta,
     for (auto& m : projeto_.listarFolderMaps()) mapas.push_back({m.id, m.nome});
     auto* projeto = &projeto_.projeto();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    poolExport_.addJob([safeThis, projeto, pasta, selecaoAtual, mapas, mapaPadrao, cancelado] {
+    auto feitoReportado = std::make_shared<std::atomic<int>>(-1);
+    poolExport_.addJob([safeThis, projeto, pasta, selecaoAtual, mapas, mapaPadrao, cancelado, verificacaoRapida, feitoReportado] {
         pk::ResultadoVerificacao r;
         try {
             r = pk::verificarPacote(projeto->registro(), projeto->pasta(), pasta, selecaoAtual, mapas, mapaPadrao,
-                                    [cancelado](int feito, int total) {
-                                        juce::MessageManager::callAsync([feito, total] {
-                                            ProgressoGlobal::obterInstancia().atualizarFracao(
-                                                "export", static_cast<double>(feito) / std::max(1, total),
-                                                juce::String(feito) + " / " + juce::String(total));
-                                        });
+                                    [cancelado, feitoReportado](int feito, int total) {
+                                        if (feitoReportado->exchange(feito) != feito)
+                                            juce::MessageManager::callAsync([feito, total] {
+                                                ProgressoGlobal::obterInstancia().atualizarFracao(
+                                                    "export", static_cast<double>(feito) / std::max(1, total),
+                                                    juce::String(feito) + " / " + juce::String(total));
+                                            });
                                         return !cancelado->load();
-                                    });
+                                    }, !verificacaoRapida);
         } catch (const std::exception& e) {
             r.status = pk::StatusLeitura::Invalido;
             r.erro = e.what();
@@ -5472,6 +5479,7 @@ void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidac
         texto << "[i] " << t("export.pacote_verificar_sem_item").replace("{n}", juce::String(r.registrosSemItem)) << "\n\n";
     if (r.usouSelecaoAtual)
         texto << "[!] " << t("export.pacote_verificar_sel_atual").replace("{n}", juce::String(r.selecionados)) << "\n\n";
+    texto << "• " << t(r.hashConferido ? "export.pacote_verificar_hash_completo" : "export.pacote_verificar_hash_rapido") << "\n\n";
     texto << "• " << (r.problemas.empty() && !r.parcial
                           ? t("export.pacote_verificar_completo").replace("{n}", juce::String(r.selecionados))
                           : t("export.pacote_verificar_resumo")
@@ -5483,6 +5491,7 @@ void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidac
     struct Grupo { pk::TipoProblema tipo; const char* chave; };
     const Grupo grupos[] = {{pk::TipoProblema::ArquivoAusente, "export.pv_ausente"},
                             {pk::TipoProblema::ArquivoAlterado, "export.pv_alterado"},
+                            {pk::TipoProblema::HashDiferente, "export.pv_hash"},
                             {pk::TipoProblema::NaoExportado, "export.pv_nao_exportado"},
                             {pk::TipoProblema::ForaDoMain, "export.pv_fora_main"},
                             {pk::TipoProblema::ConflitoNome, "export.pv_conflito"}};

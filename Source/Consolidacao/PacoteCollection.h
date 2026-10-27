@@ -154,6 +154,7 @@ ResultadoLeitura lerPacote(const juce::File& pasta, bool aceitarParcial = false)
 enum class TipoProblema {
     ArquivoAusente,   // o JSON lista, o arquivo não está no disco (ou está vazio)
     ArquivoAlterado,  // está no disco com outro tamanho (cópia interrompida/truncada)
+    HashDiferente,    // mesmo tamanho, conteúdo não confere com o SHA-256 registrado
     NaoExportado,     // da seleção, mas não está no pacote (falha no export, ou ele foi interrompido)
     ForaDoMain,       // ainda não está no MAIN: nada sai antes do MAIN
     ConflitoNome      // dois itens dariam o mesmo caminho e o planejador não resolveu
@@ -167,6 +168,7 @@ struct Problema {
     // O COMPLETE PACKAGE resolve sozinho (copia ou recopia do MAIN).
     bool completavel() const {
         return tipo == TipoProblema::ArquivoAusente || tipo == TipoProblema::ArquivoAlterado ||
+               tipo == TipoProblema::HashDiferente ||
                tipo == TipoProblema::NaoExportado;
     }
 };
@@ -181,6 +183,7 @@ struct ResultadoVerificacao {
     bool selecaoReconstruida = false;  // pacote anterior: seleção refeita do catálogo + relatórios
     int doCatalogo = 0, doRelatorio = 0, registrosSemItem = 0;
     bool usouSelecaoAtual = false;   // pacote anterior sem nada para refazer: a seleção é a do card B agora
+    bool hashConferido = false;      // false = quick (size), true = full (SHA-256)
     bool cancelado = false;
     int selecionados = 0, ok = 0;
     std::vector<Problema> problemas;
@@ -197,7 +200,8 @@ struct ResultadoVerificacao {
 ResultadoVerificacao verificarPacote(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                      const juce::File& pastaPacote, const std::set<std::string>& selecaoAtual,
                                      const std::vector<std::pair<std::string, juce::String>>& mapas,
-                                     const std::string& mapaPadrao, const AoProgredir& aoProgredir = {});
+                                     const std::string& mapaPadrao, const AoProgredir& aoProgredir = {},
+                                     bool conferirHash = false);
 
 // --- COMPLETE PACKAGE --------------------------------------------------------
 // Resolve no MESMO pacote o que a verificação acha completável: copia do MAIN o
