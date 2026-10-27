@@ -246,7 +246,9 @@ private:
                        const juce::String& nomeMapa, bool embutir);
     // CHECK PACKAGE: confere um pacote já feito (seleção x JSON x disco), em background, e abre o relatório.
     void verificarPacoteExistente(const juce::File& pasta, const std::string& mapaPadrao);
-    void mostrarVerificacaoPacote(const matriz::consolidacao::pacote::ResultadoVerificacao& r);
+    void mostrarVerificacaoPacote(const matriz::consolidacao::pacote::ResultadoVerificacao& r, const juce::String& aviso = {});
+    // COMPLETE PACKAGE: copia para o mesmo pacote o que a verificação achou completável; no fim, verifica de novo.
+    void completarPacoteExistente(const juce::File& pasta, const std::string& mapaPadrao);
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
                        bool marcaDagua, const std::string& mapaId = {}, bool formatoBridge = false, bool bounce = false,

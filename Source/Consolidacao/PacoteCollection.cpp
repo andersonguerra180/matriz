@@ -198,7 +198,7 @@ struct Montagem {
     matriz::db::Database& registro;
     juce::File pastaProjeto, pasta;
     std::string mapaId;
-    juce::String nomeMapa, nomeColecao, exportadoEm;
+    juce::String nomeMapa, nomeColecao, exportadoEm, completadoEm;
     bool embutir = false;
     struct Pasta { juce::String nome; std::string pai; long long ordem = 0; };
     std::map<std::string, Pasta> pastas;  // id -> (nome, pai, ordem)
@@ -242,7 +242,7 @@ struct Montagem {
     // void = o item ainda não está no MAIN (fica de fora). Lança FalhaPacote; no erro só apaga o
     // que esta chamada copiou. `substituir`: o destino pode existir (sobra de cópia interrompida ou
     // arquivo alterado) e só é trocado depois que a cópia nova conferiu.
-    juce::var entregar(const ItemPlanejado& ip, bool substituir) {
+    juce::var entregar(const ItemPlanejado& ip, bool substituir, bool* adotado = nullptr) {
         if (ip.emConflito) throw FalhaPacote(kMotivoConflito, "name conflict at destination");
         // Sempre do MAIN: item que só existe no SOURCE fica de fora.
         auto noMain = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
@@ -252,6 +252,14 @@ struct Montagem {
         const juce::File destino = media().getChildFile(ip.caminhoRelativoDestino);
         if (destino.existsAsFile() && !substituir)
             throw FalhaPacote(kMotivoConflito, "already exists in the package: " + destino.getFullPathName().toStdString());
+        // Sobra de um export interrompido, idêntica ao MAIN: fica onde está (só entra no catálogo).
+        if (substituir && adotado != nullptr && !embutir && destino.existsAsFile() && destino.getSize() == noMain->getSize()) {
+            const std::string sha = juce::String(matriz::ingest::calcularChecksums(destino).sha256).toLowerCase().toStdString();
+            if (!sha.empty() && sha == juce::String(matriz::ingest::calcularChecksums(*noMain).sha256).toLowerCase().toStdString()) {
+                *adotado = true;
+                return registroDe(ip, sha, destino);
+            }
+        }
         // Substituindo: copia ao lado e só troca depois de conferir (o arquivo antigo nunca some antes).
         const juce::File copia = substituir && destino.existsAsFile()
                                      ? destino.getSiblingFile(destino.getFileNameWithoutExtension() + ".matriz-tmp" +
@@ -288,26 +296,30 @@ struct Montagem {
             }
             if (copia != destino && (!destino.deleteFile() || !copia.moveFileTo(destino)))
                 throw FalhaPacote(kMotivoCopia, "could not replace: " + destino.getFullPathName().toStdString());
-
-            auto* reg = new juce::DynamicObject();
-            reg->setProperty("sha256", juce::String(shaEntregue));
-            reg->setProperty("caminho", juce::String(ip.caminhoRelativoDestino).replaceCharacter('\\', '/'));
-            reg->setProperty("item_id", juce::String(ip.itemId));
-            reg->setProperty("codigo", juce::String(ip.codigoAcervo));
-            reg->setProperty("tamanho", destino.getSize());
-            const auto nomesPasta = caminhoDaPasta(ip.pastaId);
-            if (!nomesPasta.isEmpty()) {
-                juce::Array<juce::var> arr;
-                for (const auto& n : nomesPasta) arr.add(n);
-                reg->setProperty("pasta", arr);
-                marcarPastaUsada(ip.pastaId);
-            }
-            escreverJson(lerDadosFicha(registro, ip.itemId, chavesPessoas), *reg);
-            return juce::var(reg);
+            return registroDe(ip, shaEntregue, destino);
         } catch (...) {
             if (copiaDestaChamada && copia.existsAsFile()) copia.deleteFile();
             throw;
         }
+    }
+
+    // Registro do JSON de um arquivo entregue (ficha + de onde veio).
+    juce::var registroDe(const ItemPlanejado& ip, const std::string& sha, const juce::File& entregue) {
+        auto* reg = new juce::DynamicObject();
+        reg->setProperty("sha256", juce::String(sha));
+        reg->setProperty("caminho", juce::String(ip.caminhoRelativoDestino).replaceCharacter('\\', '/'));
+        reg->setProperty("item_id", juce::String(ip.itemId));
+        reg->setProperty("codigo", juce::String(ip.codigoAcervo));
+        reg->setProperty("tamanho", entregue.getSize());
+        const auto nomesPasta = caminhoDaPasta(ip.pastaId);
+        if (!nomesPasta.isEmpty()) {
+            juce::Array<juce::var> arr;
+            for (const auto& n : nomesPasta) arr.add(n);
+            reg->setProperty("pasta", arr);
+            marcarPastaUsada(ip.pastaId);
+        }
+        escreverJson(lerDadosFicha(registro, ip.itemId, chavesPessoas), *reg);
+        return juce::var(reg);
     }
 
     // Árvore de pastas: só as que têm itens do pacote (e seus ancestrais).
@@ -336,6 +348,7 @@ struct Montagem {
         raiz->setProperty("versao", kVersao);
         raiz->setProperty("colecao", nomeColecao);
         raiz->setProperty("exportado_em", exportadoEm);
+        if (completadoEm.isNotEmpty()) raiz->setProperty("completado_em", completadoEm);
         raiz->setProperty("folder_map", nomeMapa);
         raiz->setProperty("mapa_id", juce::String(mapaId));
         raiz->setProperty("embutir", embutir);
@@ -508,6 +521,7 @@ struct Verificacao {
     Pacote pacote;
     std::vector<ItemPlanejado> planejados;     // da seleção, na ordem do planejador
     std::map<std::string, size_t> problemaDe;  // item -> índice em r.problemas
+    std::set<std::string> selecao;             // a que valeu (a gravada ou a atual)
 };
 
 std::string caminhoSemCaixa(const std::string& caminho) {
@@ -542,7 +556,8 @@ Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaPro
             if (id == mapaPadrao) r.nomeMapa = nome;
     }
 
-    std::set<std::string> selecao(p.selecao.begin(), p.selecao.end());
+    auto& selecao = v.selecao;
+    selecao.insert(p.selecao.begin(), p.selecao.end());
     if (selecao.empty()) {
         selecao = selecaoAtual;
         r.usouSelecaoAtual = true;
@@ -614,6 +629,140 @@ ResultadoVerificacao verificarPacote(matriz::db::Database& registro, const juce:
                                      const std::vector<std::pair<std::string, juce::String>>& mapas,
                                      const std::string& mapaPadrao, const AoProgredir& aoProgredir) {
     return verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, aoProgredir).r;
+}
+
+ResultadoCompletar completarPacote(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                   const juce::File& pastaPacote, const std::set<std::string>& selecaoAtual,
+                                   const std::vector<std::pair<std::string, juce::String>>& mapas,
+                                   const std::string& mapaPadrao, const AoProgredir& aoProgredir) {
+    ResultadoCompletar rc;
+    auto v = verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, {});
+    if (v.r.status != StatusLeitura::Ok) {
+        rc.falhas.push_back(v.r.erro.isNotEmpty() ? v.r.erro.toStdString() : std::string("not a package"));
+        return rc;
+    }
+    const Pacote& p = v.pacote;
+
+    // Os registros do JSON como estão (com todos os campos que tiverem): o que não muda fica igual.
+    const juce::File origemJson = pastaPacote.getChildFile(p.parcial ? kArquivoParcial : kArquivoJson);
+    const juce::var antigo = juce::JSON::parse(origemJson.loadFileAsString());
+    juce::Array<juce::var> registros;
+    if (const auto* arr = antigo.getProperty("arquivos", {}).getArray()) registros = *arr;
+    auto caminhoDe = [](const juce::var& e) {
+        return e.getProperty("caminho", {}).toString().replaceCharacter('\\', '/').toLowerCase().toStdString();
+    };
+    auto removerRegistro = [&](const std::string& caminho) {
+        for (int i = registros.size(); --i >= 0;)
+            if (caminhoDe(registros.getReference(i)) == caminhoSemCaixa(caminho)) registros.remove(i);
+    };
+    auto ocupadoNoCatalogo = [&](const juce::String& caminho) {
+        const auto c = caminhoSemCaixa(caminho.toStdString());
+        for (const auto& e : registros)
+            if (caminhoDe(e) == c) return true;
+        return false;
+    };
+
+    Montagem m(registro);
+    m.pastaProjeto = pastaProjeto;
+    m.pasta = pastaPacote;
+    m.mapaId = v.r.mapaId;
+    m.nomeMapa = v.r.nomeMapa.isNotEmpty() ? v.r.nomeMapa : p.folderMap;
+    m.nomeColecao = p.colecao;
+    m.exportadoEm = p.exportadoEm;
+    m.embutir = p.embutir.value_or(false);
+    m.selecao.assign(v.selecao.begin(), v.selecao.end());
+    m.carregarPastas();
+
+    const juce::String alvoJson = p.parcial ? kArquivoParcial : kArquivoJson;
+    auto gravar = [&](const juce::String& nome) {
+        m.arquivos = registros;
+        return m.gravar(nome, antigo.getProperty("pastas", {}));
+    };
+
+    std::vector<const ItemPlanejado*> aFazer;
+    for (const auto& ip : v.planejados)
+        if (auto it = v.problemaDe.find(ip.itemId); it != v.problemaDe.end() && v.r.problemas[it->second].completavel())
+            aFazer.push_back(&ip);
+    // O que este passo não resolve continua pendente.
+    for (const auto& pr : v.r.problemas)
+        if (!pr.completavel())
+            m.pendencias.push_back({pr.itemId, pr.codigo,
+                                    pr.tipo == TipoProblema::ForaDoMain ? kMotivoForaDoMain : kMotivoConflito, pr.detalhe});
+
+    const juce::uint32 kIntervaloMs = 15000;
+    juce::uint32 ultimo = juce::Time::getMillisecondCounter();
+    const int total = static_cast<int>(aFazer.size());
+    int feito = 0;
+    for (const auto* ipp : aFazer) {
+        if (aoProgredir && !aoProgredir(feito, total)) {
+            rc.cancelado = true;
+            break;
+        }
+        ++feito;
+        const auto& pr = v.r.problemas[v.problemaDe[ipp->itemId]];
+        ItemPlanejado ip = *ipp;
+        // O registro antigo deste item (listado sem arquivo / com outro tamanho) sai do catálogo
+        // quando a cópia nova entra; o arquivo truncado num caminho que deixou de ser o dele também.
+        const bool tinhaRegistro = pr.tipo != TipoProblema::NaoExportado;
+        const std::string proprio = tinhaRegistro ? caminhoSemCaixa(pr.caminho) : std::string();  // o registro antigo dele
+        if (caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString()) != proprio) {
+            // O caminho do planejador já é de outro arquivo do catálogo: nunca passar por cima, vai com _N.
+            const juce::String base = ip.caminhoRelativoDestino;
+            const int ponto = base.lastIndexOfChar('.');
+            const int barra = base.lastIndexOfChar('/');
+            const bool temExt = ponto > barra + 1;
+            for (int n = 1; ocupadoNoCatalogo(ip.caminhoRelativoDestino) &&
+                            caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString()) != proprio;
+                 ++n)
+                ip.caminhoRelativoDestino = (temExt ? base.substring(0, ponto) : base) + "_" + juce::String(n) +
+                                            (temExt ? base.substring(ponto) : juce::String());
+        }
+        try {
+            bool adotado = false;
+            auto reg = m.entregar(ip, /*substituir*/ true, &adotado);
+            if (reg.isVoid()) {
+                m.pendente(ip, kMotivoForaDoMain, "not in the MAIN yet");
+                continue;
+            }
+            if (tinhaRegistro) {
+                removerRegistro(pr.caminho);
+                const juce::File velho = m.media().getChildFile(pr.caminho);
+                if (caminhoSemCaixa(pr.caminho) != caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString()) && velho.existsAsFile())
+                    velho.deleteFile();
+            }
+            removerRegistro(ip.caminhoRelativoDestino.toStdString());
+            registros.add(reg);
+            ++(adotado ? rc.adotados : rc.copiados);
+        } catch (const FalhaPacote& e) {
+            rc.falhas.push_back(ip.codigoAcervo + ": " + e.what());
+            m.pendente(ip, e.motivo, e.what());
+        } catch (const std::exception& e) {
+            rc.falhas.push_back(ip.codigoAcervo + ": " + e.what());
+            m.pendente(ip, kMotivoErro, e.what());
+        }
+        if (juce::Time::getMillisecondCounter() - ultimo >= kIntervaloMs) {
+            gravar(alvoJson);
+            ultimo = juce::Time::getMillisecondCounter();
+        }
+    }
+    // Itens que ficaram para depois (cancelado): continuam pendentes como estavam.
+    for (size_t i = static_cast<size_t>(feito); i < aFazer.size(); ++i) {
+        const auto& pr = v.r.problemas[v.problemaDe[aFazer[i]->itemId]];
+        m.pendencias.push_back({pr.itemId, pr.codigo, kMotivoErro, pr.detalhe.empty() ? "not completed yet" : pr.detalhe});
+    }
+
+    // Cancelado no meio de um export interrompido: continua parcial. Senão o pacote fica com o JSON final.
+    m.completadoEm = juce::String(matriz::model::agoraIso8601());
+    const juce::String destinoJson = (rc.cancelado && p.parcial) ? juce::String(kArquivoParcial) : juce::String(kArquivoJson);
+    if (!gravar(destinoJson)) rc.falhas.push_back("could not write " + destinoJson.toStdString());
+    else if (destinoJson == kArquivoJson) pastaPacote.getChildFile(kArquivoParcial).deleteFile();
+    rc.pendencias = m.pendencias;
+
+    m.registrarNoLog("Collection Package Completed",
+                     {"Package: " + pastaPacote.getFullPathName(), "Folder map: " + m.nomeMapa,
+                      "Copied: " + juce::String(rc.copiados) + "; already there (adopted): " + juce::String(rc.adotados) +
+                          "; failures: " + juce::String((int) rc.falhas.size()) + (rc.cancelado ? " (cancelled)" : "")});
+    return rc;
 }
 
 // ---------------------------------------------------------------------------

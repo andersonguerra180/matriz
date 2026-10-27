@@ -44,7 +44,8 @@ struct DadosStatusBackup {
     int nBloqueados = 0;
     bool rebuild = false;
     bool podeFinalizar = false;
-    std::function<void()> aoRemover, aoMostrarNoGrid, aoFinalizar;
+    int nCompletaveis = -1;       // CHECK PACKAGE: >= 0 mostra COMPLETE PACKAGE (0 = só fecha o JSON de um export interrompido)
+    std::function<void()> aoRemover, aoMostrarNoGrid, aoFinalizar, aoCompletar;
 };
 
 class ErrosBackupDialog : public juce::Component {
@@ -85,6 +86,9 @@ public:
               fechando(d_.aoRemover), d_.nRemoviveis > 0);
         botao(btnMostrar_, matriz::i18n::t("rebuild.btn_mostrar"), fechando(d_.aoMostrarNoGrid), d_.nBloqueados > 0);
         botao(btnFinalizar_, matriz::i18n::t("rebuild.btn_finalizar"), fechando(d_.aoFinalizar), d_.rebuild, d_.podeFinalizar);
+        botao(btnCompletar_, matriz::i18n::t("export.pacote_completar_btn").replace("{n}", juce::String(d_.nCompletaveis)),
+              fechando(d_.aoCompletar), d_.nCompletaveis >= 0);
+        btnCompletar_.setColour(juce::TextButton::buttonColourId, tk.estadoQcOk);
         botao(btnCopiar_, matriz::i18n::t("backup.erros_copiar"), [this] { juce::SystemClipboard::copyTextToClipboard(d_.texto); });
         botao(btnAbrir_, matriz::i18n::t("backup.erros_abrir"), [this] {
             if (!d_.relatorio.startAsProcess()) d_.relatorio.revealToUser();
@@ -108,6 +112,7 @@ public:
             baixo.removeFromRight(8);
         };
         coloca(btnFechar_, 90);
+        coloca(btnCompletar_, 220);
         coloca(btnFinalizar_, 160);
         coloca(btnAbrir_, 130);
         coloca(btnCopiar_, 110);
@@ -138,7 +143,7 @@ private:
     DadosStatusBackup d_;
     juce::Label lblTitulo_;
     juce::TextEditor editor_;
-    juce::TextButton btnRemover_, btnMostrar_, btnFinalizar_, btnCopiar_, btnAbrir_, btnFechar_;
+    juce::TextButton btnRemover_, btnMostrar_, btnFinalizar_, btnCompletar_, btnCopiar_, btnAbrir_, btnFechar_;
 };
 
 
@@ -5379,8 +5384,12 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
                                                         : matriz::i18n::t("export.pacote_fim")
                                                               .replace("{n}", juce::String(r.copiados))
                                                               .replace("{pasta}", r.pasta.getFullPathName());
+            // Falhou algum: o conserto é no MESMO pacote (CHECK + COMPLETE), não exportar tudo de novo.
+            const juce::String dica = !r.cancelado && r.copiados > 0 && !r.falhas.empty()
+                                          ? matriz::i18n::t("export.pacote_fim_falhas_dica")
+                                          : juce::String();
             safeThis->mostrarResultadoExport("export.pacote_titulo", resumo, 0, r.foraDoMain, r.semPasta, "export.pacote_sem_pasta_aviso",
-                                             duplicatas, r.falhas, {}, juce::String(), false, nomeMapa);
+                                             duplicatas, r.falhas, {}, dica, false, nomeMapa);
         });
     });
 }
@@ -5432,7 +5441,8 @@ void BackupWorkspaceComponent::verificarPacoteExistente(const juce::File& pasta,
     });
 }
 
-void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidacao::pacote::ResultadoVerificacao& r) {
+void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidacao::pacote::ResultadoVerificacao& r,
+                                                        const juce::String& aviso) {
     namespace pk = matriz::consolidacao::pacote;
     using matriz::i18n::t;
     if (r.status != pk::StatusLeitura::Ok || r.cancelado) {
@@ -5452,6 +5462,7 @@ void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidac
     texto << "• " << t("export.pacote_verificar_pasta").replace("{pasta}", r.pasta.getFullPathName()) << "\n";
     if (r.exportadoEm.isNotEmpty()) texto << "• " << t("export.pacote_verificar_exportado").replace("{data}", r.exportadoEm) << "\n";
     texto << "• " << t("export.pacote_verificar_mapa").replace("{mapa}", r.nomeMapa) << "\n\n";
+    if (aviso.isNotEmpty()) texto << ">>> " << aviso << "\n\n";
     if (r.parcial) texto << "[!] " << t("export.pacote_verificar_parcial") << "\n\n";
     if (r.usouSelecaoAtual)
         texto << "[!] " << t("export.pacote_verificar_sel_atual").replace("{n}", juce::String(r.selecionados)) << "\n\n";
@@ -5521,7 +5532,65 @@ void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidac
     d.aoMostrarNoGrid = [safeThis, ids] {
         if (safeThis && safeThis->aoAbrirNoGrid) safeThis->aoAbrirNoGrid(ids);
     };
+    if (r.completaveis() > 0 || r.parcial) {
+        d.nCompletaveis = r.completaveis();
+        d.aoCompletar = [safeThis, pasta = r.pasta, mapaId = r.mapaId] {
+            if (safeThis) safeThis->completarPacoteExistente(pasta, mapaId);
+        };
+    }
     ErrosBackupDialog::mostrar(std::move(d), this);
+}
+
+void BackupWorkspaceComponent::completarPacoteExistente(const juce::File& pasta, const std::string& mapaPadrao) {
+    if (exportando_ || !pasta.isDirectory()) return;
+    namespace pk = matriz::consolidacao::pacote;
+    exportando_ = true;
+    resized();
+    cancelarExport_->store(false);
+    auto cancelado = cancelarExport_;
+    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t("export.pacote_completar_titulo"), 0,
+                                                    [cancelado] { cancelado->store(true); });
+    // Mesma seleção da verificação (pacote anterior sem a seleção gravada: a do card B).
+    const std::set<std::string> selecaoAtual = obterItensSelecionadosPeloCriterio();
+    std::vector<std::pair<std::string, juce::String>> mapas;
+    for (auto& m : projeto_.listarFolderMaps()) mapas.push_back({m.id, m.nome});
+    auto* projeto = &projeto_.projeto();
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    poolExport_.addJob([safeThis, projeto, pasta, selecaoAtual, mapas, mapaPadrao, cancelado] {
+        pk::ResultadoCompletar rc;
+        pk::ResultadoVerificacao depois;
+        try {
+            rc = pk::completarPacote(projeto->registro(), projeto->pasta(), pasta, selecaoAtual, mapas, mapaPadrao,
+                                     [cancelado](int feito, int total) {
+                                         juce::MessageManager::callAsync([feito, total] {
+                                             ProgressoGlobal::obterInstancia().atualizarFracao(
+                                                 "export", static_cast<double>(feito) / std::max(1, total),
+                                                 juce::String(feito) + " / " + juce::String(total));
+                                         });
+                                         return !cancelado->load();
+                                     });
+            // O relatório que abre no fim é uma verificação nova: mostra o que de fato ficou no pacote.
+            depois = pk::verificarPacote(projeto->registro(), projeto->pasta(), pasta, selecaoAtual, mapas, mapaPadrao);
+        } catch (const std::exception& e) {
+            rc.falhas.push_back(e.what());
+            depois.status = pk::StatusLeitura::Invalido;
+            depois.erro = e.what();
+        }
+        juce::MessageManager::callAsync([safeThis, rc, depois] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("export");
+            if (safeThis == nullptr) return;
+            safeThis->exportando_ = false;
+            safeThis->resized();
+            juce::String aviso = matriz::i18n::t("export.pacote_completar_resumo")
+                                     .replace("{n}", juce::String(rc.copiados))
+                                     .replace("{a}", juce::String(rc.adotados))
+                                     .replace("{f}", juce::String((int) rc.falhas.size()));
+            if (rc.cancelado) aviso << "\n>>> " << matriz::i18n::t("export.pacote_completar_cancelado");
+            for (size_t i = 0; i < rc.falhas.size() && i < 50; ++i)
+                aviso << "\n    ↳ " << juce::String::fromUTF8(rc.falhas[i].c_str());
+            safeThis->mostrarVerificacaoPacote(depois, aviso);
+        });
+    });
 }
 
 void BackupWorkspaceComponent::atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar) {

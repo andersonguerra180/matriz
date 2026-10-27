@@ -1358,11 +1358,21 @@ void rodarTestesPacote(const Checar& checar) {
             } catch (const std::exception&) {}
             interrompido = destino.getChildFile("Interrompido");
             const auto lp = pk::lerPacote(interrompido, /*aceitarParcial*/ true);
+            const int noDisco = interrompido.getChildFile("Media").findChildFiles(juce::File::findFiles, true, "*.wav").size();
             checar(!pk::pareceUmPacote(interrompido) && pk::lerPacote(interrompido).status == pk::StatusLeitura::NaoEPacote,
                    "an interrupted export is not a package for the INTAKE");
             checar(lp.status == pk::StatusLeitura::Ok && lp.pacote.parcial && lp.pacote.arquivos.size() == 1 &&
                        lp.pacote.selecao.size() == ids.size(),
                    "an interrupted export leaves the partial JSON (selection + what was delivered so far)");
+            // Retomar: o que já está no disco e confere com o MAIN fica (só entra no catálogo), o resto é copiado.
+            const std::vector<std::pair<std::string, juce::String>> mapas{{mapa, "Mapa B"}};
+            auto cr = pk::completarPacote(reg, pb.projeto().pasta(), interrompido, {}, mapas, {});
+            auto vr = pk::verificarPacote(reg, pb.projeto().pasta(), interrompido, {}, mapas, {});
+            checar(pk::pareceUmPacote(interrompido) && !interrompido.getChildFile(pk::kArquivoParcial).exists() &&
+                       cr.adotados == noDisco - (int) lp.pacote.arquivos.size() &&
+                       cr.copiados + cr.adotados + (int) lp.pacote.arquivos.size() == 3 && vr.ok == 3 && vr.completaveis() == 0,
+                   "COMPLETE PACKAGE resumes an interrupted export: keeps what was already copied (" + juce::String(cr.adotados) +
+                       " kept, " + juce::String(cr.copiados) + " copied) and finishes the JSON");
             interrompido.deleteRecursively();
         }
         checar(leitura.status == pk::StatusLeitura::Ok && leitura.pacote.arquivos.size() == 3,
@@ -1426,6 +1436,25 @@ void rodarTestesPacote(const Checar& checar) {
             }
             checar(ausente && alterado && v1.ok == 1 && v1.completaveis() == 2,
                    "CHECK PACKAGE: a missing file and a cut-off file are found, each with its reason");
+
+            // COMPLETE PACKAGE no mesmo pacote: recopia os dois, confere, e rodar de novo não faz nada.
+            auto c1 = pk::completarPacote(reg, pb.projeto().pasta(), copia, {}, mapas, {});
+            auto v2 = pk::verificarPacote(reg, pb.projeto().pasta(), copia, {}, mapas, {});
+            const auto l2 = pk::lerPacote(copia);
+            bool shaOk = l2.pacote.arquivos.size() == 3;
+            for (const auto& a : l2.pacote.arquivos)
+                shaOk = shaOk && juce::String(matriz::ingest::calcularChecksums(copia.getChildFile("Media").getChildFile(a.caminho)).sha256)
+                                         .toLowerCase().toStdString() == a.sha256;
+            checar(c1.copiados == 2 && c1.falhas.empty() && v2.ok == 3 && v2.completaveis() == 0 && shaOk,
+                   "COMPLETE PACKAGE recopies the missing and the cut-off file into the same package (" +
+                       juce::String(c1.copiados) + " copied), each record matching its file");
+            checar(!copia.getChildFile("Media/Shows/faixa3.matriz-tmp.wav").exists() &&
+                       copia.getChildFile("Media/Shows/faixa3.wav").getSize() > 100,
+                   "the cut-off file is replaced only by a verified copy (no temporary file left)");
+            auto c2 = pk::completarPacote(reg, pb.projeto().pasta(), copia, {}, mapas, {});
+            checar(c2.copiados == 0 && c2.adotados == 0 && c2.falhas.empty(), "COMPLETE PACKAGE again copies nothing");
+            checar(matriz::model::ProjectLog(pb.projeto().pasta()).readContent().contains("Collection Package Completed"),
+                   "COMPLETE PACKAGE is in the project log");
             copia.getParentDirectory().deleteRecursively();
         }
 
@@ -1493,6 +1522,14 @@ void rodarTestesPacote(const Checar& checar) {
                            vk.completaveis() == 2,
                        "CHECK PACKAGE on an older package: uses the current selection, finds the listed-but-missing "
                        "twin and the one that never went in");
+                auto ck = pk::completarPacote(reg, pb.projeto().pasta(), rk.pasta, {ia, ib}, {{mapaC, "Mapa C"}}, {});
+                auto vk2 = pk::verificarPacote(reg, pb.projeto().pasta(), rk.pasta, {}, {{mapaC, "Mapa C"}}, {});
+                const auto lk2 = pk::lerPacote(rk.pasta);
+                bool doisArquivos = lk2.pacote.arquivos.size() == 2;
+                for (const auto& a : lk2.pacote.arquivos)
+                    doisArquivos = doisArquivos && rk.pasta.getChildFile("Media").getChildFile(a.caminho).existsAsFile();
+                checar(ck.copiados == 2 && vk2.ok == 2 && vk2.problemas.empty() && !vk2.usouSelecaoAtual && doisArquivos,
+                       "COMPLETE PACKAGE on the older package puts both twins in it and records the selection");
             }
             rk.pasta.deleteRecursively();
         }

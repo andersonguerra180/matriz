@@ -4,6 +4,25 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Collection Package: relatório, CHECK e COMPLETE — `feat/phone-dump-usb`, 2026-10-27
+
+- Origem: pacote real "From 2022 a 2026" (9.737 arquivos) com 46 fotos fora: nomes que só diferem na caixa
+  (`IMG_1255.jpg`/`.JPG`) caíam no mesmo arquivo no HFS+ e o catch do pacote apagava a cópia do outro item. Corrigido em
+  `5525e38` (chave de colisão sem caixa no planejador; no erro só se apaga o que o próprio item copiou).
+- `c9d458c`: o `matriz-pacote.json` guarda `selecao`, `mapa_id`, `embutir`, `pendencias` e, por arquivo, `item_id`/`codigo`/
+  `tamanho` (versão continua 1). Durante o export, `matriz-pacote.parcial.json` (1º arquivo e a cada ~15 s) — o INTAKE não o
+  aceita. `log.md` lista cada pendência.
+- `f1d1166`: VERIFICAR PACOTE EXISTENTE... na janela do Collection Package (`verificarPacote`): seleção (a gravada; pacote
+  anterior = a do card B, com aviso) × JSON × disco, relatório agrupado em `ErrosBackupDialog`, salvo em
+  `Project/relatorios/pacote-verificacao-*.txt`.
+- Commit da fase 3: COMPLETAR PACOTE (`completarPacote`) no mesmo relatório — copia para o mesmo pacote o que falta, recopia
+  sumido/truncado (troca só depois de conferir), retoma export interrompido (arquivo idêntico ao MAIN fica), nunca passa por
+  cima de arquivo de outro item do catálogo (vai com `_N`), grava o JSON final e verifica de novo.
+- Cuidado com pacote anterior (sem `selecao`): a verificação usa a seleção ATUAL do card B — selecionar outra coisa faz o
+  COMPLETE copiar itens que nunca foram do pacote. O relatório mostra a contagem antes do clique.
+- Verificado: `--selftest-lote` (2+7+3+8 checks novos OK; 11 falhas, as do baseline), build Release. Não verificado: clique
+  no app por mim, o pacote real, ASan/TSan, CI Windows.
+
 ## Duplicates em janela + Space Map no Storage — `main` (fast-forward de `feat/phone-dump-usb`), 2026-10-24
 
 - A `feat/phone-dump-usb` virou a `main` oficial (fast-forward, sem merge: a `main` era ancestral dela).

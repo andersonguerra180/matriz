@@ -195,6 +195,25 @@ ResultadoVerificacao verificarPacote(matriz::db::Database& registro, const juce:
                                      const std::vector<std::pair<std::string, juce::String>>& mapas,
                                      const std::string& mapaPadrao, const AoProgredir& aoProgredir = {});
 
+// --- COMPLETE PACKAGE --------------------------------------------------------
+// Resolve no MESMO pacote o que a verificação acha completável: copia do MAIN o
+// que falta, recopia o que sumiu ou foi cortado e retoma um export interrompido
+// (arquivo que já está lá e confere por SHA-256 com o MAIN é só catalogado).
+// Nunca passa por cima de um arquivo de outro item do catálogo (vai com _N) e
+// só troca um arquivo depois que a cópia nova conferiu. Grava o JSON final
+// (o parcial sai) e anota no log.md. Rodar de novo não copia nada.
+struct ResultadoCompletar {
+    int copiados = 0, adotados = 0;
+    std::vector<std::string> falhas;
+    std::vector<Pendencia> pendencias;  // o que continua de fora (fora do MAIN, falhas)
+    bool cancelado = false;             // o que já foi feito fica no catálogo
+};
+
+ResultadoCompletar completarPacote(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                   const juce::File& pastaPacote, const std::set<std::string>& selecaoAtual,
+                                   const std::vector<std::pair<std::string, juce::String>>& mapas,
+                                   const std::string& mapaPadrao, const AoProgredir& aoProgredir = {});
+
 // Grava os dados de ficha no item (item novo do INTAKE). Nomes pela
 // unificação da Fase 1 ("Show" do pacote vira o "Show" que já existe);
 // pessoas entram também na lista PEOPLE. Quem chama segura a transação.
