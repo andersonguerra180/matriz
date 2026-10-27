@@ -1318,36 +1318,27 @@ ComplianceRegra321 avaliarRegra321(db::Database& db)
     ComplianceRegra321 r;
 
     try {
-        auto stmt = db.prepare(
-            "SELECT COUNT(DISTINCT v.id), "
-            "       COUNT(DISTINCT v.tipo), "
-            "       SUM(CASE WHEN v.tipo IN ('nuvem_sync','rede','lto') THEN 1 ELSE 0 END) "
-            "FROM vault v");
+        auto stmt = db.prepare("SELECT COUNT(DISTINCT arquivo_id) FROM consolidacao_registro");
         if (stmt.step()) {
-            r.totalCopias         = stmt.columnInt(0) + 1; // +1 = disco principal
-            r.tiposMidiaDistintos = stmt.columnInt(1) + 1; // +1 = disco principal (local)
-            r.temOffsite          = stmt.columnInt(2) > 0;
+            // A SOURCE e o original de trabalho (uma cópia); MAIN só conta com
+            // evidência de pelo menos um arquivo consolidado.
+            r.totalCopias = 1 + (stmt.columnInt(0) > 0 ? 1 : 0);
         }
     } catch (...) {
         r.totalCopias = 1;
-        r.tiposMidiaDistintos = 1;
     }
 
-    // Contar destinos configurados tambem
     try {
         auto stmt = db.prepare(
-            "SELECT COUNT(DISTINCT tipo), "
-            "       SUM(CASE WHEN tipo IN ('s3','google_drive','nas_smb') THEN 1 ELSE 0 END) "
-            "FROM destino");
-        if (stmt.step()) {
-            int tiposDestino = stmt.columnInt(0);
-            if (tiposDestino > 0) {
-                r.tiposMidiaDistintos = std::max(r.tiposMidiaDistintos,
-                                                  tiposDestino + 1);
-            }
-            if (stmt.columnInt(1) > 0) r.temOffsite = true;
-        }
+            "SELECT COUNT(*) FROM backup_destino "
+            "WHERE papel <> 'ORIGINAL' AND desatualizado_rebuild = 0 AND ultima_revisao_conhecida > 0");
+        if (stmt.step()) r.totalCopias += stmt.columnInt(0);
     } catch (...) {}
+
+    // O banco não comprova o meio físico nem a localização fora do local.
+    // Destinos/vaults cadastrados não são evidência de cópia ou off-site.
+    r.tiposMidiaDistintos = 0;
+    r.temOffsite = false;
 
     bool copias3   = r.totalCopias >= 3;
     bool midias2   = r.tiposMidiaDistintos >= 2;
@@ -1359,7 +1350,7 @@ ComplianceRegra321 avaliarRegra321(db::Database& db)
         std::string detail;
         if (!copias3) detail += std::to_string(r.totalCopias) + "/3 copies; ";
         if (!midias2) detail += std::to_string(r.tiposMidiaDistintos) + "/2 media types; ";
-        if (!offsite1) detail += "no off-site; ";
+        if (!offsite1) detail += "OFF-SITE NOT PROVEN; ";
         if (!detail.empty()) detail.erase(detail.size() - 2);
         r.status = detail;
     }

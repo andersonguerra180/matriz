@@ -41,6 +41,7 @@
 #include "../Consolidacao/BridgeXmp.h"
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/Checksum.h"
+#include "../Preservation/Preservation.h"
 #include "../Ingest/Miniaturas.h"
 #include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
@@ -5485,6 +5486,33 @@ int rodarLoteSelfTest() {
         ProjetoAberto pa(std::move(projeto));
         auto& reg = pa.projeto().registro();
         using matriz::db::Value;
+        const auto backupFixtureItem = matriz::model::novoUuid();
+        const auto eventoAgora = matriz::model::agoraIso8601();
+        reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'CRT-EVENT', 'CRT-EVENT', 'documento', 'novo', ?, ?)",
+                {Value::of(backupFixtureItem), Value::of(projetoId), Value::of(eventoAgora), Value::of(eventoAgora)});
+        auto inserirEventoBackup = [&](const std::string& tipo, const std::string& quando) {
+            reg.run("INSERT INTO preservation_event (id, item_id, event_type, event_date_time, event_outcome, criado_em) "
+                    "VALUES (?, ?, 'BACKUP_VERIFIED', ?, ?, ?)",
+                    {Value::of(matriz::model::novoUuid()), Value::of(backupFixtureItem), Value::of(quando), Value::of(tipo), Value::of(quando)});
+        };
+        inserirEventoBackup("SUCCESS", "2026-01-01T00:00:00Z");
+        inserirEventoBackup("FAILURE", "2026-01-02T00:00:00Z");
+        auto backupStatus = reg.prepare("SELECT backup_status FROM asset_preservation_status WHERE item_id = ?");
+        backupStatus.bind(1, Value::of(backupFixtureItem));
+        checar(backupStatus.step() && backupStatus.columnText(0) != "OK",
+               "latest BACKUP_VERIFIED failure replaces older success in the status view");
+        inserirEventoBackup("SUCCESS", "2026-01-03T00:00:00Z");
+        backupStatus = reg.prepare("SELECT backup_status FROM asset_preservation_status WHERE item_id = ?");
+        backupStatus.bind(1, Value::of(backupFixtureItem));
+        checar(backupStatus.step() && backupStatus.columnText(0) == "OK",
+               "latest successful BACKUP_VERIFIED produces OK");
+        reg.run("INSERT INTO vault (id, nome, tipo, criado_em) VALUES (?, 'V1', 'local', ?), (?, 'V2', 'lto', ?)",
+                {Value::of(matriz::model::novoUuid()), Value::of(matriz::model::agoraIso8601()),
+                 Value::of(matriz::model::novoUuid()), Value::of(matriz::model::agoraIso8601())});
+        const auto semCopias321 = matriz::preservation::avaliarRegra321(reg);
+        checar(semCopias321.status != "OK" && semCopias321.totalCopias == 1 && !semCopias321.temOffsite,
+               "3-2-1 does not count configured vaults as copies or off-site proof");
         auto novo = [&](const std::string& codigo, const std::string& ingerido) {
             auto id = inserirItem(reg, projetoId, codigo, false);
             reg.run("UPDATE arquivo SET criado_em = ? WHERE item_id = ?", {Value::of(ingerido), Value::of(id)});
