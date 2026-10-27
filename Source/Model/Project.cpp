@@ -1057,6 +1057,32 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             "  AND (m.tipo_id IN ('revisar', 'dropout'))");
     } catch (...) {}
 
+    // Atualiza a view em projetos existentes: BACKUP_VERIFIED só vale quando
+    // o evento mais recente do item foi SUCCESS.
+    try {
+        registro.exec(
+            "CREATE VIEW asset_preservation_status AS "
+            "SELECT i.id AS item_id, i.persistent_id, "
+            "CASE WHEN i.persistent_id IS NOT NULL THEN 'OK' ELSE 'UNKNOWN' END AS identity_status, "
+            "CASE WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.checksum_sha256 IS NOT NULL "
+            "AND a.estado_presenca = 'corrompido') THEN 'CRITICAL' "
+            "WHEN EXISTS (SELECT 1 FROM preservation_event pe WHERE pe.item_id = i.id AND pe.event_type = 'FIXITY_CHECK' "
+            "AND pe.event_outcome = 'SUCCESS') THEN 'OK' "
+            "WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.checksum_sha256 IS NOT NULL) THEN 'WARNING' "
+            "ELSE 'UNKNOWN' END AS fixity_status, "
+            "CASE WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.caracteristicas_tecnicas_json "
+            "IS NOT NULL AND a.caracteristicas_tecnicas_json <> '{}') THEN 'OK' ELSE 'UNKNOWN' END AS format_status, "
+            "CASE WHEN (SELECT pe.event_outcome FROM preservation_event pe WHERE pe.item_id = i.id "
+            "AND pe.event_type = 'BACKUP_VERIFIED' ORDER BY pe.event_date_time DESC, pe.criado_em DESC LIMIT 1) = 'SUCCESS' "
+            "THEN 'OK' WHEN EXISTS (SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id) THEN 'WARNING' "
+            "ELSE 'WARNING' END AS backup_status, "
+            "CASE WHEN EXISTS (SELECT 1 FROM preservation_right pr WHERE pr.item_id = i.id AND pr.rights_status <> 'UNKNOWN') "
+            "THEN 'OK' WHEN EXISTS (SELECT 1 FROM preservation_right pr WHERE pr.item_id = i.id) THEN 'WARNING' "
+            "ELSE 'UNKNOWN' END AS rights_status, "
+            "CASE WHEN EXISTS (SELECT 1 FROM preservation_event pe WHERE pe.item_id = i.id AND pe.event_type = 'INGEST') "
+            "THEN 'OK' ELSE 'UNKNOWN' END AS provenance_status FROM item i");
+    } catch (...) {}
+
     // Migração de metadados_editados
     garantirColuna(registro, "item", "metadados_editados", "INTEGER NOT NULL DEFAULT 0");
 

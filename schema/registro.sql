@@ -967,11 +967,9 @@ SELECT
         ELSE 'UNKNOWN'
     END AS format_status,
     CASE
-        WHEN EXISTS (
-            SELECT 1 FROM preservation_event pe
-            WHERE pe.item_id = i.id
-              AND pe.event_type = 'BACKUP_VERIFIED'
-              AND pe.event_outcome = 'SUCCESS')
+        WHEN (SELECT pe.event_outcome FROM preservation_event pe
+              WHERE pe.item_id = i.id AND pe.event_type = 'BACKUP_VERIFIED'
+              ORDER BY pe.event_date_time DESC, pe.criado_em DESC LIMIT 1) = 'SUCCESS'
             THEN 'OK'
         WHEN EXISTS (
             SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id)

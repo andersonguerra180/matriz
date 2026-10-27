@@ -90,8 +90,11 @@ void PreservationWorkspaceComponent::recarregar() {
     backupVerificado_ = 0;
     try {
         auto s = db.prepare(
-            "SELECT COUNT(DISTINCT item_id) FROM preservation_event "
-            "WHERE event_type = 'BACKUP_VERIFIED' AND event_outcome = 'SUCCESS'");
+            "SELECT COUNT(*) FROM ("
+            "  SELECT item_id, event_outcome, ROW_NUMBER() OVER ("
+            "    PARTITION BY item_id ORDER BY event_date_time DESC, criado_em DESC) AS rn "
+            "  FROM preservation_event WHERE event_type = 'BACKUP_VERIFIED'"
+            ") WHERE rn = 1 AND event_outcome = 'SUCCESS'");
         if (s.step()) backupVerificado_ = s.columnInt(0);
     } catch (...) {}
 
@@ -237,10 +240,10 @@ void PreservationWorkspaceComponent::paint(juce::Graphics& g) {
             if (totalAssets_ > 0) {
                 ++checks; if (comPersistentId_ == totalAssets_) ++passed;
                 ++checks; if (comSha256_ == totalAssets_) ++passed;
-                ++checks; if (fixityVerificada_ > 0) ++passed;
+                ++checks; if (fixityVerificada_ == totalAssets_) ++passed;
                 ++checks; if (falhaIntegridade_ == 0) ++passed;
-                ++checks; if (formatoIdentificado_ > 0) ++passed;
-                ++checks; if (backupVerificado_ > 0) ++passed;
+                ++checks; if (formatoIdentificado_ == totalAssets_) ++passed;
+                ++checks; if (backupVerificado_ == totalAssets_) ++passed;
                 ++checks; if (formatosEmRisco_ == 0) ++passed;
                 ++checks; if (regra321Status_ == "OK") ++passed;
                 ++checks; if (vaultsParaRefresh_ == 0) ++passed;
