@@ -16,7 +16,10 @@
 // B gera, pelo EXPORT, uma pasta:
 //     <Nome do pacote>/
 //       Media/               arquivos copiados do MAIN (byte a byte), pelo folder map escolhido
-//       matriz-pacote.json   catálogo dos dados de ficha, um registro por arquivo
+//       matriz-pacote.json   catálogo dos dados de ficha, um registro por arquivo, mais a
+//                            seleção exportada e as pendências (o que ficou de fora e por quê)
+//       matriz-pacote.parcial.json  só durante o export (ou se ele foi interrompido): o
+//                            andamento, para o COMPLETE PACKAGE retomar; o INTAKE o ignora
 // e A ingere essa pasta pelo INTAKE como uma ingestão normal, casando cada
 // arquivo pelo SHA-256 com o registro do JSON.
 //
@@ -44,6 +47,7 @@
 namespace matriz::consolidacao::pacote {
 
 inline constexpr const char* kArquivoJson = "matriz-pacote.json";
+inline constexpr const char* kArquivoParcial = "matriz-pacote.parcial.json";
 inline constexpr const char* kFormato = "matriz-pacote";
 inline constexpr int kVersao = 1;
 
@@ -71,12 +75,24 @@ std::set<std::string> chavesDaListaPessoas(matriz::db::Database& registro);
 void escreverJson(const DadosFicha& dados, juce::DynamicObject& destino);
 DadosFicha lerJson(const juce::var& registro);
 
+// Item da seleção que não entrou no pacote, com o motivo em código (os kMotivo abaixo).
+struct Pendencia {
+    std::string itemId, codigo, motivo, detalhe;
+};
+inline constexpr const char* kMotivoForaDoMain = "fora_do_main";  // ainda não está no MAIN
+inline constexpr const char* kMotivoConflito = "conflito_nome";   // outro arquivo já tem esse caminho
+inline constexpr const char* kMotivoCopia = "falha_copia";        // a cópia falhou (disco, permissão)
+inline constexpr const char* kMotivoChecksum = "checksum";        // a cópia não confere com o MAIN
+inline constexpr const char* kMotivoEmbutir = "embutir";          // não deu pra embutir os metadados
+inline constexpr const char* kMotivoErro = "erro";                // outro erro
+
 struct ResultadoPacote {
     juce::File pasta;       // <destino>/<nome> (com sufixo numérico se já existia)
     int copiados = 0;
     int semPasta = 0;       // da seleção, sem pasta no folder map escolhido — não entram
     int foraDoMain = 0;     // ainda não entraram no MAIN — não entram
     std::vector<std::string> falhas;
+    std::vector<Pendencia> pendencias;  // fora do MAIN + falhas, por item (gravadas no JSON)
     bool cancelado = false; // cancelado: a pasta do pacote é apagada (nada dela é aproveitável)
 };
 
@@ -94,6 +110,8 @@ struct RegistroArquivo {
     std::string sha256;            // do arquivo entregue no pacote
     std::string caminho;           // relativo a Media/, com '/'
     std::vector<juce::String> pasta;  // nomes da raiz até a pasta do item no folder map
+    std::string itemId, codigo;    // item de origem (vazio em pacotes anteriores)
+    juce::int64 tamanho = 0;       // tamanho entregue (0 = desconhecido, pacotes anteriores)
     DadosFicha dados;
 };
 
@@ -102,6 +120,11 @@ struct Pacote {
     juce::String colecao, folderMap, exportadoEm;
     juce::var pastas;              // árvore [{nome, pastas: [...]}]
     std::vector<RegistroArquivo> arquivos;
+    std::vector<std::string> selecao;  // itens exportados (vazio em pacotes anteriores)
+    std::string mapaId;                // vazio em pacotes anteriores
+    std::optional<bool> embutir;       // nullopt em pacotes anteriores
+    std::vector<Pendencia> pendencias;
+    bool parcial = false;              // lido do JSON parcial: o export não terminou
     juce::File media() const { return pasta.getChildFile("Media"); }
     juce::String nome() const { return pasta.getFileName(); }
 };
@@ -116,8 +139,9 @@ struct ResultadoLeitura {
 // Só olha se a pasta tem o JSON (barato — chamável na message thread).
 bool pareceUmPacote(const juce::File& pasta);
 // Lê e valida (formato e versão conhecidos, Media/ presente). Disco: fora da
-// message thread.
-ResultadoLeitura lerPacote(const juce::File& pasta);
+// message thread. `aceitarParcial`: sem o JSON final, lê o parcial de um export
+// interrompido (pacote.parcial = true) — nunca no INTAKE.
+ResultadoLeitura lerPacote(const juce::File& pasta, bool aceitarParcial = false);
 
 // Grava os dados de ficha no item (item novo do INTAKE). Nomes pela
 // unificação da Fase 1 ("Show" do pacote vira o "Show" que já existe);

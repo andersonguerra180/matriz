@@ -1329,6 +1329,42 @@ void rodarTestesPacote(const Checar& checar) {
                "the export is in B's project log");
 
         auto leitura = pk::lerPacote(pacote);
+        {
+            // O pacote guarda o próprio relatório: seleção, item de cada arquivo, pendências com motivo.
+            const auto& pc = leitura.pacote;
+            bool todosComItem = !pc.arquivos.empty();
+            for (const auto& a : pc.arquivos) todosComItem = todosComItem && !a.itemId.empty() && !a.codigo.empty() && a.tamanho > 0;
+            checar(pc.selecao.size() == ids.size() && pc.mapaId == mapa && pc.embutir == false && !pc.parcial,
+                   "the package JSON keeps the exported selection, the folder map id and the embed option");
+            checar(todosComItem, "each package record knows its item, code and delivered size");
+            bool foraRegistrado = false;
+            for (const auto& p : pc.pendencias)
+                foraRegistrado = foraRegistrado || (p.itemId == ids[3] && p.motivo == pk::kMotivoForaDoMain);
+            checar(foraRegistrado && r.pendencias.size() == pc.pendencias.size(),
+                   "what stayed out is recorded in the package with the reason (not in the MAIN)");
+            checar(!pacote.getChildFile(pk::kArquivoParcial).exists(), "the partial JSON is removed when the export finishes");
+            checar(matriz::model::ProjectLog(pb.projeto().pasta()).readContent().contains("pending: CLB-4 [fora_do_main]"),
+                   "the project log lists each pending item with the reason, not only the count");
+        }
+        {
+            // Queda de energia no meio: a pasta fica com o JSON parcial (o INTAKE não a aceita).
+            juce::File interrompido;
+            try {
+                pk::gerarPacote(reg, pb.projeto().pasta(), destino, "Interrompido", mapa, "Mapa B", "Collection B",
+                                {ids.begin(), ids.end()}, [](int feito, int) -> bool {
+                                    if (feito == 2) throw std::runtime_error("power loss");
+                                    return true;
+                                });
+            } catch (const std::exception&) {}
+            interrompido = destino.getChildFile("Interrompido");
+            const auto lp = pk::lerPacote(interrompido, /*aceitarParcial*/ true);
+            checar(!pk::pareceUmPacote(interrompido) && pk::lerPacote(interrompido).status == pk::StatusLeitura::NaoEPacote,
+                   "an interrupted export is not a package for the INTAKE");
+            checar(lp.status == pk::StatusLeitura::Ok && lp.pacote.parcial && lp.pacote.arquivos.size() == 1 &&
+                       lp.pacote.selecao.size() == ids.size(),
+                   "an interrupted export leaves the partial JSON (selection + what was delivered so far)");
+            interrompido.deleteRecursively();
+        }
         checar(leitura.status == pk::StatusLeitura::Ok && leitura.pacote.arquivos.size() == 3,
                "matriz-pacote.json is valid (formato/versao) with one record per file");
         checar(pacote.getChildFile("Media/Shows/2015/faixa1.wav").existsAsFile() &&
