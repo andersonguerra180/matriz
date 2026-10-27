@@ -1373,6 +1373,42 @@ void rodarTestesPacote(const Checar& checar) {
                                   {ids.begin(), ids.end()}, [](int feito, int) { return feito < 1; });
         checar(rc.cancelado && !rc.pasta.exists(), "cancelling removes the half-made package folder");
 
+        // Nomes que só diferem na caixa (take.WAV / take.wav), em pastas diferentes no MAIN e juntos
+        // numa pasta só no mapa do pacote: o disco não distingue os dois. Antes o segundo dava "already
+        // exists" e o erro apagava a cópia do primeiro — os dois sumiam do pacote.
+        {
+            const juce::File fa = source.getChildFile("A/take.WAV"), fb = source.getChildFile("B/take.wav");
+            escreverWavTeste(fa, 71);
+            escreverWavTeste(fb, 73);
+            const std::string ia = inserirItemComArquivo(reg, projetoId, "CLB-6", fa);
+            const std::string ib = inserirItemComArquivo(reg, projetoId, "CLB-7", fb);
+            pb.adicionarItensAPasta({ia}, ano2015);
+            pb.adicionarItensAPasta({ib}, shows);
+            auto pm = matriz::consolidacao::planejarConsolidacao(reg, pb.projeto().pasta(), media,
+                                                                 {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                 matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                 false, false, false, mapa);
+            std::vector<matriz::consolidacao::ItemPlanejado> novos;
+            for (auto& ip : pm.itens)
+                if (ip.itemId == ia || ip.itemId == ib) novos.push_back(ip);
+            pm.itens = novos;
+            checar(matriz::consolidacao::executarConsolidacao(reg, pb.projeto().pasta(), media, pm).consolidados == 2,
+                   "setup: take.WAV and take.wav in B's MAIN");
+            const std::string mapaC = pb.criarFolderMap("Mapa C", std::nullopt);
+            const std::string junto = pb.criarPastaAcervo("Junto", std::nullopt, mapaC);
+            pb.adicionarItensAPasta({ia, ib}, junto);
+            auto rk = pk::gerarPacote(reg, pb.projeto().pasta(), destino, "Caixa", mapaC, "Mapa C", "Collection B",
+                                      {ia, ib}, {});
+            const auto lk = pk::lerPacote(rk.pasta);
+            bool todosNoDisco = lk.pacote.arquivos.size() == 2;
+            for (const auto& a : lk.pacote.arquivos)
+                todosNoDisco = todosNoDisco && rk.pasta.getChildFile("Media").getChildFile(a.caminho).existsAsFile();
+            checar(rk.copiados == 2 && rk.falhas.empty() && todosNoDisco,
+                   "names that differ only in case both go into the package (" + juce::String(rk.copiados) +
+                       " copied, " + juce::String((int) rk.falhas.size()) + " failures)");
+            rk.pasta.deleteRecursively();
+        }
+
         // Versão desconhecida / formato errado: recusa com motivo.
         juce::File v2 = raiz.getChildFile("v2");
         v2.getChildFile("Media").createDirectory();

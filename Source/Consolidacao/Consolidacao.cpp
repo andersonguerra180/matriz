@@ -566,7 +566,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         } catch (...) {}
     }
 
-    std::map<std::string, std::vector<size_t>> indicesPorDestino; // caminho final -> índices em plano.itens, pra achar conflito
+    std::map<std::string, std::vector<size_t>> indicesPorDestino; // caminho final (sem caixa) -> índices em plano.itens, pra achar conflito
+    // Sem caixa: HFS+/APFS/NTFS não distinguem "IMG.jpg" de "IMG.JPG" — os dois caem no mesmo arquivo.
+    auto chaveSemCaixa = [](const juce::String& caminho) { return caminho.toLowerCase().toStdString(); };
     std::unordered_set<std::string> itensProcessados;
     // Reorganização: por cópia física registrada (arquivo + caminho), as linhas do plano que a
     // usam e a pasta que o mapa dá a cada uma. Item em duas pastas do mapa com uma cópia só =
@@ -815,7 +817,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             (segmentosPasta.isEmpty() ? juce::String() : pastaDestinoStr + "/") + nomeArquivoFinal;
 
         // Auto-resolver conflito de nomes se ativado
-        if (autoResolverConflitos && indicesPorDestino.find(caminhoRelDestino.toStdString()) != indicesPorDestino.end()) {
+        if (autoResolverConflitos && indicesPorDestino.find(chaveSemCaixa(caminhoRelDestino)) != indicesPorDestino.end()) {
             juce::File fNome(nomeArquivoFinal);
             juce::String baseSemExt = fNome.getFileNameWithoutExtension();
             juce::String ext = fNome.getFileExtension();
@@ -824,7 +826,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             do {
                 juce::String novoNome = baseSemExt + "_" + juce::String(tentativa++) + ext;
                 novoCaminhoRelDestino = (segmentosPasta.isEmpty() ? juce::String() : pastaDestinoStr + "/") + novoNome;
-            } while (indicesPorDestino.find(novoCaminhoRelDestino.toStdString()) != indicesPorDestino.end());
+            } while (indicesPorDestino.find(chaveSemCaixa(novoCaminhoRelDestino)) != indicesPorDestino.end());
 
             caminhoRelDestino = novoCaminhoRelDestino;
             plano.conflitosAutoResolvidos++;
@@ -885,17 +887,17 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             ip.jaConsolidado = false;
         }
 
-        indicesPorDestino[caminhoRelDestino.toStdString()].push_back(plano.itens.size());
+        indicesPorDestino[chaveSemCaixa(caminhoRelDestino)].push_back(plano.itens.size());
         plano.itens.push_back(std::move(ip));
     }
 
-    for (auto& [caminho, indices] : indicesPorDestino) {
+    for (auto& [chave, indices] : indicesPorDestino) {
         if (indices.size() <= 1) continue;
         std::unordered_set<std::string> idsDistintos;
         for (auto idx : indices) idsDistintos.insert(plano.itens[idx].itemId);
         if (idsDistintos.size() <= 1) continue;
 
-        plano.nomesEmConflito.push_back(juce::String(caminho));
+        plano.nomesEmConflito.push_back(plano.itens[indices.front()].caminhoRelativoDestino);
         for (auto idx : indices) plano.itens[idx].emConflito = true;
     }
 

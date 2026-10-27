@@ -246,6 +246,7 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
             continue;
         }
         juce::File destino;
+        bool copiaDesteItem = false;  // só a cópia feita por ESTE item pode ser apagada no erro
         try {
             // Sempre do MAIN: item que só existe no SOURCE fica de fora.
             auto noMain = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
@@ -259,6 +260,7 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
             if (destino.existsAsFile())
                 throw std::runtime_error("already exists in the package: " + destino.getFullPathName().toStdString());
             destino.getParentDirectory().createDirectory();
+            copiaDesteItem = true;
             if (!noMain->copyFileTo(destino) || destino.getSize() != noMain->getSize())
                 throw std::runtime_error("copy failed: " + destino.getFullPathName().toStdString());
             // Cópia verificada: o SHA-256 do arquivo entregue é o que vai no
@@ -300,7 +302,7 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
             arquivos.add(juce::var(reg));
             ++r.copiados;
         } catch (const std::exception& e) {
-            if (destino != juce::File() && destino.existsAsFile()) destino.deleteFile();
+            if (copiaDesteItem && destino.existsAsFile()) destino.deleteFile();
             r.falhas.push_back(ip.codigoAcervo + ": " + e.what());
         }
     }
