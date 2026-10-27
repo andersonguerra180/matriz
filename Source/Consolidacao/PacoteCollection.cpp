@@ -497,6 +497,126 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
 }
 
 // ---------------------------------------------------------------------------
+// CHECK PACKAGE
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// O que a verificação precisa guardar para o COMPLETE PACKAGE agir sem planejar de novo.
+struct Verificacao {
+    ResultadoVerificacao r;
+    Pacote pacote;
+    std::vector<ItemPlanejado> planejados;     // da seleção, na ordem do planejador
+    std::map<std::string, size_t> problemaDe;  // item -> índice em r.problemas
+};
+
+std::string caminhoSemCaixa(const std::string& caminho) {
+    return juce::String::fromUTF8(caminho.c_str()).toLowerCase().toStdString();
+}
+
+Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaProjeto, const juce::File& pastaPacote,
+                      const std::set<std::string>& selecaoAtual,
+                      const std::vector<std::pair<std::string, juce::String>>& mapas, const std::string& mapaPadrao,
+                      const AoProgredir& aoProgredir) {
+    Verificacao v;
+    auto& r = v.r;
+    r.pasta = pastaPacote;
+    auto leitura = lerPacote(pastaPacote, /*aceitarParcial*/ true);
+    r.status = leitura.status;
+    r.erro = leitura.erro;
+    if (leitura.status != StatusLeitura::Ok) return v;
+    v.pacote = std::move(leitura.pacote);
+    const Pacote& p = v.pacote;
+    r.parcial = p.parcial;
+    r.exportadoEm = p.exportadoEm;
+
+    // Mapa: o id gravado; pacote anterior, pelo nome; senão o padrão.
+    for (const auto& [id, nome] : mapas)
+        if (!p.mapaId.empty() && id == p.mapaId) { r.mapaId = id; r.nomeMapa = nome; }
+    if (r.mapaId.empty())
+        for (const auto& [id, nome] : mapas)
+            if (nome == p.folderMap) { r.mapaId = id; r.nomeMapa = nome; break; }
+    if (r.mapaId.empty()) {
+        r.mapaId = mapaPadrao;
+        for (const auto& [id, nome] : mapas)
+            if (id == mapaPadrao) r.nomeMapa = nome;
+    }
+
+    std::set<std::string> selecao(p.selecao.begin(), p.selecao.end());
+    if (selecao.empty()) {
+        selecao = selecaoAtual;
+        r.usouSelecaoAtual = true;
+    }
+
+    // Mesmo planejamento do export (gerarPacote): os caminhos saem iguais.
+    auto plano = planejarConsolidacao(registro, pastaProjeto, p.media(), {NivelHierarquia::PastaManual}, {},
+                                      ModoPrefixoArquivo::Nenhum, {}, /*autoResolver*/ true, false, false,
+                                      /*paraExport*/ true, r.mapaId, /*estritoAoDestino*/ false,
+                                      /*semPastaNaRaiz*/ true);
+    for (auto& ip : plano.itens)
+        if (selecao.count(ip.itemId)) v.planejados.push_back(std::move(ip));
+
+    std::map<std::string, size_t> porCaminho, porItem;
+    for (size_t i = 0; i < p.arquivos.size(); ++i) {
+        porCaminho[caminhoSemCaixa(p.arquivos[i].caminho)] = i;
+        if (!p.arquivos[i].itemId.empty()) porItem[p.arquivos[i].itemId] = i;
+    }
+    std::map<std::string, const Pendencia*> pendenciaDe;
+    for (const auto& pe : p.pendencias) pendenciaDe[pe.itemId] = &pe;
+
+    const int total = static_cast<int>(v.planejados.size());
+    int feito = 0;
+    for (const auto& ip : v.planejados) {
+        if (aoProgredir && !aoProgredir(feito, total)) {
+            r.cancelado = true;
+            break;
+        }
+        ++feito;
+        ++r.selecionados;
+        const RegistroArquivo* e = nullptr;
+        if (auto it = porItem.find(ip.itemId); it != porItem.end()) e = &p.arquivos[it->second];
+        else if (auto ic = porCaminho.find(caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString())); ic != porCaminho.end() &&
+                 (p.arquivos[ic->second].itemId.empty() || p.arquivos[ic->second].itemId == ip.itemId))
+            e = &p.arquivos[ic->second];
+
+        Problema pr;
+        pr.itemId = ip.itemId;
+        pr.codigo = ip.codigoAcervo;
+        pr.caminho = e ? e->caminho : ip.caminhoRelativoDestino.replaceCharacter('\\', '/').toStdString();
+        if (e) {
+            const juce::File f = p.media().getChildFile(e->caminho);
+            if (!f.existsAsFile() || f.getSize() == 0) pr.tipo = TipoProblema::ArquivoAusente;
+            else if (e->tamanho > 0 && f.getSize() != e->tamanho) pr.tipo = TipoProblema::ArquivoAlterado;
+            else {
+                ++r.ok;
+                continue;
+            }
+        } else if (ip.emConflito) {
+            pr.tipo = TipoProblema::ConflitoNome;
+        } else {
+            auto noMain = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
+            auto naOrigem = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
+                                                           matriz::vault::Preferencia::Origem);
+            pr.tipo = (!noMain || (naOrigem && *naOrigem == *noMain)) ? TipoProblema::ForaDoMain
+                                                                      : TipoProblema::NaoExportado;
+        }
+        if (auto ip2 = pendenciaDe.find(ip.itemId); ip2 != pendenciaDe.end()) pr.detalhe = ip2->second->detalhe;
+        v.problemaDe[ip.itemId] = r.problemas.size();
+        r.problemas.push_back(std::move(pr));
+    }
+    return v;
+}
+
+}  // namespace
+
+ResultadoVerificacao verificarPacote(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                     const juce::File& pastaPacote, const std::set<std::string>& selecaoAtual,
+                                     const std::vector<std::pair<std::string, juce::String>>& mapas,
+                                     const std::string& mapaPadrao, const AoProgredir& aoProgredir) {
+    return verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, aoProgredir).r;
+}
+
+// ---------------------------------------------------------------------------
 // INTAKE (Fase 3)
 // ---------------------------------------------------------------------------
 

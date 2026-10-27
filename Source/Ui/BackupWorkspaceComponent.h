@@ -10,6 +10,7 @@
 
 #include "ProjetoAberto.h"
 #include "../Consolidacao/Consolidacao.h"
+#include "../Consolidacao/PacoteCollection.h"
 #include "../Consolidacao/BackupScanEngine.h"
 #include "HierarquiaEditorComponent.h"
 #include "../App/Cancelamento.h"
@@ -243,6 +244,9 @@ private:
     void abrirPacote();
     void iniciarPacote(const juce::File& destino, const juce::String& nome, const std::string& mapaId,
                        const juce::String& nomeMapa, bool embutir);
+    // CHECK PACKAGE: confere um pacote já feito (seleção x JSON x disco), em background, e abre o relatório.
+    void verificarPacoteExistente(const juce::File& pasta, const std::string& mapaPadrao);
+    void mostrarVerificacaoPacote(const matriz::consolidacao::pacote::ResultadoVerificacao& r);
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
                        bool marcaDagua, const std::string& mapaId = {}, bool formatoBridge = false, bool bounce = false,

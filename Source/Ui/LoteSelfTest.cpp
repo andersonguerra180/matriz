@@ -1404,6 +1404,31 @@ void rodarTestesPacote(const Checar& checar) {
                    "the folder tree has only the folders with package items (\"Vazia\" is not there)");
         }
 
+        {
+            // CHECK PACKAGE: numa cópia do pacote, um arquivo some e outro é truncado.
+            const juce::File copia = raiz.getChildFile("verificar/Pacote Teste");
+            pacote.copyDirectoryTo(copia);
+            const std::vector<std::pair<std::string, juce::String>> mapas{{mapa, "Mapa B"}};
+            auto v0 = pk::verificarPacote(reg, pb.projeto().pasta(), copia, {}, mapas, {});
+            int foraDoMain = 0;
+            for (const auto& pr : v0.problemas) foraDoMain += pr.tipo == pk::TipoProblema::ForaDoMain ? 1 : 0;
+            checar(v0.status == pk::StatusLeitura::Ok && !v0.usouSelecaoAtual && v0.ok == 3 &&
+                       foraDoMain == (int) v0.problemas.size() && v0.completaveis() == 0,
+                   "CHECK PACKAGE: a complete package has only the items not in the MAIN as problems (" +
+                       juce::String(v0.ok) + " ok, " + juce::String((int) v0.problemas.size()) + " problems)");
+            copia.getChildFile("Media/Shows/2015/faixa1.wav").deleteFile();
+            copia.getChildFile("Media/Shows/faixa3.wav").replaceWithText("cortado");
+            auto v1 = pk::verificarPacote(reg, pb.projeto().pasta(), copia, {}, mapas, {});
+            bool ausente = false, alterado = false;
+            for (const auto& pr : v1.problemas) {
+                ausente = ausente || (pr.tipo == pk::TipoProblema::ArquivoAusente && pr.itemId == ids[0]);
+                alterado = alterado || (pr.tipo == pk::TipoProblema::ArquivoAlterado && pr.itemId == ids[2]);
+            }
+            checar(ausente && alterado && v1.ok == 1 && v1.completaveis() == 2,
+                   "CHECK PACKAGE: a missing file and a cut-off file are found, each with its reason");
+            copia.getParentDirectory().deleteRecursively();
+        }
+
         // Cancelar no meio: a pasta do pacote não fica.
         auto rc = pk::gerarPacote(reg, pb.projeto().pasta(), destino, "Cancelado", mapa, "Mapa B", "Collection B",
                                   {ids.begin(), ids.end()}, [](int feito, int) { return feito < 1; });
@@ -1442,6 +1467,33 @@ void rodarTestesPacote(const Checar& checar) {
             checar(rk.copiados == 2 && rk.falhas.empty() && todosNoDisco,
                    "names that differ only in case both go into the package (" + juce::String(rk.copiados) +
                        " copied, " + juce::String((int) rk.falhas.size()) + " failures)");
+            {
+                // Pacote anterior (sem seleção nem item gravados), como o do acervo real: dos gêmeos, o
+                // JSON lista um cujo arquivo sumiu, e o outro nunca entrou.
+                juce::var json = juce::JSON::parse(rk.pasta.getChildFile(pk::kArquivoJson));
+                auto* raizJson = json.getDynamicObject();
+                juce::Array<juce::var> antigos;
+                for (auto& e : *json.getProperty("arquivos", {}).getArray()) {
+                    rk.pasta.getChildFile("Media").getChildFile(e.getProperty("caminho", {}).toString()).deleteFile();
+                    if (antigos.isEmpty()) {
+                        for (auto* campo : {"item_id", "codigo", "tamanho"}) e.getDynamicObject()->removeProperty(campo);
+                        antigos.add(e);
+                    }
+                }
+                for (auto* campo : {"selecao", "mapa_id", "embutir", "pendencias"}) raizJson->removeProperty(campo);
+                raizJson->setProperty("arquivos", antigos);
+                rk.pasta.getChildFile(pk::kArquivoJson).replaceWithText(juce::JSON::toString(json));
+                auto vk = pk::verificarPacote(reg, pb.projeto().pasta(), rk.pasta, {ia, ib}, {{mapaC, "Mapa C"}}, {});
+                int ausente = 0, naoExportado = 0;
+                for (const auto& pr : vk.problemas) {
+                    ausente += pr.tipo == pk::TipoProblema::ArquivoAusente ? 1 : 0;
+                    naoExportado += pr.tipo == pk::TipoProblema::NaoExportado ? 1 : 0;
+                }
+                checar(vk.usouSelecaoAtual && vk.nomeMapa == "Mapa C" && ausente == 1 && naoExportado == 1 &&
+                           vk.completaveis() == 2,
+                       "CHECK PACKAGE on an older package: uses the current selection, finds the listed-but-missing "
+                       "twin and the one that never went in");
+            }
             rk.pasta.deleteRecursively();
         }
 

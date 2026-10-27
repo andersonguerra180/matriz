@@ -143,6 +143,58 @@ bool pareceUmPacote(const juce::File& pasta);
 // interrompido (pacote.parcial = true) — nunca no INTAKE.
 ResultadoLeitura lerPacote(const juce::File& pasta, bool aceitarParcial = false);
 
+// --- CHECK PACKAGE -----------------------------------------------------------
+// Compara um pacote já feito com o projeto: o que a seleção pede (o mapa dá o
+// caminho de cada item), o que o JSON lista e o que está de fato no disco.
+// Pacote anterior à seleção gravada: usa a seleção atual do card B. Pacote de
+// export interrompido (só o JSON parcial): verificado do mesmo jeito.
+
+enum class TipoProblema {
+    ArquivoAusente,   // o JSON lista, o arquivo não está no disco (ou está vazio)
+    ArquivoAlterado,  // está no disco com outro tamanho (cópia interrompida/truncada)
+    NaoExportado,     // da seleção, mas não está no pacote (falha no export, ou ele foi interrompido)
+    ForaDoMain,       // ainda não está no MAIN: nada sai antes do MAIN
+    ConflitoNome      // dois itens dariam o mesmo caminho e o planejador não resolveu
+};
+
+struct Problema {
+    TipoProblema tipo = TipoProblema::NaoExportado;
+    std::string itemId, codigo;
+    std::string caminho;  // onde o arquivo deveria estar, relativo a Media/
+    std::string detalhe;  // motivo gravado pelo export, quando há
+    // O COMPLETE PACKAGE resolve sozinho (copia ou recopia do MAIN).
+    bool completavel() const {
+        return tipo == TipoProblema::ArquivoAusente || tipo == TipoProblema::ArquivoAlterado ||
+               tipo == TipoProblema::NaoExportado;
+    }
+};
+
+struct ResultadoVerificacao {
+    StatusLeitura status = StatusLeitura::NaoEPacote;
+    juce::String erro;
+    juce::File pasta;
+    juce::String exportadoEm, nomeMapa;
+    std::string mapaId;
+    bool parcial = false;            // o export foi interrompido
+    bool usouSelecaoAtual = false;   // pacote anterior: a seleção é a do card B agora
+    bool cancelado = false;
+    int selecionados = 0, ok = 0;
+    std::vector<Problema> problemas;
+    int completaveis() const {
+        int n = 0;
+        for (const auto& p : problemas) n += p.completavel() ? 1 : 0;
+        return n;
+    }
+};
+
+// Roda fora da message thread; só lê. `mapas`: (id, nome) dos folder maps do
+// projeto — acha o mapa do pacote pelo id gravado, senão pelo nome; sem nenhum,
+// `mapaPadrao`.
+ResultadoVerificacao verificarPacote(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                     const juce::File& pastaPacote, const std::set<std::string>& selecaoAtual,
+                                     const std::vector<std::pair<std::string, juce::String>>& mapas,
+                                     const std::string& mapaPadrao, const AoProgredir& aoProgredir = {});
+
 // Grava os dados de ficha no item (item novo do INTAKE). Nomes pela
 // unificação da Fase 1 ("Show" do pacote vira o "Show" que já existe);
 // pessoas entram também na lista PEOPLE. Quem chama segura a transação.

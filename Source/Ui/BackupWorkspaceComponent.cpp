@@ -521,8 +521,9 @@ private:
 class ConteudoPacote : public juce::Component {
 public:
     using AoGerar = std::function<void(juce::File destino, juce::String nome, bool embutir)>;
-    ConteudoPacote(const juce::String& nomePadrao, const juce::String& nomeMapa, AoGerar aoGerar)
-        : aoGerar_(std::move(aoGerar)) {
+    using AoVerificar = std::function<void(juce::File pacote)>;
+    ConteudoPacote(const juce::String& nomePadrao, const juce::String& nomeMapa, AoGerar aoGerar, AoVerificar aoVerificar)
+        : aoGerar_(std::move(aoGerar)), aoVerificar_(std::move(aoVerificar)) {
         const auto& tk = tema();
         auto rotulo = [&](juce::Label& l, const juce::String& t) {
             l.setText(t, juce::dontSendNotification);
@@ -553,6 +554,12 @@ public:
         btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
         btnCancelar_.onClick = [this] { fechar(); };
         addAndMakeVisible(btnCancelar_);
+        // Pacote já feito: conferir o que falta (e completar) em vez de exportar de novo.
+        btnVerificar_.setButtonText(matriz::i18n::t("export.pacote_verificar_btn"));
+        btnVerificar_.setColour(juce::TextButton::buttonColourId, tk.botaoSecundario);
+        btnVerificar_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        btnVerificar_.onClick = [this] { escolherPacoteParaVerificar(); };
+        addAndMakeVisible(btnVerificar_);
         setSize(560, 380);
     }
 
@@ -576,6 +583,7 @@ public:
         btnGerar_.setBounds(botoes.removeFromRight(150));
         botoes.removeFromRight(8);
         btnCancelar_.setBounds(botoes.removeFromRight(110));
+        btnVerificar_.setBounds(botoes.removeFromLeft(220));
     }
 
 private:
@@ -595,6 +603,19 @@ private:
                               });
     }
 
+    void escolherPacoteParaVerificar() {
+        chooser_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("export.pacote_verificar_escolher"), destino_, "");
+        juce::Component::SafePointer<ConteudoPacote> safeThis(this);
+        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [safeThis](const juce::FileChooser& fc) {
+                                  if (safeThis == nullptr || fc.getResult() == juce::File()) return;
+                                  auto cb = safeThis->aoVerificar_;
+                                  const juce::File pacote = fc.getResult();
+                                  safeThis->fechar();
+                                  if (cb) cb(pacote);
+                              });
+    }
+
     void confirmar() {
         auto cb = aoGerar_;
         auto destino = destino_;
@@ -609,12 +630,13 @@ private:
     }
 
     AoGerar aoGerar_;
+    AoVerificar aoVerificar_;
     juce::File destino_;
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::Label lblIntro_, lblNome_, lblMapa_, lblPasta_, lblCaminho_;
     juce::TextEditor editNome_;
     juce::ToggleButton toggleEmbutir_;
-    juce::TextButton btnEscolher_, btnGerar_, btnCancelar_;
+    juce::TextButton btnEscolher_, btnGerar_, btnCancelar_, btnVerificar_;
 };
 
 class GoogleDriveIconButton : public juce::Button {
@@ -5297,6 +5319,9 @@ void BackupWorkspaceComponent::abrirPacote() {
     auto* conteudo = new ConteudoPacote(nomePadrao, nomeMapa,
                                         [safeThis, mapaId, nomeMapa](juce::File destino, juce::String nome, bool embutir) {
                                             if (safeThis != nullptr) safeThis->iniciarPacote(destino, nome, mapaId, nomeMapa, embutir);
+                                        },
+                                        [safeThis, mapaId](juce::File pacote) {
+                                            if (safeThis != nullptr) safeThis->verificarPacoteExistente(pacote, mapaId);
                                         });
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned(conteudo);
@@ -5358,6 +5383,145 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
                                              duplicatas, r.falhas, {}, juce::String(), false, nomeMapa);
         });
     });
+}
+
+void BackupWorkspaceComponent::verificarPacoteExistente(const juce::File& pasta, const std::string& mapaPadrao) {
+    if (exportando_ || !pasta.isDirectory()) return;
+    namespace pk = matriz::consolidacao::pacote;
+    if (!pk::pareceUmPacote(pasta) && !pasta.getChildFile(pk::kArquivoParcial).existsAsFile()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("export.pacote_verificar_titulo"),
+                                               matriz::i18n::t("export.pacote_verificar_nao_pacote").replace("{pasta}", pasta.getFullPathName()),
+                                               {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+    exportando_ = true;
+    resized();
+    cancelarExport_->store(false);
+    auto cancelado = cancelarExport_;
+    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t("export.pacote_verificar_titulo"), 0,
+                                                    [cancelado] { cancelado->store(true); });
+    // Pacote anterior à seleção gravada: vale a seleção do card B de agora.
+    const std::set<std::string> selecaoAtual = obterItensSelecionadosPeloCriterio();
+    std::vector<std::pair<std::string, juce::String>> mapas;
+    for (auto& m : projeto_.listarFolderMaps()) mapas.push_back({m.id, m.nome});
+    auto* projeto = &projeto_.projeto();
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    poolExport_.addJob([safeThis, projeto, pasta, selecaoAtual, mapas, mapaPadrao, cancelado] {
+        pk::ResultadoVerificacao r;
+        try {
+            r = pk::verificarPacote(projeto->registro(), projeto->pasta(), pasta, selecaoAtual, mapas, mapaPadrao,
+                                    [cancelado](int feito, int total) {
+                                        juce::MessageManager::callAsync([feito, total] {
+                                            ProgressoGlobal::obterInstancia().atualizarFracao(
+                                                "export", static_cast<double>(feito) / std::max(1, total),
+                                                juce::String(feito) + " / " + juce::String(total));
+                                        });
+                                        return !cancelado->load();
+                                    });
+        } catch (const std::exception& e) {
+            r.status = pk::StatusLeitura::Invalido;
+            r.erro = e.what();
+        }
+        juce::MessageManager::callAsync([safeThis, r] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("export");
+            if (safeThis == nullptr) return;
+            safeThis->exportando_ = false;
+            safeThis->resized();
+            safeThis->mostrarVerificacaoPacote(r);
+        });
+    });
+}
+
+void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidacao::pacote::ResultadoVerificacao& r) {
+    namespace pk = matriz::consolidacao::pacote;
+    using matriz::i18n::t;
+    if (r.status != pk::StatusLeitura::Ok || r.cancelado) {
+        const juce::String msg = r.cancelado ? t("export.pacote_verificar_cancelado")
+                               : r.status == pk::StatusLeitura::NaoEPacote
+                                   ? t("export.pacote_verificar_nao_pacote").replace("{pasta}", r.pasta.getFullPathName())
+                                   : t("export.pacote_verificar_invalido").replace("{erro}", r.erro);
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, t("export.pacote_verificar_titulo"), msg, {},
+                                               nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+
+    juce::String texto;
+    texto << "================================================================================\n";
+    texto << "  " << t("export.pacote_verificar_titulo").toUpperCase() << "\n";
+    texto << "================================================================================\n\n";
+    texto << "• " << t("export.pacote_verificar_pasta").replace("{pasta}", r.pasta.getFullPathName()) << "\n";
+    if (r.exportadoEm.isNotEmpty()) texto << "• " << t("export.pacote_verificar_exportado").replace("{data}", r.exportadoEm) << "\n";
+    texto << "• " << t("export.pacote_verificar_mapa").replace("{mapa}", r.nomeMapa) << "\n\n";
+    if (r.parcial) texto << "[!] " << t("export.pacote_verificar_parcial") << "\n\n";
+    if (r.usouSelecaoAtual)
+        texto << "[!] " << t("export.pacote_verificar_sel_atual").replace("{n}", juce::String(r.selecionados)) << "\n\n";
+    texto << "• " << (r.problemas.empty() && !r.parcial
+                          ? t("export.pacote_verificar_completo").replace("{n}", juce::String(r.selecionados))
+                          : t("export.pacote_verificar_resumo")
+                                .replace("{ok}", juce::String(r.ok))
+                                .replace("{n}", juce::String(r.selecionados))
+                                .replace("{p}", juce::String((int) r.problemas.size())))
+          << "\n\n";
+
+    struct Grupo { pk::TipoProblema tipo; const char* chave; };
+    const Grupo grupos[] = {{pk::TipoProblema::ArquivoAusente, "export.pv_ausente"},
+                            {pk::TipoProblema::ArquivoAlterado, "export.pv_alterado"},
+                            {pk::TipoProblema::NaoExportado, "export.pv_nao_exportado"},
+                            {pk::TipoProblema::ForaDoMain, "export.pv_fora_main"},
+                            {pk::TipoProblema::ConflitoNome, "export.pv_conflito"}};
+    std::set<std::string> ids;
+    for (const auto& g : grupos) {
+        std::vector<const pk::Problema*> doGrupo;
+        for (const auto& pr : r.problemas)
+            if (pr.tipo == g.tipo) doGrupo.push_back(&pr);
+        if (doGrupo.empty()) continue;
+        const juce::String chave(g.chave);
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "[!] " << t("backup.erros_grupo_header").replace("{n}", juce::String((int) doGrupo.size())).replace("{motivo}", t(chave)) << "\n";
+        texto << "--------------------------------------------------------------------------------\n\n";
+        texto << "• " << t("backup.erros_lbl_diag") << "\n  " << t(chave + "_diag") << "\n\n";
+        texto << "• " << t("backup.erros_lbl_solucao") << "\n" << t(chave + "_solucao") << "\n\n";
+        texto << "• " << t("backup.erros_lbl_itens").replace("{n}", juce::String((int) doGrupo.size())) << "\n";
+        int n = 0;
+        for (const auto* pr : doGrupo) {
+            ids.insert(pr->itemId);
+            if (++n > 2000) continue;  // até 2000 por grupo na janela e no relatório; SHOW IN GRID mostra todos
+            texto << "  • [" << juce::String::fromUTF8(pr->codigo.c_str()) << "] " << juce::String::fromUTF8(pr->caminho.c_str());
+            if (!pr->detalhe.empty())
+                texto << "\n    ↳ " << t("backup.erros_lbl_detalhe") << ": " << juce::String::fromUTF8(pr->detalhe.c_str());
+            texto << "\n";
+        }
+        if (n > 2000) texto << "  ... +" << (n - 2000) << "\n";
+        texto << "\n";
+    }
+
+    const juce::String titulo = r.problemas.empty() && !r.parcial
+                                    ? t("export.pacote_verificar_titulo_ok")
+                                    : t("export.pacote_verificar_titulo_problemas").replace("{n}", juce::String((int) r.problemas.size()));
+    juce::File relatorio;
+    try {
+        const juce::File dir = projeto_.projeto().pasta().getChildFile("relatorios");
+        dir.createDirectory();
+        const juce::File arq = dir.getChildFile("pacote-verificacao-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".txt");
+        if (arq.replaceWithText(titulo + "\n\n" + texto)) relatorio = arq;
+    } catch (...) {}
+    if (relatorio != juce::File()) {
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "• " << t("backup.erros_relatorio") << "\n";
+        texto << "  " << relatorio.getFullPathName() << "\n\n";
+    }
+
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    DadosStatusBackup d;
+    d.titulo = titulo;
+    d.texto = texto;
+    d.relatorio = relatorio;
+    d.bloqueado = !r.problemas.empty() || r.parcial;
+    d.nBloqueados = static_cast<int>(ids.size());
+    d.aoMostrarNoGrid = [safeThis, ids] {
+        if (safeThis && safeThis->aoAbrirNoGrid) safeThis->aoAbrirNoGrid(ids);
+    };
+    ErrosBackupDialog::mostrar(std::move(d), this);
 }
 
 void BackupWorkspaceComponent::atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar) {
