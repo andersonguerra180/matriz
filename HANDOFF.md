@@ -4,6 +4,39 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Auditoria externa de 2026-10-27: plano de correção (NADA corrigido ainda)
+
+- Documento: `/Volumes/BUNKER 4TB/BUNKER MICHELE/Auditoria_BKR_Matriz_2026-10-27.pdf`; texto extraído em
+  `docs/auditoria_2026-10-27_texto.txt`. A auditoria leu o código de um ZIP (não rodou o app), por isso as linhas
+  dela podem estar deslocadas. As linhas abaixo são as do código em `e4e29a9`.
+- Prompt de execução (para Codex ou outra IA): `docs/PROMPT_CODEX_AUDITORIA_2026-10-27.md`, com as fases 1 a 5, os
+  arquivos, os critérios de aceite e as armadilhas.
+- Conferido no código em 2026-10-27 (os achados existem):
+  - **F02** `SyncEngine.cpp:149-153` `criarPastaLixeira`: `deleteRecursively()` na `_lixeira` legada da raiz, sem migrar.
+  - **F03** `BackupRecoveryDialog.cpp:128-146` `executarCopiaPara`: `deleteFile()` no destino e depois `copyFileTo`
+    na message thread, sem temporário nem SHA-256 e sem bloquear origem == destino.
+  - **F01** `IngestArquivo.cpp:600-606` (`coincidences = 3; // Force match!` para mp3/mp4/mov/m4a/flac/mkv/ogg com
+    extensão + tamanho iguais; imagem: `:680-682`; documento: `:733`) + `IngestWizardComponent.cpp:685` grava
+    `estado = 'duplicata'` também quando o casamento foi só por metadados → `Consolidacao.cpp:555` tira do MAIN.
+  - **F06** `VerifySource.cpp:40-41`: `noMain` = todo `arquivo.checksum_sha256` do catálogo, mesmo sem cópia no MAIN.
+  - **F05** `PacoteCollection.cpp:711-712` `verificarPacote`: arquivo do pacote "ok" só por existir com o tamanho
+    certo; o `RegistroArquivo::sha256` do JSON não é conferido.
+  - **F04** `SyncEngine.cpp:307-311`: modo rápido põe o TAMANHO em `ArquivoScan::sha256`; `:405-419` pareia MOVIDO por
+    esse campo (dois arquivos diferentes do mesmo tamanho viram "movido"). Clone do MAIN usa sempre o rápido
+    (`:795`, `:946`). `aplicarSync` (`:536`, `:550`) já ignora valores que não têm 64 caracteres.
+  - **F07** `Preservation.cpp:1316-1366` `avaliarRegra321`: conta `vault` (origens) e `destino` configurado como cópia.
+  - **F08** `schema/registro.sql` view `asset_preservation_status` (`backup_status`) e
+    `PreservationWorkspaceComponent.cpp:91-97`: qualquer `BACKUP_VERIFIED SUCCESS` antigo vale para sempre;
+    `compliance_score` (`:235-249`) aprova com `> 0` itens.
+- Ordem combinada com o usuário: (1) F02 + F03 → (2) F01 → (3) F06, F05, F04 → (4) F07/F08 → (5) só plano, sem código:
+  F09–F11 (journal/staging), F13 (sidecar da INBOX), F15 (trava/durabilidade), F12, F14, F16, F17.
+- **Dado real afetado por F01**: itens marcados como duplicata pelo wizard só por metadados ficaram FORA do MAIN. A
+  correção não muda dado existente sozinha. Para ver quantos são (projeto fechado, cópia do registro):
+  `SELECT codigo_acervo, notas_livres FROM item WHERE estado = 'duplicata' AND notas_livres LIKE 'Possible duplicate of %';`
+  O que fazer com eles é decisão do usuário (revisar na aba Duplicates).
+- Onde discordamos da auditoria (prioridade baixa para app desktop offline de um usuário): F14 (histórico imutável),
+  F16 (ID público de 8 dígitos), F17 (TLS no servidor do celular). Só o limite de bytes do F17 é barato.
+
 ## Collection Package: relatório, CHECK e COMPLETE — `feat/phone-dump-usb`, 2026-10-27
 
 - Origem: pacote real "From 2022 a 2026" (9.737 arquivos) com 46 fotos fora: nomes que só diferem na caixa

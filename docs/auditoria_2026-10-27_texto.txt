@@ -1,0 +1,336 @@
+Auditoria do fluxo e da proteção de dados do BKR Matriz
+Relatório técnico e de experiência de uso
+27 de outubro de 2026 | Preparado para Anderson Celso Guerra
+Conclusão executiva
+O modelo SOURCE → MAIN → CLONE é coerente e merece ser preservado. A versão examinada ainda não sustenta uma promessa de backup plenamente confiável. Há caminhos que podem excluir arquivos legítimos da seleção de backup, deixar clones diferentes sem detectar a diferença e apresentar proteção maior do que a comprovada.
+O risco de o app virar um produto difícil de entender existe, mas vem principalmente da mistura de estados e responsabilidades. Catalogar, organizar, copiar, verificar, replicar e entregar são ações diferentes. Elas precisam produzir estados diferentes e legíveis, sem exigir que o usuário conheça o banco ou a arquitetura.
+A recomendação é estabilizar o núcleo de proteção e recuperação antes de ampliar recursos. Manter GRID, INTAKE, Folder Map, metadados e consulta offline. Concentrar as operações de proteção em um plano comum, com verificação consistente e resultado por arquivo e por destino.
+Escopo e força das conclusões
+Examinado: Archive(4).zip, com 457 arquivos úteis e aproximadamente 175 mil linhas em fontes C++, cabeçalhos, Objective-C++ e HTML. Foram rastreados os caminhos críticos de ingestão, duplicatas, consolidação, clones, pacotes, recuperação, preservação, armazenamento, recebimento de celular e banco.
+Método: inspeção estática orientada por cenários; cinco testes isolados de SQL e lógica. Não houve execução da interface nem de backup real em discos. O pacote não inclui cmake/Dependencies.cmake, recursos Assets, i18n nem os dois executáveis de teste headless referidos pelo CMake. Por isso, esta é uma auditoria de código com simulação lógica, não uma homologação operacional.
+PSI: entendida neste relatório como Política de Segurança da Informação. Nenhuma política institucional foi entregue. A avaliação indica capacidade e lacunas de controle; não declara conformidade jurídica, certificação ISO ou aderência a uma PSI específica.
+Prioridades: P0 = corrigir antes de confiar a única cópia a esse fluxo; P1 = corrigir antes de apresentar o produto como solução confiável de backup e preservação; P2 = melhorar clareza, manutenção e interoperabilidade.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 1
+
+02 O fluxo visto por quem usa
+ Momento Expectativa do usuário Situação observada e decisão recomendada
+  Adicionar arquivos O app reconhece tudo sem O ingest pode registrar referências à origem; não significa perder nada. haver cópia independente. Exibir “catalogado, ainda sem cópia
+no MAIN”.
+ Revisar INTAKE Separar o que entra do que não Quarentena e edição em lote ajudam. Duplicata provável interessa. precisa ficar disponível, sem exclusão automática do backup.
+ Organizar no GRID Arrumar o acervo sem mexer Modelo virtual é útil. Distinguir mapa de entrega, mapa e Folder Map no original. associado ao MAIN e operação física de reorganização.
+ Criar ou atualizar Criar a primeira cópia A cópia principal tem SHA-256 e temporário. O incremental usa MAIN organizada e íntegra. existência/tamanho para pular arquivos, sem nova prova de
+integridade.
+ Criar ou atualizar Ter outra cópia que permita Há snapshot do SQLite e lixeira, mas comparação rápida pode CLONE recuperação. ocultar diferenças. Clone acessível não significa clone
+verificado.
+ Exportar ou Entregar um recorte do acervo. Pacote, Bounce, Bridge e HTML têm finalidades diferentes. Não publicar devem aumentar a contagem de proteção sem cobertura e
+integridade comprovadas.
+ Recuperar após Voltar a trabalhar com Há recuperação de arquivo e promoção de clone. Faltam falha segurança. garantias uniformes de validação, troca segura e conjunto
+coerente.
+O que já está bem resolvido conceitualmente
+A separação entre origem, cópia organizada e réplica corresponde a problemas reais. Preview offline, metadados, identificadores, checksums, sidecars e manifests são recursos úteis. O caminho de cópia do MAIN calcula hash durante a leitura, relê o temporário e só depois publica o nome final [E03].
+A sincronização oferecida após o backup exige confirmação e chama o espelhamento sem remoções automáticas. Isso limita a propagação silenciosa de exclusões [E16]. O SQLite usa sua API de backup, adequada para snapshot de banco ativo [E10, R2].
+A pergunta que cada tela deve responder
+Onde está o original? Existe uma cópia íntegra no MAIN? Quais clones cobrem estes arquivos? Quando foram verificados? Qual deles já foi testado para recuperação? O usuário precisa dessas respostas sem inferir proteção a partir da cor de um card ou de um histórico antigo.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 2
+
+03 Simulações de backup e continuidade
+Os resultados abaixo são previsões rastreadas no código. “Favorável” significa que existe tratamento implementado; não significa aprovação em teste real de hardware.
+ Cenário e percurso Resultado da simulação Avaliação
+  S01 Fotos locais → INTAKE → GRID → O caminho nominal existe. A proteção começa com Favorável com MAIN → CLONE cópia independente, não com o cadastro no GRID. ressalvas F01 e
+F04.
+ S02 Dois MP3 diferentes com mesmo O fallback por metadados pode marcá-los como Bloqueador F01. tamanho → ingest → MAIN duplicata; o planner exclui estado duplicata.
+ S03 Dois JPEG com mesmo tamanho e As heurísticas podem forçar coincidência sem Bloqueador F01. EXIF ausente → ingest → MAIN igualdade do SHA-256.
+ S04 SOURCE desligada antes do A resolução de arquivo falha se não houver outra Tratamento existe. primeiro backup → executar MAIN localização disponível; o item entra nas falhas. Não mostrar acervo
+protegido.
+ S05 Cancelamento durante arquivo Cópia em blocos aceita cancelamento; temporário é Favorável no MAIN; grande → retomar MAIN descartado. Itens registrados antes podem ser pulados. testar fronteiras em
+Windows.
+ S06 Disco cheio durante cópia → Escrita e tamanho são checados e há falha por item. Parcial precisa retomar MAIN Não existe transação única de todos os arquivos. continuar explícito.
+ S07 MAIN alterado externamente sem O planner pode pular como já consolidado. Não há novo Risco F04. mudar tamanho → atualizar backup hash nesse caminho incremental.
+ S08 MAIN íntegro e CLONE com um Comparação rápida usa tamanho; pode classificar os Risco F04. byte alterado → sincronizar arquivos como iguais.
+ S09 CLONE offline → atualizar MAIN → Offline é tratado no espelhamento. Atualização só Não contar como reconectar ocorrerá em execução posterior; o atraso deve réplica atualizada.
+permanecer visível.
+ S10 Arquivo renomeado → atualizar Há fila de moves com hash e fallback. O pareamento clone genérico no modo rápido também pode associar
+arquivos só pelo tamanho.
+Otimização útil; a identidade precisa ser criptográfica.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 3
+
+04 Simulações de recuperação e entrega
+ Cenário e percurso Resultado da simulação Avaliação
+  S11 Excluir item do MAIN → atualizar A oferta pós-backup desativa remoções; o sync manual Boa proteção CLONE permite removê-los para lixeira. inicial; lixeira não é
+retenção imutável.
+ S12 Sync encontra lixeira legada na A criação da lixeira nova apaga recursivamente a Bloqueador F02. raiz lixeira antiga.
+ S13 Recuperar um arquivo sobre A versão existente é apagada antes da tentativa. A Bloqueador F03. versão existente → cópia falha recuperação não valida SHA-256.
+ S14 Recuperar para a própria pasta do Não há bloqueio explícito de origem igual ao destino Risco de apagar a arquivo antes da exclusão. própria fonte F03.
+ S15 MAIN perdido → promover CLONE Exige banco do clone e muda papéis. Não valida Fluxo disponível; inventário e hashes de toda a mídia antes de promover. cobertura não
+comprovada F11.
+ S16 Interromper sync → usar destino O scan remove o marcador incompleto da referência e Estado incompleto incompleto como referência segue. pode perder a
+sinalização F10.
+ S17 Exportar pacote → alterar byte A exportação calcula hashes. A verificação posterior Pode apresentar sem mudar tamanho → CHECK inspeciona existência e tamanho, não recalcula hash. falso OK F05.
+ S18 SOURCE já catalogada → MAIN A lista noMain é preenchida com hashes de arquivo no Ferramenta não ausente → Verify Source catálogo, sem comprovar cópia no MAIN. prova proteção F06.
+ S19 Atualizar Clone Source com O comparador não seleciona esse arquivo para cópia. Diferença pode arquivo de mesmo tamanho Manifesto é acrescido nas atualizações. passar; histórico
+pode conflitar F12.
+ S20 Celular → recebimento → INTAKE Recepção usa .part e confere bytes; autenticação local Exigir validação e → MAIN existe. Nome/tamanho não provam igualdade de limites F17.
+conteúdo.
+ S21 Acervo no mesmo disco com duas O fluxo de arquivos pode completar; a falha física Contar domínios pastas de backup continua comum. físicos, não apenas
+caminhos F07.
+ S22 Rebuild com MAIN divergente e O código pode manter bytes do MAIN antigo e registrar SOURCE offline aviso. Isso recupera disponibilidade, sem provar
+autenticidade.
+Resultado deve ser recuperado com divergência, nunca proteção plena.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 4
+
+05 Três correções que devem bloquear a liberação F01 Duplicata provável pode ficar fora do backup
+Prioridade P0. Constatação: buscarAssetPorMetadados força coincidência para certos formatos comprimidos quando formato e tamanho coincidem. Imagens e outros arquivos também têm caminhos sem prova por hash. O wizard transforma a indicação em estado duplicata. O planner exclui todos os itens nesse estado [E01, E02].
+Efeito para o usuário: Duas gravações MP3/FLAC ou duas fotos realmente diferentes podem perder uma das representações no MAIN. O original não é apagado nesse trecho; o risco surge quando o usuário confia no backup e descarta a SOURCE.
+Correção e aceite: Separar “idêntico por SHA-256” de “possivelmente semelhante”. Só suprimir cópia se a identidade de bytes e a existência da cópia preservada forem comprovadas. Aceite: arquivos diferentes com extensão e tamanho iguais permanecem elegíveis ao MAIN.
+Evidência: E01 IngestArquivo.cpp 506–758; IngestWizardComponent.cpp 483–500 e 640–690. E02 Consolidacao.cpp 539–555.
+F02 Criar lixeira nova apaga a lixeira legada
+Prioridade P0. Constatação: criarPastaLixeira chama deleteRecursively sobre _lixeira na raiz, se ela existir, antes de usar Project/_lixeira. Não há migração dos conteúdos nesse trecho [E04].
+Efeito para o usuário: Versões antigas disponíveis para recuperação podem desaparecer durante uma sincronização. A operação é apresentada como manutenção do backup, mas remove material recuperável.
+Correção e aceite: Migrar preservando nomes, inventário e hashes, ou manter a pasta antiga até uma limpeza explícita com política de retenção. Aceite: um arquivo exclusivo da lixeira antiga continua recuperável após o sync.
+Evidência: E04 SyncEngine.cpp 143–160.
+F03 Recuperação apaga antes de copiar e não verifica o resultado
+Prioridade P0. Constatação: BackupRecoveryDialog apaga o destino após confirmação e então chama copyFileTo. Não há cópia temporária, validação por SHA-256 nem bloqueio explícito de origem igual ao destino [E05].
+Efeito para o usuário: Falha de leitura, espaço ou permissão pode deixar o usuário sem a versão que estava no destino. Escolher a pasta da própria fonte pode remover a cópia usada para recuperar. A cópia ocorre no callback da interface, com risco de bloqueio perceptível em arquivos grandes.
+Correção e aceite: Bloquear mesma identidade física; copiar em background para temporário, verificar, preservar versão anterior e substituir com segurança. Aceite: falha injetada mantém fonte e destino anteriores byte a byte.
+Evidência: E05 BackupRecoveryDialog.cpp 111–170. A confirmação de sobrescrita já existe; não resolve a falha posterior.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 5
+
+06 A verificação precisa significar a mesma coisa F04 Mesmo tamanho é tratado como mesma identidade
+Prioridade P1. Constatação: No sync rápido, a chave chamada sha256 recebe o tamanho convertido em texto. Comparar e sincronizar clones do MAIN usam false para o modo completo. O incremental do MAIN também pula arquivos por existência e tamanho [E06, E03].
+Efeito para o usuário: Corrupção ou edição que preserve tamanho pode sobreviver a uma atualização. Um novo e um removido do mesmo tamanho podem ainda ser pareados como movimento, carregando bytes errados para o nome novo. T04 reproduziu a igualdade da chave para conteúdos diferentes.
+Correção e aceite: Manter scan rápido como triagem, rotulado como tal; exigir SHA-256 para afirmar identidade, parear moves e concluir verificação. Preservar hashes por destino e oferecer revalidação integral com data e cobertura.
+Evidência: E06 SyncEngine.cpp 303–310, 395–419, 799–804 e 932–949. E03 Consolidacao.cpp 870–878.
+F05 CHECK do pacote não comprova o hash armazenado
+Prioridade P1. Constatação: A entrega do pacote calcula SHA-256 da cópia e do MAIN. A checagem posterior considera íntegro o arquivo existente com tamanho esperado, sem recalcular o hash nessa decisão [E07].
+Efeito para o usuário: O usuário pode receber relatório de pacote completo mesmo após alteração de conteúdo com tamanho idêntico. “Completo” e “íntegro” deixam de ter significado independente.
+Correção e aceite: Separar inventário e integridade. CHECK INTEGRITY deve ler todos os arquivos e comparar com o manifesto; CHECK CONTENTS pode ser rápido. Aceite: trocar um byte sem mudar tamanho produz erro de integridade e identificação do arquivo.
+Evidência: E07 PacoteCollection.cpp 242–299 e 648–675. O gerador tem verificação; o problema é a checagem posterior.
+F06 Verify Source consulta catálogo como se fosse MAIN
+Prioridade P1. Constatação: carregarHashes preenche noMain com SELECT checksum_sha256 FROM arquivo. verificar conta o hash encontrado nessa lista como totalNoMain, sem resolver a cópia física no MAIN ou consultar sua consolidação [E08].
+Efeito para o usuário: Um arquivo só catalogado, ainda não copiado, ou cuja cópia sumiu pode ser considerado já presente. O nome e os contadores induzem uma conclusão de proteção que a consulta não sustenta.
+Correção e aceite: Ou renomear a função para “comparar com catálogo”, ou consultar cobertura real do MAIN e confirmar presença e hash. Aceite: item catalogado sem cópia aparece como pendente de proteção.
+Evidência: E08 VerifySource.cpp 47–60 e 86–91. A janela permite ingestão dos faltantes; não é uma autorização segura para apagar a SOURCE.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 6
+
+07 Os indicadores de proteção podem superestimar o acervo
+F07 O selo 3 2 1 conta registros em vez de cópias do mesmo conteúdo
+Prioridade P1. Constatação: avaliarRegra321 soma vaults mais um disco principal, acrescenta um tipo ao total de tipos e interpreta rede, nuvem_sync ou LTO como offsite. Destinos configurados também influenciam o resultado. Não exige evidência de cópia, cobertura por arquivo nem localização física [E09].
+Efeito para o usuário: Dois discos de origem com conteúdos distintos podem parecer cópias redundantes. Um NAS na mesma sala ou uma fita LTO local podem preencher offsite. T01 obteve OK com dois vaults offline cadastrados e zero cópias criadas.
+Correção e aceite: Calcular por arquivo ou conjunto versionado. Contar cópias verificadas em dispositivos identificados, com localização externa declarada e isolamento separado. Exibir “não comprovado” quando faltar evidência. Offline recente não significa ausência, mas precisa ter última verificação e prazo de validade.
+Evidência: E09 Preservation.cpp 1316–1375. A tabela vault modela origens; backup_destino e source_clone são estruturas distintas.
+F08 Sucesso histórico continua valendo após falha
+Prioridade P1. Constatação: A view backup_status e o contador do dashboard usam EXISTS ou COUNT de qualquer BACKUP_VERIFIED SUCCESS. Não escolhem o estado atual por arquivo e destino. T02 inseriu sucesso e falha posterior: o status permaneceu OK [E11].
+Efeito para o usuário: O arquivo pode desaparecer, divergir ou ficar com uma única cópia, e o painel ainda sustentar uma proteção antiga. O compliance_score aprova certos critérios com apenas um item verificado ou identificado [E12].
+Correção e aceite: Manter histórico, mas calcular estado atual pela última evidência válida da versão e destino, com expiração e cobertura. Usar “8.000 de 10.000 verificados”, sem tratar um caso positivo como aprovação global. Não chamar o índice interno de certificação.
+Evidência: E11 registro.sql 969–981; PreservationWorkspaceComponent.cpp 91–105. E12 mesmo componente 235–249.
+O painel que o usuário deveria enxergar
+Por coleção e por destino: arquivos esperados, presentes, com hash conferido, divergentes, ausentes e ainda não verificados; data da última leitura integral; volume físico; pendências offline; última recuperação testada. Origem, MAIN e clone precisam ter cobertura comparável.
+A mesma regra deve valer nos filtros do GRID, no resumo da operação, na saúde do acervo e no relatório exportado. Quatro implementações diferentes de “protegido” criam resultados contraditórios mesmo quando cada tela parece plausível.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 7
+
+08 Interrupção e recuperação de estado F09 Sincronização publica arquivos e banco sem troca conjunta
+Prioridade P1. Constatação: aplicarSync move versões antigas, copia mídia diretamente para o nome final e depois substitui os bancos por snapshots. Vários retornos de moverParaLixeira não são verificados. Arquivo Project comum não recebe a mesma validação de hash usada na mídia em modo completo [E13].
+Efeito para o usuário: Uma interrupção pode deixar mídia parcial ou de uma revisão junto de banco de outra. A lixeira ajuda, mas não há reversão automática do conjunto. Falhar ao preservar a versão anterior pode passar sem impedir a substituição.
+Correção e aceite: Usar staging por operação, journal persistente por arquivo, confirmação das ações e publicação de revisão só após validar inventário, hashes e snapshot. Não apagar marcador antes da reconciliação. Aceite: injetar falha em cada etapa permite retomar ou voltar a uma revisão utilizável.
+Evidência: E13 SyncEngine.cpp 445–690. E10 Database.cpp 358–380: snapshot SQLite existe e deve ser mantido.
+F10 A comparação anunciada como leitura altera os destinos
+Prioridade P1. Constatação: escanearEComparar chama sanitizarEstruturaDestino, pode criar ou atualizar destination.json e remove marcador de sync incompleto da referência [E14]. O cabeçalho descreve a comparação como somente leitura.
+Efeito para o usuário: O usuário pode escolher “comparar” para inspecionar uma cópia suspeita e provocar mudanças antes de confirmar qualquer aplicação. A evidência de interrupção pode desaparecer sem que o problema tenha sido corrigido.
+Correção e aceite: Scan deve produzir apenas diagnóstico. Migração, reparo de estrutura, reconstrução de identidade e limpeza de marcadores precisam virar ações explícitas com plano e log. Aceite: comparar não muda nenhum byte, nome, banco nem marcador.
+Evidência: E14 SyncEngine.h 69–76; SyncEngine.cpp 225–274. Project.cpp contém a sanitização e migrações chamadas.
+F11 Promoção de clone não valida toda a cópia antes da troca
+Prioridade P1. Constatação: promoverAMain exige pasta e registro.sqlite; depois altera papéis em dois bancos e JSONs separados. Não exige hash integral, cobertura de mídia ou ausência de marcador incompleto no próprio motor [E15].
+Efeito para o usuário: Um clone incompleto ou antigo pode virar MAIN. Uma falha entre a atualização de um banco e do outro pode deixar identidades divergentes. Perda aceitável de trabalho não é apresentada pelo motor como condição formal.
+Correção e aceite: Pré-validar inventário, hashes, revisão e journal; apresentar perda de revisão; registrar promoção recuperável e reconciliar identidades em retomada. Aceite: clone incompleto é bloqueado ou promovido explicitamente em estado degradado.
+Evidência: E15 SyncEngine.cpp 1178–1243; BackupVersionsComponent.cpp 610–633 tem confirmação de promoção, sem substituir a validação técnica.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 8
+
+09 Clones de origem e movimentação de arquivos auxiliares
+F12 Clone Source pode deixar bytes antigos e manifestos conflitantes
+Prioridade P1. Constatação: compararCloneDeSource seleciona arquivos novos ou com tamanho diferente. sincronizarCloneDeSource carrega o manifesto antigo e acrescenta linhas novas. Não substitui o registro do caminho atualizado nem retira a entrada do removido [E17].
+Efeito para o usuário: Conteúdo mudado sem alteração de tamanho pode não ser atualizado. Para um caminho modificado com tamanho diferente, o manifesto pode conter dois hashes esperados incompatíveis. A contagem arquivos é aumentada também para substituições.
+Correção e aceite: Regerar manifesto canônico com uma entrada por caminho da revisão atual; manter versões antigas num histórico separado. Detectar mudanças por hash e controlar o estado parcial da operação. Aceite: alteração, remoção e nova sincronização deixam manifesto verificável e contagem exata.
+Evidência: E17 SyncEngine.cpp 1087–1174. A criação inicial calcula e compara hashes; a fragilidade é a comparação e atualização seguintes.
+F13 Sidecar da INBOX pode ser apagado sem igualdade comprovada
+Prioridade P1. Constatação: A transferência INBOX → MAIN apaga o sidecar de origem se o sidecar de destino já existe ou se copyFileTo retorna sucesso. Não compara os sidecars antes de apagar; .xmp e nome.ext.xmp podem disputar o mesmo destino [E18].
+Efeito para o usuário: Uma ficha auxiliar diferente, ou a segunda variante de sidecar, pode desaparecer da INBOX apesar de a mídia principal ter sido copiada corretamente. A frase genérica “original nunca é alterado” não explica essa movimentação interna.
+Correção e aceite: Mover com journal e verificar conteúdo de cada auxiliar. Conflitos devem preservar ambas as variantes até decisão. Aceite: sidecars de mesmo nome com bytes diferentes permanecem recuperáveis após a consolidação.
+Evidência: E18 Consolidacao.cpp 1760–1780. A limpeza da mídia da INBOX só ocorre após cópia principal verificada; o problema descrito é o tratamento do sidecar.
+O significado de clone precisa ser inequívoco
+Clone do MAIN replica a coleção organizada, com banco e mídia. Clone Source copia material da origem e tem escopo diferente. O segundo não deve ser apresentado como substituto automático do primeiro. A interface deve dizer exatamente qual pasta ou volume será copiado antes de iniciar.
+A seleção da raiz do Clone Source usa uma heurística baseada em /Volumes/ e no ancestral comum dos arquivos catalogados. Isso merece teste específico em Windows e com arquivos dispersos no disco do sistema: o escopo pode ser maior que o conjunto visível no GRID [E17].
+A atualização do clone permite preservar versões antigas em lixeira, o que é útil. Mas lixeira local, espelho atual e histórico com retenção são produtos diferentes. Só o último responde à pergunta “como volto à versão de terça-feira antes do erro?”.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 9
+
+10 Rastreabilidade e resistência a falhas F14 O histórico de preservação não é imutável no banco
+Prioridade P1. Constatação: preservation_event é descrito como append-only, mas o schema não bloqueia UPDATE ou DELETE e mantém referências com ON DELETE CASCADE. T03 alterou e apagou eventos sem bloqueio [E19].
+Efeito para o usuário: Existe histórico útil para diagnóstico, mas não garantia forte contra alteração ou remoção. Um comentário de código não equivale a trilha inviolável. Exclusão do item pode eliminar evidência associada.
+Correção e aceite: Definir política de retenção e exclusão; impedir alteração pela aplicação e por triggers, preservando tombstones e autoria. Se houver exigência de resistência à adulteração, usar export protegido ou assinatura/encadeamento e cópia externa. Triggers sozinhos não protegem contra quem controla o arquivo SQLite.
+Evidência: E19 registro.sql 887–912. T03 comprova permissividade no schema fornecido, não uma invasão do aplicativo.
+F15 Durabilidade e trava precisam falhar de forma segura
+Prioridade P1. Constatação: Database usa WAL com synchronous=NORMAL. Isso protege consistência, mas pode perder transações recentes após queda de energia. Database::Trava registra timeout de 60 segundos e prossegue sem a trava [E20, R1]. destination.json é apagado antes de mover o temporário para seu lugar [E21].
+Efeito para o usuário: O risco é perder alterações recentes e deixar arquivos/banco/identidade em estados diferentes. O timeout pode permitir acesso sem a sincronização pretendida; o efeito exato precisa de teste de concorrência. Não há reprodução de corrida nesta auditoria.
+Correção e aceite: Fixar requisito de durabilidade; usar FULL nos commits críticos e protocolo de publicação persistente. Timeout deve abortar/reagendar, sem continuar desprotegido. Substituição de JSON deve preservar versão anterior até a troca bem-sucedida. Aceite: queda e contenção não produzem sucesso falso nem identidade perdida.
+Evidência: E20 Database.cpp 187–211. E21 Project.cpp 33–58. O comentário atual sobre segurança do NORMAL não deve ser interpretado como durabilidade de todos os commits.
+F16 Identificador público usa só oito dígitos hexadecimais
+Prioridade P2. Constatação: A migração gera BKR:ASSET: a partir dos primeiros oito caracteres do UUID e não cria unicidade desse campo nesse trecho. T05 produziu dois identificadores públicos iguais para UUIDs diferentes [E22].
+Efeito para o usuário: IDs internos continuam distintos, mas referências públicas e intercâmbio podem ficar ambíguos. Não é prova de colisão existente no acervo do usuário.
+Correção e aceite: Usar UUID completo ou outro identificador com garantia de unicidade e namespace definido; preservar aliases existentes na migração. Aceite: UUIDs com prefixo igual recebem IDs públicos distintos.
+Evidência: E22 Project.cpp 1162–1192; registro.sql 867–868.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 10
+
+11 Segurança e aderência a uma PSI
+Uma PSI é uma política da organização. O aplicativo pode implementar controles e gerar evidências, mas o selo de um dashboard não demonstra, sozinho, cumprimento dessa política. Abaixo está a capacidade observada, sem criar exigência de servidor ou multiusuário para um app desktop offline.
+ Controle Situação no material examinado Conclusão
+  Integridade SHA-256 na ingestão e em cópias; decisões rápidas e Parcial. F01 e F04–F08. indicadores não uniformes.
+ Disponibilidade MAIN, clones, relink, lixeira e recuperação existem. Parcial. F02, F03, F09 e F11. Restauração integral não foi homologada.
+ Confidencialidade Bancos, mídia, exports e logs usam arquivos comuns. Não Depende de criptografia de local foi localizada criptografia própria em repouso. volume, permissões e custódia
+do sistema operacional.
+ Isolamento e Clones conectados são graváveis; não foi demonstrada Espelho conectado compartilha ransomware retenção imutável ou isolamento automático. exposição. Exige procedimento
+de desconexão ou proteção externa.
+ Retenção e descarte Há lixeiras e histórico; a limpeza legada é destrutiva. Não Definir retenção por classe e foi demonstrada política temporal completa. descarte autorizado.
+ Auditoria e autoria Eventos e logs existem; tabela não é imutável. Rastreabilidade operacional parcial, sem garantia de
+inviolabilidade.
+ Recuperação e Há promoção e cópia de arquivo. Não há evidência de Definir perda máxima aceitável continuidade RPO/RTO medidos. e tempo máximo de retorno;
+testar em outra máquina.
+ Exposição em export Ficha, pessoas, GPS e conteúdo de conversas podem Exigir prévia dos campos e perfil acompanhar entregas. de privacidade por tipo de
+saída.
+F17 Recebimento de celular exige proteção proporcional
+O servidor usa HTTP, escuta em 0.0.0.0, aplica filtro de IP local e token e usa .part para não publicar recebimentos incompletos. Esses controles são positivos. Porém o limite global de payload é o máximo de size_t e a autenticação local não cifra a transmissão. Nome e tamanho participam da identificação de arquivos já recebidos [E23].
+Consequências condicionais: dispositivo na rede com token válido pode consumir muito espaço; conteúdo e token não recebem confidencialidade de TLS nesse canal; arquivos diferentes podem coincidir no mecanismo de existência. Não foi realizado ataque nem teste de rede. Prioridade P1 antes de recomendar uso em redes não confiáveis.
+Correção: restringir duração/interface da sessão, limitar bytes e espaço por operação, validar conteúdo recebido e tornar o escopo de rede explícito. Para dados sensíveis, cifrar o transporte ou documentar o controle compensatório de uma rede isolada. O app não precisa virar um sistema de contas corporativas para resolver isso.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 11
+
+12 Reduzir a complexidade sem amputar o produto
+A avaliação de usabilidade é uma inferência a partir das telas e callbacks definidos no código. Sem executar a interface e observar usuários, não é possível afirmar tempos de tarefa, legibilidade ou taxa real de erro.
+ Manter Simplificar ou retirar do caminho comum
+  GRID e preview como lugar principal de Manter a seleção visível ao passar para backup ou export. Informar consulta. sempre se a ação vale para seleção, coleção ou tudo.
+ INTAKE como área de revisão. Não exigir classificação completa para proteger bytes. Permitir copiar pendências para MAIN, com estado de curadoria separado.
+ Folder Map e múltiplas organizações. Um mapa autoritativo para o MAIN e mapas de saída claramente identificados. Reorganização física deve mostrar plano de mudanças.
+ SOURCE, MAIN e CLONE. Explicação curta e estável junto ao papel. Evitar ORIGINAL interno significar MAIN na tela e original de captura em outro contexto.
+ Pacotes, Bridge e Bounce. Agrupar como perfis de entrega. Mostrar opções específicas só depois da finalidade escolhida.
+ Verificação e relatórios. Unificar motor e vocabulário. Ações equivalentes devem produzir o mesmo estado de integridade.
+ Armazenamento e telemetria SMART. Deixar como inspeção avançada. Disco saudável não prova backup íntegro, e SMART indisponível não significa falha comprovada.
+ Lixeira e undo. Dizer o que será removido: associação no mapa, item do catálogo ou arquivo físico. Retenção deve ficar separada do undo de edição.
+O que é desnecessário ou enganoso hoje
+O compliance_score percentual é dispensável enquanto não mede cobertura e evidência por arquivo. Um único caso verificado não deve aprovar o acervo. O selo 3-2-1 é enganoso com a fórmula atual. Funções de limpeza destrutiva dentro da comparação são inadequadas. Comentários e ajuda que descrevem comportamentos antigos precisam ser atualizados.
+Não há base para chamar GRID, Folder Map, metadados, clones ou preview offline de inúteis. A redundância a reduzir está sobretudo nos motores e nas definições de estado: consolidação, clone, pacote e recuperação possuem critérios diferentes para algo que o usuário chama de “verificar”.
+Fluxo principal recomendado
+Adicionar → revisar → organizar quando necessário → conferir plano de proteção → copiar e verificar → atualizar clones escolhidos → receber resultado com cobertura. Recuperar deve ser uma ação principal própria, com seleção de cópia confiável e validação antes da substituição.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 12
+
+13 Escopo do backup e situações especiais Uma seleção de assets não é necessariamente uma pasta completa
+O planner escolhe um arquivo principal por item, priorizando eh_master, e trata alguns auxiliares separadamente [E02, E03]. Isso atende backup de mídia catalogada, mas não demonstra backup integral de qualquer pasta de produção. Arquivos sem item, auxiliares desconhecidos e dependências externas podem ficar fora do recorte.
+Para projetos Reaper, Pro Tools, Logic, vídeo, DDP, RAW com XMP, bibliotecas e bundles, deve existir contrato explícito: preservar o conjunto de dependências ou informar que a operação protege apenas assets selecionados. Não foi demonstrada resolução universal de dependências de DAWs. Não tratar o nome “Clone Source” como imagem de disco inicializável ou preservação automática de permissões e atributos.
+Origem e destino no mesmo domínio de falha
+Três pastas no mesmo SSD não resolvem falha física; dois discos no mesmo local não resolvem perda do local. As telas precisam distinguir caminho, volume físico, localização e estado de isolamento. Uma cópia offline pode ser válida; sua confiança depende da última verificação, custódia e cobertura, não apenas de estar conectada agora.
+Nuvem sincronizada e arquivos sob demanda
+O código reconhece placeholders de nuvem em ingestão, mas cadastro e miniatura não demonstram que todos os bytes estão disponíveis para copiar. O plano deve mostrar itens não materializados; o resultado precisa listar os ausentes. Uma pasta sincronizada não prova upload concluído, retenção de versões ou recuperação independente da conta.
+Portabilidade entre macOS e Windows
+Exigir testes de acentos em Unicode, diferença de maiúsculas/minúsculas, nomes reservados, caminhos longos, exFAT, arquivos grandes e volumes remontados. Há sanitização e tratamento de colisões no planner, mas não houve execução cruzada. O escopo baseado em /Volumes/ no Clone Source merece revisão específica [E17].
+Links simbólicos e arquivos que mudam durante a cópia
+Não foi demonstrada política uniforme para links, ciclos e identidade física de origem/destino. A lista de exclusões do sync também descarta certos nomes e extensões dentro de Media, inclusive .sqlite, .mtz e .bkm, o que precisa ser declarado se o app aceitar esses arquivos como conteúdo [E24].
+A cópia do MAIN prova que os bytes lidos coincidem com os gravados. Isso não equivale a snapshot de uma pasta que está sendo modificada por outro programa. Para sessões abertas, exigir fechamento, snapshot do sistema ou aviso de conjunto potencialmente inconsistente.
+Rebuild e recuperação com divergência
+Preservar uma cópia divergente quando a SOURCE sumiu pode ser a melhor ação de emergência. O resultado deve distinguir “bytes recuperados” de “bytes autenticados contra o catálogo”. Não substituir a referência de integridade silenciosamente para fazer a verificação passar.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 13
+
+14 Plano de correção por dependência
+ Ordem Entrega concreta Critério de conclusão
+  1 Bloquear perda e Corrigir F01, F02 e F03. Interromper exclusão omissão automática de candidatos a duplicata; preservar
+lixeira legada; recuperação com temporário e hash.
+Falhas injetadas não apagam fonte nem destino válido. Dois arquivos diferentes de mesmo tamanho entram no backup.
+ 2 Unificar Corrigir F04–F08 e F12. Estado por arquivo, versão e integridade destino; CHECK integral; manifesto canônico;
+cobertura real do MAIN.
+Mesmo tamanho com hash diferente é detectado. Painel não apresenta proteção com vaults apenas cadastrados.
+ 3 Tornar interrupção recuperável
+Corrigir F09–F11, F13 e F15. Journal, staging, publicação de revisão, promoção validada e fail-closed nas travas.
+Queda em cada fronteira produz retomada ou revisão anterior íntegra; comparar não altera bytes.
+ 4 Fechar evidências Corrigir F14, F16 e F17. Retenção e autoria, IDs
+e segurança completos, limites e proteção de recebimento, dados
+de privacidade nas saídas.
+Política e controles têm evidência verificável; logs preservados; exports mostram campos e escopo.
+ 5 Simplificar Uma ação de proteção, uma de recuperação e perfis experiência de entrega. Preservar GRID e Folder Map. Atualizar
+ajuda e remover métricas enganosas.
+Usuário identifica origem, MAIN, clone, escopo e pendência sem ler documentação de arquitetura.
+Motor comum recomendado
+Centralizar planejamento, validação de caminho, cópia em blocos, cálculo de hash, publicação segura, versionamento, cancelamento e registro de resultado. Os perfis MAIN, CLONE, PACOTE e RESTAURAR escolhem políticas diferentes sobre esse mesmo motor. Não criar mais um fluxo paralelo de backup.
+Modelo mínimo de evidência
+Por arquivo e cópia: ID estável, versão do conteúdo, SHA-256 esperado e observado, tamanho, destino, identidade do volume, caminho, estado, hora da verificação e ID da operação. Por operação: seleção congelada, inventário esperado, pendências, falhas, revisão de banco e resultado final.
+Um hash catalogado é uma referência; um hash conferido em um destino é uma evidência datada. Integridade da cópia atual, número de cópias e possibilidade de voltar a uma versão anterior devem ser apresentados separadamente.
+Regra para a mensagem final
+“Concluído” só com escopo explícito. Se 980 de 1.000 arquivos foram copiados, o resultado é parcial e os 20 restantes precisam permanecer visíveis e exportáveis. Itens recusados, candidatos a duplicata e ausentes não podem desaparecer da contabilidade.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 14
+
+15 Testes executados e validação ainda necessária
+Os testes T01–T03 e T05 usaram SQLite em memória com o schema entregue. Foram acrescentadas apenas persistent_id e estado_presenca, colunas aditivas previstas pelo aplicativo e requeridas pela view. Não foi criado um banco de produção completo nem executado o app. T04 reproduziu em Python a chave de comparação rápida observada no C++.
+ Teste isolado Resultado observado
+  T01 Regra 3-2-1 Dois vaults cadastrados, local e rede, offline, sem cópias: 3 cópias calculadas, 3 tipos e offsite verdadeiro; algoritmo retorna OK.
+ T02 Status de backup Sucesso seguido por evento FAILURE posterior para o mesmo item: backup_status permanece OK.
+ T03 Append-only UPDATE e DELETE em preservation_event aceitos pelo schema.
+ T04 Comparação rápida 4.096 bytes A e 4.096 bytes B: SHA-256 diferentes; chaves rápidas iguais. Não foi execução do motor JUCE.
+ T05 Identificador público Dois UUIDs distintos com prefixo 12345678 recebem BKR:ASSET:12345678 sem bloqueio.
+Ensaios obrigatórios antes de homologar proteção
+1. Matriz de bytes: MP3, FLAC, JPEG, WAV e documentos distintos com tamanho igual; cópia corrompida sem mudar tamanho; zero bytes; arquivo ilegível; auxiliar ausente; nomes colidentes. Confirmar inventário do início ao fim.
+2. Falhas: disco cheio, desconexão USB, permissão negada, cancelamento, queda do processo, reinício abrupto e falha de rename. Injetar falhas antes/depois de copiar, verificar, registrar e publicar a revisão. Rodar em macOS e Windows.
+3. Recuperação: instalar o app em outra máquina, manter SOURCE e MAIN originais indisponíveis, abrir o clone, validar banco e mídia, restaurar arquivos e promover a cópia. Medir tempo e perda de revisões. É esse ensaio que comprova continuidade.
+4. Histórico: limpar catálogo, remover item, sincronizar, reabrir e restaurar revisão anterior dentro da retenção. Confirmar que lixeiras legadas e eventos necessários sobrevivem.
+5. Usabilidade: observação de pessoas sem envolvimento no desenvolvimento, com tarefas de backup simples, incremental, disco offline e recuperação. Avaliar se entendem o escopo antes de agir; não fornecer instruções internas durante a tarefa.
+Não foram medidos desempenho, consumo de memória, estabilidade prolongada, SMART real, troca entre sistemas, ataques ao servidor de celular ou restauração completa. O README relata falhas históricas em testes; esses números não foram assumidos como estado atual.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 15
+
+16 Evidências de código e referências
+Os caminhos abaixo são relativos à raiz extraída de Archive(4).zip. As linhas identificam esta cópia do código, não uma versão posterior. Os achados se apoiam nas implementações, não apenas no README. O ZIP não foi modificado.
+E01 Source/Ingest/IngestArquivo.cpp 506–758; Source/Ui/IngestWizardComponent.cpp 483–500 e 640–690 — Heurísticas e promoção a duplicata.
+E02 Source/Consolidacao/Consolidacao.cpp 539–555 — Exclusão de duplicata e escolha de arquivo principal.
+E03 Source/Consolidacao/Consolidacao.cpp 845–878 e 1315–1790 — Incremental, cópia verificada, registro e INBOX.
+E04 Source/Sync/SyncEngine.cpp 143–160 — Exclusão da lixeira legada.
+E05 Source/Ui/BackupRecoveryDialog.cpp 111–170 — Sobrescrita e cópia de recuperação.
+E06 Source/Sync/SyncEngine.cpp 303–310, 395–419, 799–804 e 932–949 — Comparação rápida e uso pelos clones.
+E07 Source/Consolidacao/PacoteCollection.cpp 242–299 e 648–675 — Entrega com hash e CHECK por tamanho.
+E08 Source/Vault/VerifySource.cpp 47–60 e 86–91 — Hashes de catálogo usados como noMain.
+E09 Source/Preservation/Preservation.cpp 1316–1375 — Fórmula da regra 3-2-1.
+E10 Source/Db/Database.cpp 358–380 — API de backup SQLite.
+E11 schema/registro.sql 969–981; Source/Ui/PreservationWorkspaceComponent.cpp 91–105 — Sucesso histórico de backup. E12 Source/Ui/PreservationWorkspaceComponent.cpp 235–249 — Critérios do compliance_score.
+E13 Source/Sync/SyncEngine.cpp 445–690 — Aplicação de sync e publicação da revisão.
+E14 Source/Sync/SyncEngine.h 69–76; Source/Sync/SyncEngine.cpp 225–274 — Comparação com efeitos colaterais.
+E15 Source/Sync/SyncEngine.cpp 1178–1243; Source/Ui/BackupVersionsComponent.cpp 610–633 — Promoção de clone. E16 Source/Ui/BackupWorkspaceComponent.cpp 5670–5705 — Oferta de sincronização sem remoção automática.
+E17 Source/Sync/SyncEngine.cpp 997–1174 — Escopo, comparação e manifesto de Clone Source.
+E18 Source/Consolidacao/Consolidacao.cpp 1760–1780 — Transferência de sidecars da INBOX.
+E19 schema/registro.sql 887–912 — Eventos e referências com cascade.
+E20 Source/Db/Database.cpp 187–211 — WAL NORMAL e timeout da trava.
+E21 Source/Model/Project.cpp 33–58 — Substituição de destination.json.
+E22 Source/Model/Project.cpp 1162–1192 — Identificador público truncado.
+E23 Source/Celular/ServidorCelular.cpp 90, 140–211, 238–270, 334–406 e 456 — HTTP, autenticação, limites e recebimento. E24 Source/Sync/SyncEngine.cpp 22–47 — Exclusões da enumeração em Media e Project.
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 16
+
+17 Referências técnicas e parecer final
+Fontes primárias consultadas em 27 de outubro de 2026. São referências técnicas para avaliar os controles; não foram tratadas como certificação do produto.
+R1 SQLite PRAGMA synchronous
+WAL com NORMAL mantém consistência, mas commits podem ser revertidos após falha de energia ou do sistema. FULL oferece garantia de durabilidade maior nesse modo.
+https://www.sqlite.org/pragma.html#pragma_synchronous
+R2 SQLite Online Backup API
+A API cria snapshot de um banco ativo. Isso não torna atômico o conjunto externo de banco, mídia e JSON.
+https://www.sqlite.org/backup.html
+R3 Library of Congress PREMIS Data Dictionary 3
+O modelo define Objects, Events, Rights e Agents. A presença de tabelas inspiradas nessas entidades é uma base de implementação, não prova de interoperabilidade de todos os pacotes.
+https://www.loc.gov/standards/premis/v3/
+R4 FADGI Glossary OAIS
+OAIS abrange ingestão, armazenamento, gestão de dados, administração, planejamento de preservação e acesso. Uma função de exportar JSON não cobre, isoladamente, esse conjunto.
+https://www.digitizationguidelines.gov/term.php?term=oais
+R5 NIST SP 800 34 Rev 1
+Referência para planejamento de contingência e avaliação de requisitos de recuperação. Não substitui os requisitos e a política da organização usuária.
+https://csrc.nist.gov/pubs/sp/800/34/r1/upd1/final
+R6 FBI Improve Cyber Resiliency
+Recomenda backups offline e imutáveis, proteção de logs e testes periódicos de restauração com medição do tempo de recuperação.
+https://www.fbi.gov/investigate/cyber/ten-actions-to-improve-cyber-resiliency
+Parecer sobre preservação e compliance
+Há componentes pertinentes à preservação: hashes, eventos, direitos, identificadores e exportação de metadados. Aderência parcial a conceitos PREMIS e OAIS é uma descrição defensável. “Camada completa” ou “compliance” requerem matriz de requisitos, evidências, validação de interoperabilidade e processo operacional que o código examinado não demonstra integralmente [R3–R5].
+FAIR também não deve ser usado como sinônimo de backup seguro. Recursos de identificação e exportação ajudam no intercâmbio; não comprovam, por si, encontrabilidade, acessibilidade, interoperabilidade e reutilização segundo um perfil definido. Não houve avaliação formal desses princípios nesta auditoria.
+Decisão recomendada
+Continuar o produto preservando o fluxo central, suspender a expansão de funções de backup até corrigir os P0 e estabilizar a prova de integridade. Depois, homologar os P1 de proteção com restauração independente. Simplificar a interface após unificar os estados evita redesenhar telas sobre critérios ainda contraditórios.
+O app tem um propósito compreensível. Hoje a complexidade perigosa está nas exceções de implementação e nas promessas de proteção, não na existência de GRID, Folder Map e clones. O produto fica menor para o usuário quando o comportamento é previsível e o resultado informa exatamente o que está protegido.
+Identificação do material auditado
+SHA-256 do ZIP: 99da43e9161e7d1c0b3a3dc08f2a9a39112ee46626282066d1d1b0e74d75fce3
+ BKR Matriz | Auditoria de código e fluxos | 27 outubro 2026 17
+
