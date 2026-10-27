@@ -522,10 +522,34 @@ struct Verificacao {
     std::vector<ItemPlanejado> planejados;     // da seleção, na ordem do planejador
     std::map<std::string, size_t> problemaDe;  // item -> índice em r.problemas
     std::set<std::string> selecao;             // a que valeu (a gravada ou a atual)
+    std::map<std::string, size_t> registroDe;  // item -> índice em pacote.arquivos (o casamento feito)
 };
 
 std::string caminhoSemCaixa(const std::string& caminho) {
     return juce::String::fromUTF8(caminho.c_str()).toLowerCase().toStdString();
+}
+
+// Pacote anterior à seleção gravada: códigos dos itens que falharam no export dele, tirados dos relatórios
+// que o app salvou (Project/relatorios/export-resultado-*.txt) — o que tem uma linha igual ao caminho do pacote.
+std::set<std::string> codigosComFalhaNosRelatorios(const juce::File& pastaProjeto, const juce::File& pastaPacote) {
+    std::set<std::string> out;
+    const juce::String alvo = pastaPacote.getFullPathName();
+    for (const auto& f : pastaProjeto.getChildFile("relatorios").findChildFiles(juce::File::findFiles, false,
+                                                                                 "export-resultado-*.txt")) {
+        juce::StringArray linhas;
+        linhas.addLines(f.loadFileAsString());
+        bool doPacote = false;
+        for (const auto& l : linhas)
+            if (l.trim() == alvo) { doPacote = true; break; }
+        if (!doPacote) continue;
+        for (const auto& l : linhas) {
+            const auto t = l.trimStart();
+            if (!t.startsWith(juce::String::fromUTF8("• ["))) continue;
+            const auto codigo = t.fromFirstOccurrenceOf("[", false, false).upToFirstOccurrenceOf("]", false, false).trim();
+            if (codigo.isNotEmpty()) out.insert(codigo.toStdString());
+        }
+    }
+    return out;
 }
 
 Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaProjeto, const juce::File& pastaPacote,
@@ -556,26 +580,108 @@ Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaPro
             if (id == mapaPadrao) r.nomeMapa = nome;
     }
 
-    auto& selecao = v.selecao;
-    selecao.insert(p.selecao.begin(), p.selecao.end());
-    if (selecao.empty()) {
-        selecao = selecaoAtual;
-        r.usouSelecaoAtual = true;
-    }
-
     // Mesmo planejamento do export (gerarPacote): os caminhos saem iguais.
     auto plano = planejarConsolidacao(registro, pastaProjeto, p.media(), {NivelHierarquia::PastaManual}, {},
                                       ModoPrefixoArquivo::Nenhum, {}, /*autoResolver*/ true, false, false,
                                       /*paraExport*/ true, r.mapaId, /*estritoAoDestino*/ false,
                                       /*semPastaNaRaiz*/ true);
-    for (auto& ip : plano.itens)
-        if (selecao.count(ip.itemId)) v.planejados.push_back(std::move(ip));
 
     std::map<std::string, size_t> porCaminho, porItem;
     for (size_t i = 0; i < p.arquivos.size(); ++i) {
         porCaminho[caminhoSemCaixa(p.arquivos[i].caminho)] = i;
         if (!p.arquivos[i].itemId.empty()) porItem[p.arquivos[i].itemId] = i;
     }
+
+    auto& selecao = v.selecao;
+    selecao.insert(p.selecao.begin(), p.selecao.end());
+    if (selecao.empty()) {
+        // Pacote anterior à seleção gravada: a seleção sai do próprio pacote, não do que o usuário lembra.
+        // (1) os itens que falharam no export, pelos relatórios salvos: esses com certeza NÃO têm registro
+        // no catálogo (cópias de conteúdo idêntico enganariam o casamento abaixo); (2) cada registro do
+        // catálogo é de um item, nesta ordem: mesmo SHA-256 registrado do master E mesmo caminho que o
+        // planejador dá hoje; só o caminho; só o SHA (item renomeado/movido depois). O caminho sozinho
+        // engana quando o _1 de hoje não é o _1 do export; o SHA sozinho, entre cópias idênticas.
+        r.selecaoReconstruida = true;
+        std::set<std::string> falharam;
+        {
+            auto stCod = registro.prepare("SELECT id FROM item WHERE codigo_acervo = ?");
+            for (const auto& codigo : codigosComFalhaNosRelatorios(pastaProjeto, pastaPacote)) {
+                stCod.reset();
+                stCod.bind(1, Value::of(codigo));
+                if (stCod.step()) falharam.insert(stCod.columnText(0));
+            }
+        }
+        std::map<std::string, std::string> caminhoPlanejado;  // item -> caminho sem caixa (o primeiro do plano)
+        for (const auto& ip : plano.itens)
+            if (!falharam.count(ip.itemId))
+                caminhoPlanejado.emplace(ip.itemId, caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString()));
+        std::map<std::string, std::string> shaDe;  // item -> SHA-256 registrado do master
+        {
+            auto st = registro.prepare("SELECT item_id, LOWER(COALESCE(checksum_sha256, '')) FROM arquivo WHERE eh_master = 1");
+            while (st.step())
+                if (caminhoPlanejado.count(st.columnText(0)) && !st.columnText(1).empty())
+                    shaDe.emplace(st.columnText(0), st.columnText(1));
+        }
+        std::map<std::string, std::vector<std::string>> itensPorCaminho, itensPorSha;
+        for (const auto& [id, c] : caminhoPlanejado) itensPorCaminho[c].push_back(id);
+        for (const auto& [id, sha] : shaDe) itensPorSha[sha].push_back(id);
+        std::set<size_t> casados;
+        auto casar = [&](bool porSha, bool porCaminho) {
+            for (size_t i = 0; i < p.arquivos.size(); ++i) {
+                if (casados.count(i)) continue;
+                const auto& e = p.arquivos[i];
+                const std::string caminho = caminhoSemCaixa(e.caminho);
+                const auto& candidatos = porCaminho ? itensPorCaminho[caminho] : itensPorSha[e.sha256];
+                for (const auto& id : candidatos) {
+                    if (porItem.count(id)) continue;
+                    if (porSha && shaDe[id] != e.sha256) continue;
+                    if (porCaminho && caminhoPlanejado[id] != caminho) continue;
+                    porItem[id] = i;
+                    casados.insert(i);
+                    break;
+                }
+            }
+        };
+        casar(true, true);
+        casar(false, true);
+        casar(true, false);
+        // Sobrou registro: cópias da mesma foto cujo _N mudou entre o export e hoje (o _1 de lá é o _2 daqui).
+        // Vai para o item ainda sem registro com o mesmo nome-base na mesma pasta, sem o _N.
+        auto semSufixo = [](const std::string& caminho) {
+            const juce::String c = juce::String::fromUTF8(caminho.c_str());
+            const int ponto = c.lastIndexOfChar('.'), barra = c.lastIndexOfChar('/');
+            juce::String base = ponto > barra + 1 ? c.substring(0, ponto) : c;
+            const juce::String ext = ponto > barra + 1 ? c.substring(ponto) : juce::String();
+            const int us = base.lastIndexOfChar('_');
+            if (us > barra + 1 && base.substring(us + 1).containsOnly("0123456789") && base.length() > us + 1)
+                base = base.substring(0, us);
+            return (base + ext).toStdString();
+        };
+        std::map<std::string, std::vector<std::string>> itensPorBase;
+        for (const auto& [id, c] : caminhoPlanejado) itensPorBase[semSufixo(c)].push_back(id);
+        for (size_t i = 0; i < p.arquivos.size(); ++i) {
+            if (casados.count(i)) continue;
+            for (const auto& id : itensPorBase[semSufixo(caminhoSemCaixa(p.arquivos[i].caminho))]) {
+                if (porItem.count(id)) continue;
+                porItem[id] = i;
+                casados.insert(i);
+                break;
+            }
+        }
+        for (const auto& [id, idx] : porItem) selecao.insert(id);
+        r.doCatalogo = static_cast<int>(selecao.size());
+        r.registrosSemItem = static_cast<int>(p.arquivos.size() - casados.size());
+        for (const auto& id : falharam)
+            if (selecao.insert(id).second) ++r.doRelatorio;
+        if (selecao.empty()) {
+            selecao = selecaoAtual;
+            r.selecaoReconstruida = false;
+            r.usouSelecaoAtual = true;
+        }
+    }
+    v.registroDe = porItem;
+    for (auto& ip : plano.itens)
+        if (selecao.count(ip.itemId)) v.planejados.push_back(std::move(ip));
     std::map<std::string, const Pendencia*> pendenciaDe;
     for (const auto& pe : p.pendencias) pendenciaDe[pe.itemId] = &pe;
 
@@ -590,7 +696,9 @@ Verificacao verificar(matriz::db::Database& registro, const juce::File& pastaPro
         ++r.selecionados;
         const RegistroArquivo* e = nullptr;
         if (auto it = porItem.find(ip.itemId); it != porItem.end()) e = &p.arquivos[it->second];
-        else if (auto ic = porCaminho.find(caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString())); ic != porCaminho.end() &&
+        // Pelo caminho só quando nada casou registro com item antes (seleção refeita: o casamento já foi feito).
+        else if (auto ic = porCaminho.find(caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString()));
+                 !r.selecaoReconstruida && ic != porCaminho.end() &&
                  (p.arquivos[ic->second].itemId.empty() || p.arquivos[ic->second].itemId == ip.itemId))
             e = &p.arquivos[ic->second];
 
@@ -673,6 +781,24 @@ ResultadoCompletar completarPacote(matriz::db::Database& registro, const juce::F
     m.selecao.assign(v.selecao.begin(), v.selecao.end());
     m.carregarPastas();
 
+    // Pacote anterior: o casamento registro -> item feito na verificação vai para o catálogo, em todos
+    // os registros. Sem isso, a próxima verificação dependeria de novo do caminho (e do _N de hoje).
+    {
+        std::map<std::string, const ItemPlanejado*> planejadoDe;
+        for (const auto& ip : v.planejados) planejadoDe.emplace(ip.itemId, &ip);
+        std::map<std::string, std::string> itemDoCaminho;  // caminho sem caixa -> item
+        for (const auto& [id, idx] : v.registroDe) itemDoCaminho[caminhoSemCaixa(p.arquivos[idx].caminho)] = id;
+        for (auto& e : registros) {
+            auto* o = e.getDynamicObject();
+            if (o == nullptr || e.getProperty("item_id", {}).toString().isNotEmpty()) continue;
+            auto it = itemDoCaminho.find(caminhoDe(e));
+            if (it == itemDoCaminho.end()) continue;
+            o->setProperty("item_id", juce::String(it->second));
+            if (auto ip = planejadoDe.find(it->second); ip != planejadoDe.end())
+                o->setProperty("codigo", juce::String(ip->second->codigoAcervo));
+        }
+    }
+
     const juce::String alvoJson = p.parcial ? kArquivoParcial : kArquivoJson;
     auto gravar = [&](const juce::String& nome) {
         m.arquivos = registros;
@@ -706,16 +832,21 @@ ResultadoCompletar completarPacote(matriz::db::Database& registro, const juce::F
         const bool tinhaRegistro = pr.tipo != TipoProblema::NaoExportado;
         const std::string proprio = tinhaRegistro ? caminhoSemCaixa(pr.caminho) : std::string();  // o registro antigo dele
         if (caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString()) != proprio) {
-            // O caminho do planejador já é de outro arquivo do catálogo: nunca passar por cima, vai com _N.
-            const juce::String base = ip.caminhoRelativoDestino;
-            const int ponto = base.lastIndexOfChar('.');
-            const int barra = base.lastIndexOfChar('/');
+            // O caminho do planejador já é de outro arquivo do catálogo: nunca passar por cima. Vai com o
+            // próximo _N livre do mesmo nome-base (IMG_1_1.JPG ocupado -> IMG_1_2.JPG, não IMG_1_1_1.JPG).
+            const juce::String c = ip.caminhoRelativoDestino;
+            const int ponto = c.lastIndexOfChar('.');
+            const int barra = c.lastIndexOfChar('/');
             const bool temExt = ponto > barra + 1;
+            juce::String base = temExt ? c.substring(0, ponto) : c;
+            const juce::String ext = temExt ? c.substring(ponto) : juce::String();
+            const int us = base.lastIndexOfChar('_');
+            if (us > barra + 1 && base.length() > us + 1 && base.substring(us + 1).containsOnly("0123456789"))
+                base = base.substring(0, us);
             for (int n = 1; ocupadoNoCatalogo(ip.caminhoRelativoDestino) &&
                             caminhoSemCaixa(ip.caminhoRelativoDestino.toStdString()) != proprio;
                  ++n)
-                ip.caminhoRelativoDestino = (temExt ? base.substring(0, ponto) : base) + "_" + juce::String(n) +
-                                            (temExt ? base.substring(ponto) : juce::String());
+                ip.caminhoRelativoDestino = base + "_" + juce::String(n) + ext;
         }
         try {
             bool adotado = false;

@@ -18,8 +18,12 @@ não devem ser revertidas.
 - Commit da fase 3: COMPLETAR PACOTE (`completarPacote`) no mesmo relatório — copia para o mesmo pacote o que falta, recopia
   sumido/truncado (troca só depois de conferir), retoma export interrompido (arquivo idêntico ao MAIN fica), nunca passa por
   cima de arquivo de outro item do catálogo (vai com `_N`), grava o JSON final e verifica de novo.
-- Cuidado com pacote anterior (sem `selecao`): a verificação usa a seleção ATUAL do card B — selecionar outra coisa faz o
-  COMPLETE copiar itens que nunca foram do pacote. O relatório mostra a contagem antes do clique.
+- Pacote anterior (sem `selecao`): a seleção é refeita do próprio pacote — itens que falharam, pelos relatórios salvos
+  (`Project/relatorios/export-resultado-*.txt` com uma linha igual ao caminho do pacote; esses nunca casam com registro),
+  e cada registro do catálogo casado com um item: SHA+caminho, só caminho, só SHA, e por fim mesmo nome-base sem o `_N`
+  (cópias idênticas cujo `_N` mudou). O COMPLETE grava `item_id`/`codigo` em todos os registros. Só sem nada disso vale a
+  seleção do card B. Ensaiado num espelho (symlinks) do pacote real "From 2022 a 2026": 9.714 ok + 46 problemas (23+23),
+  COMPLETE copiou 46, verificação final 9.760/9.760, segunda rodada copia 0.
 - Verificado: `--selftest-lote` (2+7+3+8 checks novos OK; 11 falhas, as do baseline), build Release. Não verificado: clique
   no app por mim, o pacote real, ASan/TSan, CI Windows.
 

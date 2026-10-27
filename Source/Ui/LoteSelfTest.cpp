@@ -1502,7 +1502,9 @@ void rodarTestesPacote(const Checar& checar) {
                 juce::var json = juce::JSON::parse(rk.pasta.getChildFile(pk::kArquivoJson));
                 auto* raizJson = json.getDynamicObject();
                 juce::Array<juce::var> antigos;
+                std::string codigoQueFalhou;  // o gêmeo que não fica no catálogo: o relatório da época o lista
                 for (auto& e : *json.getProperty("arquivos", {}).getArray()) {
+                    if (!antigos.isEmpty()) codigoQueFalhou = e.getProperty("codigo", {}).toString().toStdString();
                     rk.pasta.getChildFile("Media").getChildFile(e.getProperty("caminho", {}).toString()).deleteFile();
                     if (antigos.isEmpty()) {
                         for (auto* campo : {"item_id", "codigo", "tamanho"}) e.getDynamicObject()->removeProperty(campo);
@@ -1512,24 +1514,34 @@ void rodarTestesPacote(const Checar& checar) {
                 for (auto* campo : {"selecao", "mapa_id", "embutir", "pendencias"}) raizJson->removeProperty(campo);
                 raizJson->setProperty("arquivos", antigos);
                 rk.pasta.getChildFile(pk::kArquivoJson).replaceWithText(juce::JSON::toString(json));
-                auto vk = pk::verificarPacote(reg, pb.projeto().pasta(), rk.pasta, {ia, ib}, {{mapaC, "Mapa C"}}, {});
+                const juce::File rel = pb.projeto().pasta().getChildFile("relatorios/export-resultado-20261027-011653.txt");
+                rel.getParentDirectory().createDirectory();
+                rel.replaceWithText("Collection Package - Export finished with 1 problem(s)\n\n"
+                                    "• Package with 1 file(s) created at:\n" + rk.pasta.getFullPathName() + "\n\n"
+                                    "• Affected files (1):\n  • [" + juce::String(codigoQueFalhou) + "] /x/take\n"
+                                    "    ↳ Detail: already exists in the package\n");
+                // Seleção atual do card B vazia (o usuário não lembra o que exportou): refeita do pacote.
+                auto vk = pk::verificarPacote(reg, pb.projeto().pasta(), rk.pasta, {}, {{mapaC, "Mapa C"}}, {});
                 int ausente = 0, naoExportado = 0;
                 for (const auto& pr : vk.problemas) {
                     ausente += pr.tipo == pk::TipoProblema::ArquivoAusente ? 1 : 0;
                     naoExportado += pr.tipo == pk::TipoProblema::NaoExportado ? 1 : 0;
                 }
-                checar(vk.usouSelecaoAtual && vk.nomeMapa == "Mapa C" && ausente == 1 && naoExportado == 1 &&
-                           vk.completaveis() == 2,
-                       "CHECK PACKAGE on an older package: uses the current selection, finds the listed-but-missing "
-                       "twin and the one that never went in");
-                auto ck = pk::completarPacote(reg, pb.projeto().pasta(), rk.pasta, {ia, ib}, {{mapaC, "Mapa C"}}, {});
+                checar(vk.selecaoReconstruida && !vk.usouSelecaoAtual && vk.doCatalogo == 1 && vk.doRelatorio == 1 &&
+                           vk.nomeMapa == "Mapa C" && ausente == 1 && naoExportado == 1 && vk.completaveis() == 2,
+                       "CHECK PACKAGE on an older package: rebuilds the selection from its catalog + the saved report, "
+                       "finds the listed-but-missing twin and the one that never went in (" + juce::String(vk.doCatalogo) +
+                           " from the catalog, " + juce::String(vk.doRelatorio) + " from the report)");
+                auto ck = pk::completarPacote(reg, pb.projeto().pasta(), rk.pasta, {}, {{mapaC, "Mapa C"}}, {});
                 auto vk2 = pk::verificarPacote(reg, pb.projeto().pasta(), rk.pasta, {}, {{mapaC, "Mapa C"}}, {});
                 const auto lk2 = pk::lerPacote(rk.pasta);
                 bool doisArquivos = lk2.pacote.arquivos.size() == 2;
                 for (const auto& a : lk2.pacote.arquivos)
-                    doisArquivos = doisArquivos && rk.pasta.getChildFile("Media").getChildFile(a.caminho).existsAsFile();
+                    doisArquivos = doisArquivos && !a.itemId.empty() &&
+                                   rk.pasta.getChildFile("Media").getChildFile(a.caminho).existsAsFile();
                 checar(ck.copiados == 2 && vk2.ok == 2 && vk2.problemas.empty() && !vk2.usouSelecaoAtual && doisArquivos,
-                       "COMPLETE PACKAGE on the older package puts both twins in it and records the selection");
+                       "COMPLETE PACKAGE on the older package puts both twins in it and records the selection and each "
+                       "record's item");
             }
             rk.pasta.deleteRecursively();
         }

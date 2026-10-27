@@ -1687,6 +1687,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"export.pacote_verificar_completo", "Package complete: all {n} selected file(s) are in it and match the catalog."},
         {"export.pacote_verificar_parcial", "This export was INTERRUPTED (power loss, crash or the app was closed) before it finished. What was already copied is kept."},
         {"export.pacote_verificar_sel_atual", "This package was made before the selection was recorded in it: it was checked against the CURRENT selection in card B ({n} item(s)). Select the same files you exported for an accurate check."},
+        {"export.pacote_verificar_sel_reconstruida", "This package was made before the selection was recorded in it, so the selection was rebuilt from the package itself: {c} item(s) from its catalog + {r} item(s) that failed in that export (from the report saved at the time). Your current selection in card B is not used."},
+        {"export.pacote_verificar_sem_item", "{n} record(s) of the package catalog could not be matched to an item of this project (renamed or removed since the export): they stay as they are and are not checked."},
         {"export.pacote_verificar_cancelado", "Check cancelled."},
         {"export.pv_ausente", "listed in the package, but the file is missing"},
         {"export.pv_ausente_diag", "The catalog (matriz-pacote.json) lists these files, but they are not in Media/. Most likely cause: two names that differ only in upper/lower case (IMG_1.jpg / IMG_1.JPG), which the disk treats as the same file - or the file was deleted after the export."},

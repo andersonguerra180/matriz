@@ -1699,6 +1699,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"export.pacote_verificar_completo", "Pacote completo: todos os {n} arquivo(s) selecionado(s) estão nele e conferem com o catálogo."},
         {"export.pacote_verificar_parcial", "Este export foi INTERROMPIDO (queda de energia, travamento ou o app foi fechado) antes de terminar. O que já tinha sido copiado está preservado."},
         {"export.pacote_verificar_sel_atual", "Este pacote foi feito antes de a seleção ser gravada nele: foi verificado contra a seleção ATUAL do card B ({n} item(ns)). Selecione os mesmos arquivos que você exportou para uma verificação exata."},
+        {"export.pacote_verificar_sel_reconstruida", "Este pacote foi feito antes de a seleção ser gravada nele, então a seleção foi refeita a partir do próprio pacote: {c} item(ns) do catálogo dele + {r} item(ns) que falharam naquele export (pelo relatório salvo na época). A seleção atual do card B não é usada."},
+        {"export.pacote_verificar_sem_item", "{n} registro(s) do catálogo do pacote não correspondem a nenhum item deste projeto (renomeados ou removidos depois do export): ficam como estão e não são verificados."},
         {"export.pacote_verificar_cancelado", "Verificação cancelada."},
         {"export.pv_ausente", "listado no pacote, mas o arquivo não está lá"},
         {"export.pv_ausente_diag", "O catálogo (matriz-pacote.json) lista estes arquivos, mas eles não estão em Media/. Causa mais provável: dois nomes que só diferem em maiúscula/minúscula (IMG_1.jpg / IMG_1.JPG), que o disco trata como o mesmo arquivo - ou o arquivo foi apagado depois do export."},

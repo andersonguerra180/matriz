@@ -146,8 +146,10 @@ ResultadoLeitura lerPacote(const juce::File& pasta, bool aceitarParcial = false)
 // --- CHECK PACKAGE -----------------------------------------------------------
 // Compara um pacote já feito com o projeto: o que a seleção pede (o mapa dá o
 // caminho de cada item), o que o JSON lista e o que está de fato no disco.
-// Pacote anterior à seleção gravada: usa a seleção atual do card B. Pacote de
-// export interrompido (só o JSON parcial): verificado do mesmo jeito.
+// Pacote anterior à seleção gravada: a seleção é refeita do próprio pacote
+// (os itens do catálogo + os que falharam no export, pelos relatórios salvos
+// em Project/relatorios); só sem nada disso vale a seleção atual do card B.
+// Pacote de export interrompido (só o JSON parcial): verificado do mesmo jeito.
 
 enum class TipoProblema {
     ArquivoAusente,   // o JSON lista, o arquivo não está no disco (ou está vazio)
@@ -176,7 +178,9 @@ struct ResultadoVerificacao {
     juce::String exportadoEm, nomeMapa;
     std::string mapaId;
     bool parcial = false;            // o export foi interrompido
-    bool usouSelecaoAtual = false;   // pacote anterior: a seleção é a do card B agora
+    bool selecaoReconstruida = false;  // pacote anterior: seleção refeita do catálogo + relatórios
+    int doCatalogo = 0, doRelatorio = 0, registrosSemItem = 0;
+    bool usouSelecaoAtual = false;   // pacote anterior sem nada para refazer: a seleção é a do card B agora
     bool cancelado = false;
     int selecionados = 0, ok = 0;
     std::vector<Problema> problemas;

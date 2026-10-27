@@ -5464,6 +5464,12 @@ void BackupWorkspaceComponent::mostrarVerificacaoPacote(const matriz::consolidac
     texto << "• " << t("export.pacote_verificar_mapa").replace("{mapa}", r.nomeMapa) << "\n\n";
     if (aviso.isNotEmpty()) texto << ">>> " << aviso << "\n\n";
     if (r.parcial) texto << "[!] " << t("export.pacote_verificar_parcial") << "\n\n";
+    if (r.selecaoReconstruida)
+        texto << "[i] " << t("export.pacote_verificar_sel_reconstruida")
+                               .replace("{c}", juce::String(r.doCatalogo))
+                               .replace("{r}", juce::String(r.doRelatorio)) << "\n\n";
+    if (r.registrosSemItem > 0)
+        texto << "[i] " << t("export.pacote_verificar_sem_item").replace("{n}", juce::String(r.registrosSemItem)) << "\n\n";
     if (r.usouSelecaoAtual)
         texto << "[!] " << t("export.pacote_verificar_sel_atual").replace("{n}", juce::String(r.selecionados)) << "\n\n";
     texto << "• " << (r.problemas.empty() && !r.parcial
