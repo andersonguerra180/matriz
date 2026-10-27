@@ -140,16 +140,22 @@ static std::optional<matriz::model::DestinationInfo> resolverOuCriarDestinationI
     return std::nullopt;
 }
 
-juce::File criarPastaLixeira(const juce::File& alvoRaiz) {
+juce::File criarPastaLixeiraInterno(const juce::File& alvoRaiz) {
     juce::File projDir = alvoRaiz.getChildFile("Project");
     if (!projDir.exists()) projDir.createDirectory();
     juce::File lixeiraBase = projDir.getChildFile("_lixeira");
     if (!lixeiraBase.exists()) lixeiraBase.createDirectory();
 
-    // Clean up legacy _lixeira on root if it exists
+    // Move the whole legacy tree atomically so a failure cannot leave a partial migration.
     juce::File legacyLixeira = alvoRaiz.getChildFile("_lixeira");
     if (legacyLixeira.isDirectory()) {
-        legacyLixeira.deleteRecursively();
+        juce::String timestampLegado = juce::Time::getCurrentTime().formatted("%Y-%m-%d_%H%M%S");
+        juce::File pastaLegada = lixeiraBase.getChildFile(timestampLegado + "_legado");
+        int seq = 1;
+        while (pastaLegada.exists())
+            pastaLegada = lixeiraBase.getChildFile(timestampLegado + "_legado_" + juce::String(seq++));
+        if (!legacyLixeira.moveFileTo(pastaLegada))
+            juce::Logger::writeToLog("[SyncEngine] Could not migrate legacy _lixeira; it was left untouched: " + legacyLixeira.getFullPathName());
     }
 
     juce::String timestamp = juce::Time::getCurrentTime().formatted("%Y-%m-%d_%H%M%S");
@@ -183,6 +189,10 @@ bool moverParaLixeira(const juce::File& arquivoOrigem, const juce::File& pastaLi
 }
 
 } // namespace
+
+juce::File SyncEngine::criarPastaLixeira(const juce::File& alvoRaiz) {
+    return criarPastaLixeiraInterno(alvoRaiz);
+}
 
 bool SyncEngine::temMarcadorSyncIncompleto(const juce::File& destinoRaiz) {
     return destinoRaiz.getChildFile("Project").getChildFile(".sync_em_andamento").existsAsFile();
@@ -478,7 +488,7 @@ ResultadoSync SyncEngine::aplicarSync(const juce::File& referenciaRaiz,
 
     // 1. Criar marcador de sync em andamento e pasta da lixeira
     criarMarcadorSync(alvoRaiz, juce::String(plano.rotuloRef) + " (" + juce::String(plano.revisaoRef) + ")");
-    juce::File pastaLixeira = criarPastaLixeira(alvoRaiz);
+    juce::File pastaLixeira = SyncEngine::criarPastaLixeira(alvoRaiz);
     res.pastaLixeiraCriada = pastaLixeira;
 
     int totalOperacoes = static_cast<int>(plano.itens.size()) + 2; // +2 para bancos e metadata

@@ -4,7 +4,7 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
-## Auditoria externa de 2026-10-27: plano de correção (NADA corrigido ainda)
+## Auditoria externa de 2026-10-27: Fase 1 em andamento
 
 - Documento: `/Volumes/BUNKER 4TB/BUNKER MICHELE/Auditoria_BKR_Matriz_2026-10-27.pdf`; texto extraído em
   `docs/auditoria_2026-10-27_texto.txt`. A auditoria leu o código de um ZIP (não rodou o app), por isso as linhas
@@ -28,6 +28,11 @@ não devem ser revertidas.
   - **F08** `schema/registro.sql` view `asset_preservation_status` (`backup_status`) e
     `PreservationWorkspaceComponent.cpp:91-97`: qualquer `BACKUP_VERIFIED SUCCESS` antigo vale para sempre;
     `compliance_score` (`:235-249`) aprova com `> 0` itens.
+- **F02 corrigido**: `SyncEngine::criarPastaLixeira` move a `_lixeira` legada inteira por rename para
+  `Project/_lixeira/<timestamp>_legado`, sem apagar conteúdo; falha de movimento deixa a origem intacta.
+  Self-test novo em `LoteSelfTest.cpp`. Build Debug passa. Os self-tests de baseline e da Fase 1 não
+  iniciam: o executável aborta em `juce::initialiseNSApplication`/`NSApplication::init` (SIGABRT 134),
+  antes de despachar o argumento; o Launch Services também está indisponível (`kLSServerCommunicationErr`).
 - Ordem combinada com o usuário: (1) F02 + F03 → (2) F01 → (3) F06, F05, F04 → (4) F07/F08 → (5) só plano, sem código:
   F09–F11 (journal/staging), F13 (sidecar da INBOX), F15 (trava/durabilidade), F12, F14, F16, F17.
 - **Dado real afetado por F01**: itens marcados como duplicata pelo wizard só por metadados ficaram FORA do MAIN. A

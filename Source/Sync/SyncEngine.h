@@ -69,6 +69,9 @@ using CallbackProgressoSync = std::function<bool(int atual, int total, const juc
 
 class SyncEngine {
 public:
+    // Cria a lixeira do sync e migra atomicamente a lixeira legada da raiz, se houver.
+    static juce::File criarPastaLixeira(const juce::File& alvoRaiz);
+
     // Escaneia e compara dois DESTINATIONs (somente leitura).
     // modoCompletoSha256: calcula SHA-256 de todos os arquivos nos dois lados.
     static PlanoSync escanearEComparar(const juce::File& referenciaRaiz,

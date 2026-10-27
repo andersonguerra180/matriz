@@ -3125,6 +3125,21 @@ int rodarLoteSelfTest() {
                           .getChildFile("matriz_lote_selftest_" + juce::Uuid().toDashedString());
     try {
         raiz.createDirectory();
+        {
+            const auto raizSync = raiz.getChildFile("legacy_trash_sync");
+            const auto legado = raizSync.getChildFile("_lixeira").getChildFile("sub").getChildFile("velho.txt");
+            legado.getParentDirectory().createDirectory();
+            legado.replaceWithText("conteudo legado");
+            const auto pastaSync = matriz::sync::SyncEngine::criarPastaLixeira(raizSync);
+            juce::Array<juce::File> pastasLegadas;
+            raizSync.getChildFile("Project").getChildFile("_lixeira")
+                    .findChildFiles(pastasLegadas, juce::File::findDirectories, false, "*_legado*");
+            const bool preservou = pastasLegadas.size() == 1 &&
+                                   pastasLegadas[0].getChildFile("sub").getChildFile("velho.txt").loadFileAsString() == "conteudo legado";
+            checar(preservou && pastaSync.isDirectory() && !raizSync.getChildFile("_lixeira").exists(),
+                   "sync migrates the legacy trash tree into Project/_lixeira without losing files");
+            raizSync.deleteRecursively();
+        }
         matriz::model::NovoProjetoParams params;
         params.nome = "Lote";
         params.prefixoNomenclatura = "LOT";
