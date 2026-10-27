@@ -244,6 +244,16 @@ struct OpcoesRebuild {
 // andamento sem oferecer saída (item 10: cancelar SEM EXCEÇÃO).
 using AoProgredir = std::function<bool(int feito, int total)>;
 
+struct CopiaVerificada {
+    bool ok = false;
+    bool cancelado = false;
+    std::string erro;
+    std::string sha256;
+};
+
+CopiaVerificada copiarVerificado(const juce::File& origem, const juce::File& destinoFinal,
+                                 const std::function<bool()>& continuar = {});
+
 // Copia cada item do plano (que não esteja em conflito nem já consolidado)
 // pro destino, verifica depois (existe, tamanho bate, checksum bate), e
 // registra em consolidacao_registro. Falha num item não aborta os outros —

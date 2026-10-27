@@ -1144,6 +1144,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"backup.ausente_alvo", "missing on target"},
         {"backup.recuperar_titulo", "Recovery Browser"},
         {"backup.copiar_para_btn", "Copy to..."},
+        {"backup.recuperacao_destino_invalido_titulo", "Invalid recovery destination"},
+        {"backup.recuperacao_destino_invalido_corpo", "Choose a destination outside this backup version and different from the source file."},
         {"backup.nenhuma_versao", "No Backup Versions registered yet. Perform a backup to create the first version."},
         {"backup.itens_contagem", "{n} items"},
         {"backup.ultimo_backup_em", "last: {d}"},

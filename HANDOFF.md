@@ -33,6 +33,11 @@ não devem ser revertidas.
   Self-test novo em `LoteSelfTest.cpp`. Build Debug passa. Os self-tests de baseline e da Fase 1 não
   iniciam: o executável aborta em `juce::initialiseNSApplication`/`NSApplication::init` (SIGABRT 134),
   antes de despachar o argumento; o Launch Services também está indisponível (`kLSServerCommunicationErr`).
+- **F03 corrigido**: `copiarVerificado` e `CopiaVerificada` agora são públicos em `Consolidacao.h`; a recuperação
+  copia e confere SHA-256 em thread de fundo, preserva o destino até a troca verificada, bloqueia a própria
+  origem e pastas dentro da versão de backup. ProjectLog permanece na message thread em sucesso. Não foi
+  adicionado progresso para cópias grandes (opcional no plano). Checks novos em `RebuildSelfTest.cpp`;
+  execução também depende de resolver a inicialização do NSApplication acima. Build Debug passa.
 - Ordem combinada com o usuário: (1) F02 + F03 → (2) F01 → (3) F06, F05, F04 → (4) F07/F08 → (5) só plano, sem código:
   F09–F11 (journal/staging), F13 (sidecar da INBOX), F15 (trava/durabilidade), F12, F14, F16, F17.
 - **Dado real afetado por F01**: itens marcados como duplicata pelo wizard só por metadados ficaram FORA do MAIN. A

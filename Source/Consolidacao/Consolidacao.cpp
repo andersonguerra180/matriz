@@ -1312,12 +1312,7 @@ namespace {
 
 constexpr const char* kSufixoTemporario = ".mtz-tmp";
 
-struct CopiaVerificada {
-    bool ok = false;
-    bool cancelado = false;
-    std::string erro;
-    std::string sha256;  // dos bytes lidos da origem == dos bytes gravados (conferidos)
-};
+}  // namespace
 
 // Cópia verificada (MAIN fiel à SOURCE): copia em blocos para "<nome>.mtz-tmp" calculando o
 // SHA-256 do que foi LIDO da origem, relê o temporário gravado e compara; só então renomeia
@@ -1389,8 +1384,6 @@ CopiaVerificada copiarVerificado(const juce::File& origem, const juce::File& des
     r.ok = true;
     return r;
 }
-
-}  // namespace
 
 int limparTemporariosDeCopia(const juce::File& destinoMedia) {
     int apagados = 0;

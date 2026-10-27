@@ -72,6 +72,22 @@ int rodarRebuildSelfTest() {
         escreverArquivo(fc, 3, 200000);
         escreverArquivo(fd, 4, 120000);
 
+        {
+            const auto origemCopia = raiz.getChildFile("copia_verificada_origem.bin");
+            const auto destinoCopia = raiz.getChildFile("copia_verificada_destino.bin");
+            escreverArquivo(origemCopia, 11, 4096);
+            destinoCopia.replaceWithText("conteudo antigo");
+            auto copia = cons::copiarVerificado(origemCopia, destinoCopia);
+            checar(copia.ok && destinoCopia.getSize() == 4096 &&
+                       !destinoCopia.getSiblingFile(destinoCopia.getFileName() + ".mtz-tmp").exists(),
+                   "verified copy replaces an existing destination and leaves no temporary file");
+
+            destinoCopia.replaceWithText("destino antigo intacto");
+            copia = cons::copiarVerificado(raiz.getChildFile("origem_ausente.bin"), destinoCopia);
+            checar(!copia.ok && destinoCopia.loadFileAsString() == "destino antigo intacto",
+                   "failed verified copy leaves the existing destination unchanged");
+        }
+
         matriz::model::NovoProjetoParams params;
         params.nome = "Rebuild";
         params.prefixoNomenclatura = "RBD";

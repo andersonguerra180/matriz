@@ -129,6 +129,15 @@ private:
 
             juce::File arqDestino = destFolder.getChildFile(arqOrigem.getFileName());
 
+            const juce::File pastaVersao(safeThis->versao_.destinoPath);
+            if (arqDestino == arqOrigem || destFolder == pastaVersao || destFolder.isAChildOf(pastaVersao)) {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::WarningIcon,
+                    matriz::i18n::t("backup.recuperacao_destino_invalido_titulo"),
+                    matriz::i18n::t("backup.recuperacao_destino_invalido_corpo"));
+                return;
+            }
+
             // Se já existe no destino, confirma sobrescrita
             if (arqDestino.existsAsFile()) {
                 bool sobrescrever = juce::AlertWindow::showOkCancelBox(
@@ -139,30 +148,37 @@ private:
                     isPt ? "Substituir" : "Replace",
                     isPt ? "Cancelar" : "Cancel");
                 if (!sobrescrever) return;
-                arqDestino.deleteFile();
             }
 
-            if (arqOrigem.copyFileTo(arqDestino)) {
-                // Registrar log do projeto conforme Seção 4
-                matriz::model::ProjectLog pLog(safeThis->projeto_.projeto().pasta());
-                juce::StringArray details;
-                details.add("File: " + arqOrigem.getFileName());
-                details.add("Source Version: " + safeThis->versao_.rotulo + " (" + safeThis->versao_.destinoPath + ")");
-                details.add("Destination: " + destFolder.getFullPathName());
-                pLog.appendEntry("File Recovered from Backup", details);
+            juce::Component::SafePointer<RecoveryBrowserComponent> safeWorkerThis(safeThis.getComponent());
+            juce::Thread::launch([safeWorkerThis, arqOrigem, arqDestino, destFolder, isPt] {
+                auto copia = matriz::consolidacao::copiarVerificado(arqOrigem, arqDestino);
+                juce::MessageManager::callAsync([safeWorkerThis, arqOrigem, arqDestino, destFolder, isPt, copia = std::move(copia)]() mutable {
+                    if (!safeWorkerThis) return;
+                    if (copia.ok) {
+                        matriz::model::ProjectLog pLog(safeWorkerThis->projeto_.projeto().pasta());
+                        juce::StringArray details;
+                        details.add("File: " + arqOrigem.getFileName());
+                        details.add("Source Version: " + safeWorkerThis->versao_.rotulo + " (" + safeWorkerThis->versao_.destinoPath + ")");
+                        details.add("Destination: " + destFolder.getFullPathName());
+                        pLog.appendEntry("File Recovered from Backup", details);
 
-                juce::AlertWindow::showMessageBoxAsync(
-                    juce::AlertWindow::InfoIcon,
-                    isPt ? "Arquivo Recuperado" : "File Recovered",
-                    (isPt ? juce::String::fromUTF8("Arquivo copiado com sucesso para:\n")
-                          : "File successfully copied to:\n") + arqDestino.getFullPathName());
-            } else {
-                juce::AlertWindow::showMessageBoxAsync(
-                    juce::AlertWindow::WarningIcon,
-                    isPt ? juce::String::fromUTF8("Erro na Cópia") : "Copy Error",
-                    isPt ? juce::String::fromUTF8("Não foi possível copiar o arquivo para a pasta de destino.")
-                         : "Could not copy file to destination folder.");
-            }
+                        juce::AlertWindow::showMessageBoxAsync(
+                            juce::AlertWindow::InfoIcon,
+                            isPt ? "Arquivo Recuperado" : "File Recovered",
+                            (isPt ? juce::String::fromUTF8("Arquivo copiado com sucesso para:\n")
+                                  : "File successfully copied to:\n") + arqDestino.getFullPathName());
+                    } else if (!copia.cancelado) {
+                        juce::String mensagem = isPt ? juce::String::fromUTF8("Não foi possível copiar o arquivo para a pasta de destino.")
+                                                     : "Could not copy file to destination folder.";
+                        if (!copia.erro.empty()) mensagem << "\n\n" << juce::String::fromUTF8(copia.erro.c_str());
+                        juce::AlertWindow::showMessageBoxAsync(
+                            juce::AlertWindow::WarningIcon,
+                            isPt ? juce::String::fromUTF8("Erro na Cópia") : "Copy Error",
+                            mensagem);
+                    }
+                });
+            });
         });
     }
 
