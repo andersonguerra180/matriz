@@ -37,8 +37,35 @@ std::vector<juce::String> VerifySource::volumesDeOrigem(matriz::db::Database& db
 HashesConhecidos VerifySource::carregarHashes(matriz::db::Database& db) {
     HashesConhecidos h;
     try {
-        auto st = db.prepare("SELECT checksum_sha256 FROM arquivo WHERE checksum_sha256 IS NOT NULL AND checksum_sha256 != ''");
-        while (st.step()) h.noMain.insert(st.columnText(0));
+        std::string mainMediaPath, mainDestinationId;
+        {
+            auto main = db.prepare("SELECT destino_path, COALESCE(destination_id, id) FROM backup_destino "
+                                   "WHERE papel = 'ORIGINAL' ORDER BY ativo DESC LIMIT 1");
+            if (main.step()) {
+                const juce::File raizMain(juce::String::fromUTF8(main.columnText(0).c_str()));
+                if (raizMain != juce::File())
+                    mainMediaPath = raizMain.getChildFile("Media").getFullPathName().trimCharactersAtEnd("/").toStdString();
+                mainDestinationId = main.columnText(1);
+            }
+        }
+        auto st = db.prepare(
+            "SELECT a.checksum_sha256, CASE WHEN EXISTS ("
+            "SELECT 1 FROM consolidacao_registro c WHERE c.arquivo_id = a.id AND ("
+            "COALESCE(c.destino_path, '') = ? OR COALESCE(c.destino_path, '') = '' OR "
+            "(? != '' AND COALESCE(c.destino_id, '') = ?))) THEN 1 ELSE 0 END "
+            "FROM arquivo a WHERE a.checksum_sha256 IS NOT NULL AND a.checksum_sha256 != ''");
+        st.bind(1, matriz::db::Value::of(mainMediaPath));
+        st.bind(2, matriz::db::Value::of(mainDestinationId));
+        st.bind(3, matriz::db::Value::of(mainDestinationId));
+        while (st.step()) {
+            const auto sha = st.columnText(0);
+            if (st.columnInt(1) != 0) {
+                h.soCatalogo.erase(sha);
+                h.noMain.insert(sha);
+            } else if (!h.noMain.count(sha)) {
+                h.soCatalogo.insert(sha);
+            }
+        }
     } catch (...) {}
     try {
         auto st = db.prepare("SELECT sha256 FROM intake_rejeitados");
@@ -73,6 +100,7 @@ ResultadoVerificacaoFonte VerifySource::verificar(const juce::File& raiz, const 
 
         ++r.totalLidos;
         if (conhecidos.noMain.count(sha)) { ++r.totalNoMain; continue; }
+        if (conhecidos.soCatalogo.count(sha)) { ++r.totalSoCatalogo; continue; }
         if (!jaListados.insert(sha).second) continue;
 
         FaltanteFonte fa;

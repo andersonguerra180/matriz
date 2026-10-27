@@ -6,6 +6,8 @@ não devem ser revertidas.
 
 ## Auditoria externa de 2026-10-27: Fases 1 e 2
 
+Estado atual: branch `fix/auditoria-2026-10-27`; F06/F05/F04 em andamento. Build Debug compilou após as alterações da Fase 3. Os self-tests de app continuam sem iniciar por SIGABRT em `juce::initialiseNSApplication` antes do despacho; não foram considerados aprovados. Próximo passo: F07/F08 e plano das Fases 4–5.
+
 - Documento: `/Volumes/BUNKER 4TB/BUNKER MICHELE/Auditoria_BKR_Matriz_2026-10-27.pdf`; texto extraído em
   `docs/auditoria_2026-10-27_texto.txt`. A auditoria leu o código de um ZIP (não rodou o app), por isso as linhas
   dela podem estar deslocadas. As linhas abaixo são as do código em `e4e29a9`.

@@ -197,7 +197,10 @@ void VerifySourceDialog::atualizarTextos() {
         case Estado::Resultado: {
             const int marcados = contarMarcados();
             if (linhas_.empty()) {
-                lblInfo_.setText(tr("verify.nada").replace("{nome}", nomeAtual_), juce::dontSendNotification);
+                lblInfo_.setText(tr("verify.nada")
+                                     .replace("{nome}", nomeAtual_)
+                                     .replace("{catalogo}", juce::String(soCatalogoDoDisco_)),
+                                 juce::dontSendNotification);
             } else {
                 int faltando = 0, rej = 0;
                 for (const auto& l : linhas_) (l.f.rejeitadoAntes ? rej : faltando)++;
@@ -205,6 +208,7 @@ void VerifySourceDialog::atualizarTextos() {
                                      .replace("{nome}", nomeAtual_)
                                      .replace("{lidos}", juce::String(lidosDoDisco_))
                                      .replace("{main}", juce::String(noMainDoDisco_))
+                                     .replace("{catalogo}", juce::String(soCatalogoDoDisco_))
                                      .replace("{faltando}", juce::String(faltando))
                                      .replace("{rej}", juce::String(rej))
                                      .replace("{ilegiveis}",
@@ -338,6 +342,7 @@ void VerifySourceDialog::concluirScan() {
     }
     lidosDoDisco_ = r.totalLidos;
     noMainDoDisco_ = r.totalNoMain;
+    soCatalogoDoDisco_ = r.totalSoCatalogo;
     ilegiveisDoDisco_ = r.ilegiveis;
     ingeridosDoDisco_ = 0;
     linhas_.clear();
@@ -446,8 +451,9 @@ void VerifySourceDialog::anexarRelatorioDoDisco() {
     if (!discoPendente_) return;
     discoPendente_ = false;
     relatorio_ << "== " << nomeAtual_ << " (" << (scan_ ? scan_->raiz.getFullPathName() : juce::String()) << ")\n"
-               << "read: " << lidosDoDisco_ << ", already in the MAIN: " << noMainDoDisco_ << ", unreadable: " << ilegiveisDoDisco_
-               << ", listed: " << static_cast<int>(linhas_.size()) << "\n";
+               << "read: " << lidosDoDisco_ << ", already in the MAIN: " << noMainDoDisco_
+               << ", unreadable: " << ilegiveisDoDisco_ << ", listed: " << static_cast<int>(linhas_.size()) << "\n"
+               << tr("verify.report_catalogued").replace("{n}", juce::String(soCatalogoDoDisco_)) << "\n";
     for (const auto& l : linhas_)
         relatorio_ << (l.f.rejeitadoAntes ? "REJECTED BEFORE" : "MISSING        ") << (l.ingerido ? "  [sent to Intake]  " : "  [not sent]  ")
                    << l.f.arquivo.getFullPathName() << "  " << juce::File::descriptionOfSizeInBytes(l.f.tamanhoBytes) << "  "

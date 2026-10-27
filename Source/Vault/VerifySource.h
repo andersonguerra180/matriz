@@ -26,6 +26,7 @@ struct ResultadoVerificacaoFonte {
     std::vector<FaltanteFonte> faltantes;
     int totalLidos = 0;
     int totalNoMain = 0;
+    int totalSoCatalogo = 0;
     int ilegiveis = 0;  // não deu para ler/hashear (disco desconectado no meio, permissão)
     bool cancelado = false;
 };
@@ -33,6 +34,7 @@ struct ResultadoVerificacaoFonte {
 // Hashes conhecidos do projeto, carregados de uma vez (message thread) para o scan rodar em background sem tocar no banco.
 struct HashesConhecidos {
     std::unordered_set<std::string> noMain;
+    std::unordered_set<std::string> soCatalogo;
     std::unordered_set<std::string> rejeitados;
 };
 

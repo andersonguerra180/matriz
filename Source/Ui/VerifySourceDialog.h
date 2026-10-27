@@ -84,7 +84,7 @@ private:
     juce::String avisoPedir_;
     std::shared_ptr<EstadoScan> scan_;
     int discosVerificados_ = 0, faltandoTotal_ = 0, ingeridosTotal_ = 0, ingeridosDoDisco_ = 0, ociosos_ = 0;
-    int lidosDoDisco_ = 0, noMainDoDisco_ = 0, ilegiveisDoDisco_ = 0;
+    int lidosDoDisco_ = 0, noMainDoDisco_ = 0, soCatalogoDoDisco_ = 0, ilegiveisDoDisco_ = 0;
     std::vector<Linha> linhas_;
     std::vector<int> visiveis_;
     int filtro_ = 0;  // 0 todos, 1 faltando, 2 rejeitados antes
