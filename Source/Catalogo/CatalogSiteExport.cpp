@@ -1839,14 +1839,8 @@ ResultadoExportSite exportarHtmlBrowser(ui::ProjetoAberto& projeto,
                     auto cfgWm = projeto.obterConfiguracaoWatermark();
                     if (cfgWm.valida()) {
                         juce::Image thumbImg = juce::ImageFileFormat::loadFrom(thumbTarget);
-                        if (thumbImg.isValid() && ui::BatchWatermarkDialog::aplicarMarcaDaguaEmImagem(thumbImg, cfgWm)) {
-                            juce::FileOutputStream fos(thumbTarget);
-                            if (fos.openedOk()) {
-                                juce::JPEGImageFormat jpgFmt;
-                                jpgFmt.setQuality(0.90f);
-                                jpgFmt.writeImageToStream(thumbImg, fos);
-                            }
-                        }
+                        if (thumbImg.isValid() && ui::BatchWatermarkDialog::aplicarMarcaDaguaEmImagem(thumbImg, cfgWm))
+                            ingest::gravarJpeg(thumbImg, thumbTarget, 0.90f);
                     }
                 }
                 thumbRel = "../../media/thumbs/" + thumbFilename;

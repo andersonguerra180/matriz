@@ -68,6 +68,16 @@ DimensaoImagem dimensoesImagem(const juce::File& imagem) {
     return d;
 }
 
+bool gravarJpeg(const juce::Image& img, const juce::File& destino, float qualidade) {
+    if (!img.isValid() || img.getWidth() <= 0 || img.getHeight() <= 0) return false;
+    juce::MemoryOutputStream memoria;
+    juce::JPEGImageFormat jpeg;
+    if (qualidade >= 0.0f) jpeg.setQuality(qualidade);
+    if (!jpeg.writeImageToStream(img, memoria) || memoria.getDataSize() == 0) return false;
+    destino.getParentDirectory().createDirectory();
+    return destino.replaceWithData(memoria.getData(), memoria.getDataSize());
+}
+
 DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& destino, int ladoMaximoPx) {
     juce::Image img = juce::ImageFileFormat::loadFrom(origem);
     if (img.isNull()) {
@@ -122,16 +132,13 @@ DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& 
     int h = img.getHeight();
     if (w > ladoMaximoPx || h > ladoMaximoPx) {
         float ratio = std::min(static_cast<float>(ladoMaximoPx) / w, static_cast<float>(ladoMaximoPx) / h);
-        w = static_cast<int>(w * ratio);
-        h = static_cast<int>(h * ratio);
+        w = std::max(1, static_cast<int>(w * ratio));  // panorâmica extrema: o lado curto não pode virar 0
+        h = std::max(1, static_cast<int>(h * ratio));
     }
     juce::Image scaled = img.rescaled(w, h, juce::Graphics::highResamplingQuality);
 
-    destino.getParentDirectory().createDirectory();
-    juce::JPEGImageFormat jpeg;
-    if (auto stream = std::unique_ptr<juce::FileOutputStream>(destino.createOutputStream())) {
-        jpeg.writeImageToStream(scaled, *stream);
-    }
+    if (!gravarJpeg(scaled, destino))
+        throw MiniaturaError("Falha ao gravar miniatura em " + destino.getFullPathName().toStdString());
 
     DimensaoImagem d;
     d.largura = w;
@@ -210,9 +217,7 @@ std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double
             const int lado = juce::jmax(8, juce::jmin(larguraPx, alturaPx) / 4);
             g.fillRect(img.getBounds().getCentreX() - lado / 2,
                        img.getBounds().getCentreY() - lado / 2, lado, lado);
-            juce::JPEGImageFormat jpeg;
-            if (auto stream = std::unique_ptr<juce::FileOutputStream>(destino.createOutputStream()))
-                jpeg.writeImageToStream(img, *stream);
+            gravarJpeg(img, destino);
         }
 
         if (!destino.existsAsFile())
@@ -390,9 +395,7 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
         } else if (categoria == CategoriaMidia::Audio) {
             FormaDeOnda onda = calcularFormaDeOnda(arquivoNoProjeto, pastaMiniaturas);
             juce::Image img = desenharMiniaturaFormaDeOnda(onda, 512, 160);
-            juce::JPEGImageFormat jpeg;
-            if (auto stream = std::unique_ptr<juce::FileOutputStream>(destino.createOutputStream()))
-                jpeg.writeImageToStream(img, *stream);
+            gravarJpeg(img, destino);
             largura = img.getWidth();
             altura = img.getHeight();
 

@@ -28,6 +28,13 @@ struct DimensaoImagem {
     int altura = 0;
 };
 
+// Grava `img` como JPEG em `destino` (cria a pasta; troca o arquivo inteiro, nunca anexa). NUNCA passar um
+// FileOutputStream direto para JPEGImageFormat: o JUCE só escreve os bytes no jpeg_finish_compress e, se uma
+// escrita falha (disco externo que soluça), o libjpeg chama o error_exit do JUCE, que escreve em client_data
+// nulo -> SIGSEGV e o app cai (crash de 27/10 13:15, no ingest). Aqui o encoder escreve na memória, que não
+// falha, e o arquivo sai de uma vez. `qualidade` < 0 = padrão do JUCE. false = não gravou (imagem vazia ou disco).
+bool gravarJpeg(const juce::Image& img, const juce::File& destino, float qualidade = -1.0f);
+
 // Lê largura/altura de uma imagem via `sips` (rápido — só duas chaves).
 DimensaoImagem dimensoesImagem(const juce::File& imagem);
 

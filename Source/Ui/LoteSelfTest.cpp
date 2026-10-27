@@ -39,6 +39,7 @@
 #include "../Consolidacao/BridgeXmp.h"
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/Checksum.h"
+#include "../Ingest/Miniaturas.h"
 #include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
@@ -1558,6 +1559,44 @@ void rodarTestesPacote(const Checar& checar) {
     } catch (const std::exception& e) {
         checar(false, juce::String("package selftest (export): ") + e.what());
     }
+    std::cout << "\n-- JPEG writes (thumbnails): a failed write is an error, never a crash --\n";
+    try {
+        const juce::File dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                   .getChildFile("matriz_jpeg_selftest_" + juce::Uuid().toDashedString());
+        // Maior que o buffer do encoder (o flush é chamado no meio): o caminho que derrubava o app.
+        juce::Image ruido(juce::Image::RGB, 1024, 1024, true);
+        juce::Random rnd(7);
+        for (int y = 0; y < ruido.getHeight(); ++y)
+            for (int x = 0; x < ruido.getWidth(); ++x)
+                ruido.setPixelAt(x, y, juce::Colour(static_cast<juce::uint32>(rnd.nextInt()) | 0xff000000u));
+        const juce::File alvo = dir.getChildFile("sub/miniatura.jpg");
+        const bool gravou = matriz::ingest::gravarJpeg(ruido, alvo);
+        const auto tamanho1 = alvo.getSize();
+        const bool regravou = matriz::ingest::gravarJpeg(ruido, alvo);
+        checar(gravou && regravou && tamanho1 > 16384 && alvo.getSize() == tamanho1 &&
+                   juce::ImageFileFormat::loadFrom(alvo).getWidth() == 1024,
+               "a large JPEG is written whole, creating the folder; writing it again replaces the file (no append)");
+        // Destino impossível (a "pasta" é um arquivo): false, sem SIGSEGV.
+        const juce::File arquivoNoLugarDaPasta = dir.getChildFile("ocupado");
+        arquivoNoLugarDaPasta.replaceWithText("x");
+        checar(!matriz::ingest::gravarJpeg(ruido, arquivoNoLugarDaPasta.getChildFile("x.jpg")) &&
+                   !matriz::ingest::gravarJpeg(juce::Image(), dir.getChildFile("vazia.jpg")),
+               "an unwritable destination or an empty image returns false instead of crashing the app");
+        // Panorâmica extrema: o lado curto da miniatura não vira 0.
+        const juce::File faixa = dir.getChildFile("faixa.png");
+        {
+            juce::Image f(juce::Image::RGB, 4000, 1, true);
+            juce::FileOutputStream out(faixa);
+            juce::PNGImageFormat().writeImageToStream(f, out);
+        }
+        const auto dim = matriz::ingest::gerarMiniaturaImagem(faixa, dir.getChildFile("faixa.jpg"), 512);
+        checar(dim.largura == 512 && dim.altura == 1 && dir.getChildFile("faixa.jpg").existsAsFile(),
+               "a 4000x1 picture gets a 512x1 thumbnail (the short side never becomes 0)");
+        dir.deleteRecursively();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("JPEG writes: ") + e.what());
+    }
+
     std::cout << "\n-- Adobe Bridge: EXPORT (XMP) and INTAKE (read back) --\n";
     try {
         namespace br = matriz::consolidacao::bridge;

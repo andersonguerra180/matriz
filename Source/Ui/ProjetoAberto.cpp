@@ -5858,14 +5858,7 @@ bool ProjetoAberto::definirCapaDoContainer(const std::string& nestId, const juce
     const juce::String relativo = ".miniaturas/capa_container_" + juce::String(nestId) + ".jpg";
     const juce::File destino = projeto_->pasta().getChildFile(relativo);
     destino.getParentDirectory().createDirectory();
-    destino.deleteFile();
-    {
-        juce::FileOutputStream saida(destino);
-        if (!saida.openedOk()) return false;
-        juce::JPEGImageFormat jpeg;
-        jpeg.setQuality(0.9f);
-        if (!jpeg.writeImageToStream(img, saida)) return false;
-    }
+    if (!matriz::ingest::gravarJpeg(img, destino, 0.9f)) return false;
     try {
         projeto_->registro().run("UPDATE nest SET capa_imagem = ? WHERE id = ?",
                                  {matriz::db::Value::of(relativo.toStdString()), matriz::db::Value::of(nestId)});

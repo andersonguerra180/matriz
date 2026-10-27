@@ -4,6 +4,7 @@
 #include "../I18n/Strings.h"
 #include "../Vault/Resolucao.h"
 #include "../Imagem/ProcessamentoImagem.h"
+#include "../Ingest/Miniaturas.h"
 
 namespace matriz::ui {
 
@@ -1007,14 +1008,7 @@ bool BatchWatermarkDialog::aplicarMarcaDaguaEmArquivo(const juce::File& srcFile,
 
     // 4. Grava sempre como JPEG qualidade 90 com sRGB
     if (dstFile.existsAsFile()) dstFile.deleteFile();
-    dstFile.getParentDirectory().createDirectory();
-
-    juce::FileOutputStream stream(dstFile);
-    if (!stream.openedOk()) return false;
-
-    juce::JPEGImageFormat jpgFmt;
-    jpgFmt.setQuality(0.90f);
-    return jpgFmt.writeImageToStream(img, stream);
+    return matriz::ingest::gravarJpeg(img, dstFile, 0.90f);
 }
 
 juce::File BatchWatermarkDialog::resolverColisaoArquivo(const juce::File& pasta,
