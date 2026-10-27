@@ -166,8 +166,8 @@ void IngestWizardComponent::construirEtapaReview() {
     int nErros = 0, nDuplicatas = 0, nDesconhecidos = 0;
     for (const auto& r : resultados_) {
         if (r.erro) ++nErros;
-        if (r.ehDuplicata) ++nDuplicatas;
-        if (!r.erro && !r.ehDuplicata && r.categoria == matriz::ingest::CategoriaMidia::Desconhecida)
+        if (r.ehDuplicata || r.ehPossivelDuplicata) ++nDuplicatas;
+        if (!r.erro && !r.ehDuplicata && !r.ehPossivelDuplicata && r.categoria == matriz::ingest::CategoriaMidia::Desconhecida)
             ++nDesconhecidos;
     }
     // DEBUG: dump category breakdown to log file
@@ -483,6 +483,7 @@ void IngestWizardComponent::iniciarDescoberta(const juce::File& pasta) {
 
                     auto conhecido = matriz::ingest::buscarAssetPorChecksum(
                         *registro, resultado.analise.checksums.sha256);
+                    const bool conhecidoPorChecksum = conhecido.has_value();
                     if (!conhecido) {
                         double dur = resultado.analise.leitura.duracaoSegundos.value_or(0.0);
                         int w = resultado.analise.leitura.larguraPx.value_or(0);
@@ -494,7 +495,8 @@ void IngestWizardComponent::iniciarDescoberta(const juce::File& pasta) {
                         conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), relPath, "", pastaProjeto, exifDate);
                     }
                     if (conhecido) {
-                        resultado.ehDuplicata = true;
+                        resultado.ehDuplicata = conhecidoPorChecksum;
+                        resultado.ehPossivelDuplicata = !conhecidoPorChecksum;
                         resultado.itemIdExistente = conhecido->codigoAcervo;
                     }
                 } catch (const std::exception& e) {
@@ -635,11 +637,12 @@ void IngestWizardComponent::iniciarImportacao() {
             auto& res = resultados_[idx];
             bool sucesso = false;
             bool duplicata = false;
+            juce::String notaPossivelDuplicata;
 
             try {
                 const std::lock_guard<std::mutex> lock(*escritaRegistro);
 
-                if (res.ehDuplicata) {
+                if (res.ehDuplicata || res.ehPossivelDuplicata) {
                     bool duplicadoPorChecksum = false;
                     auto conhecido = matriz::ingest::buscarAssetPorChecksum(*registro, res.analise.checksums.sha256);
                     if (conhecido) {
@@ -658,44 +661,44 @@ void IngestWizardComponent::iniciarImportacao() {
                     if (conhecido) {
                         juce::String nota;
                         if (duplicadoPorChecksum) {
+                            PapelInfo papelInfo = papelPorCategoria(res.categoria);
+                            auto resultado = matriz::ingest::gravarArquivoAnalisado(
+                                *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
                             matriz::ingest::registrarLocalizacaoConhecida(
                                 *registro, conhecido->arquivoId, res.arquivo);
                             nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
                                    " - already in the archive.";
+
+                            int proximoNumero = proximoNumeroAcervo->fetch_add(1) + 1;
+                            juce::String codigo = prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
+
+                            std::string tipoMidia = "";
+                            if (res.categoria == matriz::ingest::CategoriaMidia::Audio) tipoMidia = "digital_audio";
+                            else if (res.categoria == matriz::ingest::CategoriaMidia::Video) tipoMidia = "digital_video";
+                            else if (res.categoria == matriz::ingest::CategoriaMidia::Imagem) tipoMidia = "foto";
+                            else if (res.categoria == matriz::ingest::CategoriaMidia::Documento) tipoMidia = "documento";
+                            else if (res.categoria == matriz::ingest::CategoriaMidia::Texto) tipoMidia = "documento";
+                            else if (res.categoria == matriz::ingest::CategoriaMidia::Sessao) tipoMidia = "sessao";
+
+                            registro->run("UPDATE item SET codigo_acervo = ?, estado = ?, tipo_midia = ?, notas_livres = ? WHERE id = ?",
+                                          {matriz::db::Value::of(codigo.toStdString()),
+                                           matriz::db::Value::of(ingestWizard::estadoDaCorrespondencia(duplicadoPorChecksum)),
+                                           tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
+                                           matriz::db::Value::of(nota.toStdString()),
+                                           matriz::db::Value::of(itemId)});
+
+                            matriz::ingest::gravarCache(*registro, resultado.arquivoId, res.cache);
+
+                            matriz::ingest::gerarEGravarMiniaturaPrincipal(
+                                *indice, pastaProjeto, itemId, resultado.arquivoId,
+                                res.arquivo, res.categoria, res.analise.leitura.duracaoSegundos);
+
+                            duplicata = true;
+                            sucesso = true;
                         } else {
-                            nota = "Possible duplicate of " + juce::String(conhecido->codigoAcervo) +
-                                   " (matched name, format, duration/dimensions). Flagged as duplicate.";
+                            notaPossivelDuplicata = matriz::i18n::t("ingest.possivel_duplicata_nota")
+                                .replace("{0}", juce::String(conhecido->codigoAcervo));
                         }
-
-                        PapelInfo papelInfo = papelPorCategoria(res.categoria);
-                        auto resultado = matriz::ingest::gravarArquivoAnalisado(
-                            *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
-
-                        int proximoNumero = proximoNumeroAcervo->fetch_add(1) + 1;
-                        juce::String codigo = prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
-
-                        std::string tipoMidia = "";
-                        if (res.categoria == matriz::ingest::CategoriaMidia::Audio) tipoMidia = "digital_audio";
-                        else if (res.categoria == matriz::ingest::CategoriaMidia::Video) tipoMidia = "digital_video";
-                        else if (res.categoria == matriz::ingest::CategoriaMidia::Imagem) tipoMidia = "foto";
-                        else if (res.categoria == matriz::ingest::CategoriaMidia::Documento) tipoMidia = "documento";
-                        else if (res.categoria == matriz::ingest::CategoriaMidia::Texto) tipoMidia = "documento";
-                        else if (res.categoria == matriz::ingest::CategoriaMidia::Sessao) tipoMidia = "sessao";
-
-                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'duplicata', tipo_midia = ?, notas_livres = ? WHERE id = ?",
-                                      {matriz::db::Value::of(codigo.toStdString()),
-                                       tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
-                                       matriz::db::Value::of(nota.toStdString()),
-                                       matriz::db::Value::of(itemId)});
-
-                        matriz::ingest::gravarCache(*registro, resultado.arquivoId, res.cache);
-
-                        matriz::ingest::gerarEGravarMiniaturaPrincipal(
-                            *indice, pastaProjeto, itemId, resultado.arquivoId,
-                            res.arquivo, res.categoria, res.analise.leitura.duracaoSegundos);
-
-                        duplicata = true;
-                        sucesso = true;
                     }
                 }
 
@@ -718,9 +721,11 @@ void IngestWizardComponent::iniciarImportacao() {
                     else if (res.categoria == matriz::ingest::CategoriaMidia::Texto) tipoMidia = "documento";
                     else if (res.categoria == matriz::ingest::CategoriaMidia::Sessao) tipoMidia = "sessao";
 
-                    registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo', tipo_midia = ? WHERE id = ?",
+                    registro->run("UPDATE item SET codigo_acervo = ?, estado = ?, tipo_midia = ?, notas_livres = ? WHERE id = ?",
                                   {matriz::db::Value::of(codigo.toStdString()),
+                                   matriz::db::Value::of(ingestWizard::estadoDaCorrespondencia(false)),
                                    tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
+                                   notaPossivelDuplicata.isNotEmpty() ? matriz::db::Value::of(notaPossivelDuplicata.toStdString()) : matriz::db::Value::null(),
                                    matriz::db::Value::of(itemId)});
 
                     if (!tipoMidia.empty()) {

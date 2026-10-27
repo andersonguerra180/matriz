@@ -4,7 +4,7 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
-## Auditoria externa de 2026-10-27: Fase 1 em andamento
+## Auditoria externa de 2026-10-27: Fases 1 e 2
 
 - Documento: `/Volumes/BUNKER 4TB/BUNKER MICHELE/Auditoria_BKR_Matriz_2026-10-27.pdf`; texto extraído em
   `docs/auditoria_2026-10-27_texto.txt`. A auditoria leu o código de um ZIP (não rodou o app), por isso as linhas
@@ -38,6 +38,10 @@ não devem ser revertidas.
   origem e pastas dentro da versão de backup. ProjectLog permanece na message thread em sucesso. Não foi
   adicionado progresso para cópias grandes (opcional no plano). Checks novos em `RebuildSelfTest.cpp`;
   execução também depende de resolver a inicialização do NSApplication acima. Build Debug passa.
+- **F01 corrigido**: `IngestWizardComponent` distingue casamento por checksum de possível casamento por metadados.
+  O primeiro permanece `duplicata`; o segundo entra com `estado='novo'`, nota localizada `Possible duplicate of...`
+  e não é excluído da importação nem da aba Duplicates. `buscarAssetPorMetadados` não foi alterada. Check puro
+  adicionado ao `LoteSelfTest.cpp`; build Debug passa, execução do self-test segue bloqueada pelo SIGABRT acima.
 - Ordem combinada com o usuário: (1) F02 + F03 → (2) F01 → (3) F06, F05, F04 → (4) F07/F08 → (5) só plano, sem código:
   F09–F11 (journal/staging), F13 (sidecar da INBOX), F15 (trava/durabilidade), F12, F14, F16, F17.
 - **Dado real afetado por F01**: itens marcados como duplicata pelo wizard só por metadados ficaram FORA do MAIN. A

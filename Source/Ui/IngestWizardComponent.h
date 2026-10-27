@@ -16,6 +16,12 @@
 
 namespace matriz::ui {
 
+namespace ingestWizard {
+inline constexpr const char* estadoDaCorrespondencia(bool checksumIgual) {
+    return checksumIgual ? "duplicata" : "novo";
+}
+}
+
 class ProjetoAberto;
 
 class IngestWizardComponent : public juce::Component,
@@ -57,6 +63,7 @@ private:
         matriz::ingest::CategoriaMidia categoria = matriz::ingest::CategoriaMidia::Desconhecida;
         std::optional<matriz::ingest::ResultadoFalaMusica> classificacao;
         bool ehDuplicata = false;
+        bool ehPossivelDuplicata = false;
         std::string itemIdExistente;
         juce::String erroPorque;
         bool erro = false;

@@ -21,6 +21,7 @@
 #include "CatalogWorkspaceComponent.h"
 #include "FichaPanelComponent.h"
 #include "IntakeWorkspaceComponent.h"
+#include "IngestWizardComponent.h"
 #include "MainComponent.h"
 #include "MosaicoComponent.h"
 #include "OriginalSourceMedium.h"
@@ -3120,6 +3121,9 @@ int rodarLoteSelfTest() {
         std::cout << (ok ? "  OK   " : "  FAIL ") << descricao << "\n";
         if (!ok) ++falhas;
     };
+    checar(std::string(matriz::ui::ingestWizard::estadoDaCorrespondencia(false)) == "novo" &&
+               std::string(matriz::ui::ingestWizard::estadoDaCorrespondencia(true)) == "duplicata",
+           "metadata-only matches enter the MAIN as new; checksum matches remain duplicates");
 
     juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
                           .getChildFile("matriz_lote_selftest_" + juce::Uuid().toDashedString());

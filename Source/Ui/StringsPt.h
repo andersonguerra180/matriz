@@ -710,6 +710,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"ingest.progresso", "Ingerindo… {feito}/{total}"},
         {"ingest.resumo_categorias", "{0} áudio | {1} vídeo | {2} imagens | {3} documentos | {4} outros"},
         {"ingest.resumo_duplicatas", "{n} já conhecido(s)"},
+        {"ingest.possivel_duplicata_nota", "Possível duplicata de {0} (mesmo nome/formato/tamanho, conteúdo diferente). Revise em Duplicates."},
         {"ingest.resumo_erros", "{n} falharam"},
         {"ingest.resumo_novos", "{n} novo(s)"},
         {"ingest.review_aplicar_todos", "Aplicar a todos os similares"},

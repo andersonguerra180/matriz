@@ -866,6 +866,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"ingest.nenhum_arquivo", "No supported files found in this folder."},
         {"ingest.resumo_categorias", "{0} audio | {1} video | {2} images | {3} documents | {4} other"},
         {"ingest.resumo_duplicatas", "{0} already in archive (duplicates)"},
+        {"ingest.possivel_duplicata_nota", "Possible duplicate of {0} (same name/format/size, content not identical). Review in Duplicates."},
         {"ingest.resumo_erros", "{0} could not be analyzed"},
         {"ingest.resumo_novos", "{0} new files ready to import"},
         {"ingest.review_aplicar_todos", "Apply to all similar"},
