@@ -5507,9 +5507,10 @@ int rodarLoteSelfTest() {
         backupStatus.bind(1, Value::of(backupFixtureItem));
         checar(backupStatus.step() && backupStatus.columnText(0) == "OK",
                "latest successful BACKUP_VERIFIED produces OK");
-        reg.run("INSERT INTO vault (id, nome, tipo, criado_em) VALUES (?, 'V1', 'local', ?), (?, 'V2', 'lto', ?)",
-                {Value::of(matriz::model::novoUuid()), Value::of(matriz::model::agoraIso8601()),
-                 Value::of(matriz::model::novoUuid()), Value::of(matriz::model::agoraIso8601())});
+        reg.run("INSERT INTO vault (id, projeto_id, nome, tipo, localizacao, criado_em) "
+                "VALUES (?, ?, 'V1', 'local', 'armário A', ?), (?, ?, 'V2', 'lto', 'sala B', ?)",
+                {Value::of(matriz::model::novoUuid()), Value::of(projetoId), Value::of(matriz::model::agoraIso8601()),
+                 Value::of(matriz::model::novoUuid()), Value::of(projetoId), Value::of(matriz::model::agoraIso8601())});
         const auto semCopias321 = matriz::preservation::avaliarRegra321(reg);
         checar(semCopias321.status != "OK" && semCopias321.totalCopias == 1 && !semCopias321.temOffsite,
                "3-2-1 does not count configured vaults as copies or off-site proof");
