@@ -2472,6 +2472,21 @@ void DuplicatesWorkspaceComponent::run() {
             auto it = phashDe.find(items[i].arquivoId);
             if (it != phashDe.end()) cands.push_back({i, it->second});
         }
+        // Segunda etapa (Duplicata.h): o pHash só indica o candidato; a correlação de pixels da miniatura confirma.
+        // Calculada sob demanda, só para quem chegou a formar par, e guardada por item durante o scan.
+        std::unordered_map<size_t, matriz::ingest::AssinaturaVisual> assinaturaDe;
+        auto assinatura = [&](size_t idx) -> const matriz::ingest::AssinaturaVisual& {
+            auto it = assinaturaDe.find(idx);
+            if (it != assinaturaDe.end()) return it->second;
+            juce::File f;
+            if (auto mini = projeto_.caminhoMiniaturaPrincipal(items[idx].itemId)) f = juce::File(*mini);
+            if (!f.existsAsFile()) f = juce::File(juce::String::fromUTF8(items[idx].fullPath.c_str()));
+            matriz::ingest::AssinaturaVisual s;
+            if (f.existsAsFile()) {
+                try { s = matriz::ingest::calcularAssinaturaVisual(f); } catch (...) {}
+            }
+            return assinaturaDe.emplace(idx, s).first->second;
+        };
         static const int kLarg[11] = {6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5};
         for (int faixa = 0, desloc = 0; faixa < 11; desloc += kLarg[faixa], ++faixa) {
             if (threadShouldExit()) return;
@@ -2521,6 +2536,7 @@ void DuplicatesWorkspaceComponent::run() {
                                 continue;
                             }
                         }
+                        if (!matriz::ingest::confirmaSemelhancaVisual(assinatura(ca.idx), assinatura(cb.idx))) continue;
                         auto [o, d] = ordenado(a, b);
                         auto grupo = gruposParaPar(*o, *d);
                         grupo.criterio = similar ? "SIMILAR" : "PROBABLE";

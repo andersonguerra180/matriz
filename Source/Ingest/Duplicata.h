@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -34,6 +35,19 @@ uint64_t calcularPHashImagem(const juce::File& imagem, const juce::File& dirTemp
 int distanciaHamming(uint64_t a, uint64_t b);
 // Limiar clássico de pHash: distância <= 10 (de 64 bits) é "muito parecida".
 bool provavelmenteDuplicadaPHash(uint64_t a, uint64_t b, int limiar = 10);
+
+// Confirmação de um par que o pHash aproximou. Num acervo inteiro (milhões de pares) o d <= 10 junta muitas fotos
+// diferentes por acaso — sobretudo escuras ou de cor chapada, em que os bits do pHash viram ruído. A assinatura é a
+// luma 32x32 normalizada (média 0, desvio 1) + a proporção da imagem; o par só fica se a correlação de pixels for
+// alta (>= 0,80; >= 0,90 quando as proporções diferem mais de 12%, i.e. recorte). Calibrado num acervo real de
+// 12 mil fotos: duplicatas reais ficam em ~1,0; fotos diferentes que o pHash juntava, abaixo de 0,8.
+struct AssinaturaVisual {
+    std::array<float, 32 * 32> luma{};
+    float proporcao = 0.0f;  // largura / altura
+    bool valida = false;     // false: não decodificou ou imagem chapada (sem estrutura para comparar)
+};
+AssinaturaVisual calcularAssinaturaVisual(const juce::File& imagem);
+bool confirmaSemelhancaVisual(const AssinaturaVisual& a, const AssinaturaVisual& b);
 
 // --- Áudio: fingerprint espectral próprio ----------------------------------
 

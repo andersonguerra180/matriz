@@ -92,6 +92,58 @@ bool provavelmenteDuplicadaPHash(uint64_t a, uint64_t b, int limiar) {
     return distanciaHamming(a, b) <= limiar;
 }
 
+AssinaturaVisual calcularAssinaturaVisual(const juce::File& imagem) {
+    constexpr int kLado = 32;
+    AssinaturaVisual s;
+    juce::Image img = juce::ImageFileFormat::loadFrom(imagem);
+    if (img.isNull() || img.getWidth() < 1 || img.getHeight() < 1) return s;
+    s.proporcao = static_cast<float>(img.getWidth()) / static_cast<float>(img.getHeight());
+    // Original grande (sem miniatura): reduz antes, mantendo a proporção; a média por área abaixo faz o resto.
+    if (img.getWidth() > 256 || img.getHeight() > 256) {
+        const double r = 256.0 / std::max(img.getWidth(), img.getHeight());
+        img = img.rescaled(std::max(1, static_cast<int>(img.getWidth() * r)), std::max(1, static_cast<int>(img.getHeight() * r)),
+                           juce::Graphics::highResamplingQuality);
+    }
+    const int w = img.getWidth(), h = img.getHeight();
+    std::array<double, kLado * kLado> soma{};
+    std::array<int, kLado * kLado> conta{};
+    {
+        const juce::Image::BitmapData bd(img, juce::Image::BitmapData::readOnly);
+        for (int y = 0; y < h; ++y) {
+            const int cy = std::min(kLado - 1, y * kLado / h);
+            for (int x = 0; x < w; ++x) {
+                const int cx = std::min(kLado - 1, x * kLado / w);
+                const auto c = bd.getPixelColour(x, y);
+                soma[static_cast<size_t>(cy * kLado + cx)] += 0.299 * c.getRed() + 0.587 * c.getGreen() + 0.114 * c.getBlue();
+                ++conta[static_cast<size_t>(cy * kLado + cx)];
+            }
+        }
+    }
+    // Imagem menor que 32 px num lado: célula sem pixel herda a vizinha de cima/esquerda.
+    std::array<double, kLado * kLado> v{};
+    for (size_t i = 0; i < v.size(); ++i)
+        v[i] = conta[i] > 0 ? soma[i] / conta[i] : (i >= kLado ? v[i - kLado] : (i > 0 ? v[i - 1] : 0.0));
+    double media = 0.0;
+    for (double x : v) media += x;
+    media /= static_cast<double>(v.size());
+    double var = 0.0;
+    for (double x : v) var += (x - media) * (x - media);
+    const double desvio = std::sqrt(var / static_cast<double>(v.size()));
+    if (desvio < 1.0) return s;  // chapada (preto, branco, cor única): nada a comparar
+    for (size_t i = 0; i < v.size(); ++i) s.luma[i] = static_cast<float>((v[i] - media) / desvio);
+    s.valida = true;
+    return s;
+}
+
+bool confirmaSemelhancaVisual(const AssinaturaVisual& a, const AssinaturaVisual& b) {
+    if (!a.valida || !b.valida || a.proporcao <= 0.0f || b.proporcao <= 0.0f) return false;
+    double corr = 0.0;
+    for (size_t i = 0; i < a.luma.size(); ++i) corr += static_cast<double>(a.luma[i]) * b.luma[i];
+    corr /= static_cast<double>(a.luma.size());
+    const float razao = std::max(a.proporcao, b.proporcao) / std::min(a.proporcao, b.proporcao);
+    return corr >= (razao <= 1.12f ? 0.80 : 0.90);
+}
+
 FingerprintAudio calcularFingerprintAudio(const juce::File& audio, const juce::File& dirTemporario,
                                            int numSegmentos) {
     constexpr int sampleRate = 11025;

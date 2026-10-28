@@ -41,6 +41,7 @@
 #include "../Consolidacao/BridgeXmp.h"
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/Checksum.h"
+#include "../Ingest/Duplicata.h"
 #include "../Preservation/Preservation.h"
 #include "../Ingest/Miniaturas.h"
 #include <exiv2/exiv2.hpp>
@@ -5679,6 +5680,37 @@ int rodarLoteSelfTest() {
                 const auto* gPequena = acharGrupo(rOrig, rPequena);
                 checar(gPequena != nullptr && gPequena->criterio == "PROBABLE",
                        "a lower-resolution recovered version of the same picture is PROBABLE (the pHash ignores resolution)");
+            }
+            {
+                // pHash próximo por acaso não basta: a correlação de pixels confirma (fotos escuras/chapadas enganam o pHash).
+                auto escura = [&](const juce::String& nome, int cx, int cy) {
+                    const auto f = raizQ.getChildFile(nome);
+                    juce::Image img(juce::Image::RGB, 96, 64, true);
+                    for (int y = 0; y < 64; ++y)
+                        for (int x = 0; x < 96; ++x)
+                            img.setPixelAt(x, y, (x - cx) * (x - cx) + (y - cy) * (y - cy) < 100 ? juce::Colours::white
+                                                                                               : juce::Colour::fromRGB(6, 6, 8));
+                    juce::PNGImageFormat png;
+                    juce::FileOutputStream out(f);
+                    if (out.openedOk()) png.writeImageToStream(img, out);
+                    return f;
+                };
+                using matriz::ingest::calcularAssinaturaVisual;
+                using matriz::ingest::confirmaSemelhancaVisual;
+                checar(confirmaSemelhancaVisual(calcularAssinaturaVisual(fOrig), calcularAssinaturaVisual(fPequena)),
+                       "visual check: a resized copy of the same picture is confirmed");
+                checar(!confirmaSemelhancaVisual(calcularAssinaturaVisual(escura("escura_a.png", 20, 20)),
+                                                 calcularAssinaturaVisual(escura("escura_b.png", 70, 44))),
+                       "visual check: two different dark photos (light spot elsewhere) are not confirmed");
+                const auto fPreta = raizQ.getChildFile("toda_preta.png");
+                {
+                    juce::Image img(juce::Image::RGB, 64, 64, true);
+                    juce::PNGImageFormat png;
+                    juce::FileOutputStream out(fPreta);
+                    if (out.openedOk()) png.writeImageToStream(img, out);
+                }
+                checar(!confirmaSemelhancaVisual(calcularAssinaturaVisual(fPreta), calcularAssinaturaVisual(fPreta)),
+                       "visual check: a flat black frame has nothing to compare and is never confirmed");
             }
             checar(gBytes != nullptr && gBytes->criterio == "PROBABLE" && gBytes->distanciaPHash >= 0,
                    "renamed copy with extra trailing bytes is PROBABLE (pHash), for the user to decide");
