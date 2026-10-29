@@ -1276,6 +1276,10 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     lblStatus_->setMinimumHorizontalScale(1.0f);  // o status quebra em linhas na coluna estreita
     addAndMakeVisible(*lblStatus_);
 
+    barraScan_.setColour(juce::ProgressBar::foregroundColourId, tema().acento);
+    barraScan_.setColour(juce::ProgressBar::backgroundColourId, tema().painelAlt);
+    addChildComponent(barraScan_);
+
     btnValidateAll_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_validate_all"));
     btnValidateAll_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
     btnValidateAll_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
@@ -1766,6 +1770,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
 
     estado_ = State::Scanning;
     progressoScan_ = 0.0;
+    progressoVisivel_ = -1.0;  // indeterminado enquanto a consulta inicial prepara os candidatos
     achadosScan_ = 0;
     bytesScan_ = 0;
     gruposDetectados_.clear();
@@ -2709,6 +2714,8 @@ void DuplicatesWorkspaceComponent::timerCallback() {
             resized();
             repaint();
         } else {
+            const double progresso = progressoScan_.load();
+            progressoVisivel_ = progresso > 0.0 ? juce::jlimit(0.0, 1.0, progresso) : -1.0;
             static const char* kFases[] = {"Scanning", "Matching files", "Computing checksums", "Computing image fingerprints (pHash)", "Comparing images"};
             const juce::String fase = kFases[juce::jlimit(0, 4, faseScan_.load())];
             juce::String achados;
@@ -3357,7 +3364,7 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
             desenharCardCentral(matriz::i18n::t("duplicatas.vazio_titulo"), matriz::i18n::t("duplicatas.vazio_dica"), -1.0f);
             break;
         case State::Scanning:
-            desenharCardCentral(matriz::i18n::t("duplicatas.scanning"), {}, static_cast<float>(progressoScan_));
+            desenharCardCentral(matriz::i18n::t("duplicatas.scanning"), lblStatus_->getText(), -1.0f);
             break;
         case State::Clean:
             desenharCardCentral(lblStatus_ ? lblStatus_->getText() : juce::String(), matriz::i18n::t("duplicatas.vazio_dica"), -1.0f);
@@ -3492,6 +3499,13 @@ void DuplicatesWorkspaceComponent::resized() {
 
     // Área da direita.
     auto direita = area.reduced(20);
+    barraScan_.setVisible(estado_ == State::Scanning);
+    barraScan_.setColour(juce::ProgressBar::foregroundColourId, tema().acento);
+    barraScan_.setColour(juce::ProgressBar::backgroundColourId, tema().painelAlt);
+    if (estado_ == State::Scanning) {
+        auto card = direita.withSizeKeepingCentre(juce::jmin(440, direita.getWidth()), 120);
+        barraScan_.setBounds(card.reduced(20, 0).withY(card.getBottom() + 12).withHeight(22));
+    }
     const bool comSequencias = emResultados && !sequenciasDetectadas_.empty();
     if (!comSequencias) abaSequencias_ = false;
     btnAbaDuplicatas_->setVisible(comSequencias);

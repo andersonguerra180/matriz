@@ -4,6 +4,12 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Duplicates e miniaturas MOV — 2026-10-28
+
+- Branch: `fix/auditoria-2026-10-27`.
+- Item 1: barra padrão `juce::ProgressBar` no scan, indeterminada na preparação e percentual durante o trabalho; valor espelhado do atômico apenas na message thread.
+- Validação inicial bloqueada por `fork: Resource temporarily unavailable`: o BKR Matriz Release aberto (PID 4784) acumulou processos zumbis e atingiu `kern.maxprocperuid=2784`. Solicitado ao usuário salvar/fechar o app normalmente; nenhum processo foi encerrado pelo agente. Build, ASan/TSan e CI macOS/Windows/interop pendentes.
+
 ## Auditoria externa de 2026-10-27: Fases 1 a 3
 
 - Documento: `/Volumes/BUNKER 4TB/BUNKER MICHELE/Auditoria_BKR_Matriz_2026-10-27.pdf`; texto extraído em

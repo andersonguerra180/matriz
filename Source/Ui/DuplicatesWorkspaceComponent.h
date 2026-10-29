@@ -129,6 +129,9 @@ private:
     State estadoSemDuplicatas() const { return sequenciasDetectadas_.empty() ? State::Clean : State::Results; }
     std::atomic<int> faseScan_{0};  // 1 critérios, 2 checksums, 3 pHash, 4 comparação — só para o texto de status
     std::atomic<double> progressoScan_{0.0};  // escrito pela thread do scan, lido pelo timer da UI
+    // ProgressBar lê uma referência comum: só a message thread atualiza este espelho do atômico.
+    double progressoVisivel_ = -1.0;
+    juce::ProgressBar barraScan_{progressoVisivel_};
     // Contador ao vivo (a partir da fase de checksums): pares achados e bytes do lado "duplicata". gruposDetectados_
     // é da thread do scan até ela terminar, então a UI só lê estes dois atômicos.
     std::atomic<int> achadosScan_{0};
