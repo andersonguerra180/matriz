@@ -332,6 +332,10 @@ void agendarRelogioCatalogo(std::shared_ptr<std::atomic<int>> fase, std::shared_
 
 void MosaicoComponent::recarregar() {
     MATRIZ_TRACE("MosaicoComponent::recarregar");
+    // Diagnóstico (perf.log): quem pediu a recarga completa do catálogo. Raro e barato; sai quando a causa for achada.
+    matriz::diag::logarWatchdog("[Recarregar] pendente=" + juce::String(snapshotPendente_ ? 1 : 0) + " mosaico=" +
+                                juce::String::toHexString(static_cast<juce::int64>(reinterpret_cast<std::uintptr_t>(this))) + "\n" +
+                                juce::SystemStats::getStackBacktrace().replace("\n", " | ").substring(0, 1800));
     if (editorInline_) cancelarEdicaoInline();
     // Um snapshot por vez. Sem isto, um lote de 5.000 arquivos enfileirava um
     // job a cada 700 ms enquanto o anterior ainda rodava, e cada job carrega
