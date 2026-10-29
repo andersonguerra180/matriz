@@ -8,6 +8,7 @@ não devem ser revertidas.
 
 - Branch: `fix/auditoria-2026-10-27`.
 - Item 1: barra padrão `juce::ProgressBar` no scan, indeterminada na preparação e percentual durante o trabalho; valor espelhado do atômico apenas na message thread.
+- Item 2: cards separados para FILTROS/CRITÉRIOS DA VARREDURA (esquerda) e FILTRAR RESULTADOS/AÇÕES (junto da lista). Categorias com cores/contagens: ALL, IDENTICAL, PROBABLE, SIMILAR, POSSIBLE e LOWER/HIGHER RESOLUTION. Resolução mantém o par junto (ambos os lados), sem supor que o menor seja sempre o arquivo 2. Lotes globais só atuam no recorte visível; categorias escondidas são preservadas e a preferência PROBABLE/SIMILAR continua valendo. Trocar recorte limpa a seleção anterior. Testes de contagem, dimensões ausentes, lote filtrado, barra e snapshot em `--selftest-lote`.
 - Validação inicial bloqueada por `fork: Resource temporarily unavailable`: o BKR Matriz Release aberto (PID 4784) acumulou processos zumbis e atingiu `kern.maxprocperuid=2784`. Solicitado ao usuário salvar/fechar o app normalmente; nenhum processo foi encerrado pelo agente. Build, ASan/TSan e CI macOS/Windows/interop pendentes.
 
 ## Auditoria externa de 2026-10-27: Fases 1 a 3

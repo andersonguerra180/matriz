@@ -3142,6 +3142,104 @@ void rodarTestesLoteAjustes(const Checar& checar) {
 
 } // namespace
 
+int rodarDuplicatasResultadosSelfTest() {
+    std::cout << "== Duplicates: result filters, scoped batches and progress ==\n";
+    int falhas = 0;
+    auto checar = [&](bool ok, const juce::String& descricao) {
+        std::cout << (ok ? "  OK   " : "  FAIL ") << descricao << "\n";
+        if (!ok) ++falhas;
+    };
+    const auto raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_duplicates_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raiz.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Duplicate filters";
+        params.prefixoNomenclatura = "FLT";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("MAIN"), params);
+        const auto projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+        auto novo = [&](const std::string& codigo, const std::string& ingerido) {
+            auto id = inserirItem(reg, projetoId, codigo, false);
+            reg.run("UPDATE arquivo SET criado_em = ? WHERE item_id = ?", {Value::of(ingerido), Value::of(id)});
+            return id;
+        };
+        auto par = [](const std::string& a, const std::string& b) {
+            DuplicatesWorkspaceComponent::DuplicateGroup g;
+            g.original.itemId = a;
+            g.duplicata.itemId = b;
+            return g;
+        };
+        auto estado = [&](const std::string& id) {
+            auto st = reg.prepare("SELECT estado FROM item WHERE id = ?");
+            st.bind(1, Value::of(id));
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        // Filtros de resultados preservam os pares e o lote nunca toca em categorias escondidas.
+        {
+            using D = DuplicatesWorkspaceComponent;
+            D filtros(pa);
+            const auto v1 = novo("FLT-V1", "2026-01-01"), v2 = novo("FLT-V2", "2026-01-02");
+            const auto h1 = novo("FLT-H1", "2026-01-01"), h2 = novo("FLT-H2", "2026-01-02");
+            auto visivel = par(v1, v2), escondido = par(h1, h2), resolucao = par(h2, h1);
+            visivel.criterio = "IDENTICAL";
+            escondido.criterio = "PROBABLE";
+            resolucao.criterio = "SIMILAR";
+            resolucao.original.largura = 1920; resolucao.original.altura = 1080;
+            resolucao.duplicata.largura = 640; resolucao.duplicata.altura = 360;
+            filtros.gruposDetectados_ = {escondido, visivel, resolucao};
+            filtros.estado_ = D::State::Results;
+            filtros.setSize(1280, 800);
+            filtros.atualizarListaEStatusAposResolucao();
+            checar(filtros.quantidadeResultadosVisiveis() == 3, "result filters: ALL includes every pair");
+            filtros.filtrosResultados_[2]->onClick();
+            checar(filtros.quantidadeResultadosVisiveis() == 1 && filtros.passaFiltroResultado(escondido),
+                   "result filters: PROBABLE only, without changing scan options");
+            filtros.filtrosResultados_[5]->onClick();
+            checar(filtros.quantidadeResultadosVisiveis() == 1 && filtros.passaFiltroResultado(resolucao),
+                   "result filters: resolution keeps both sides of the unequal-resolution pair");
+            std::swap(resolucao.original, resolucao.duplicata);
+            checar(filtros.passaFiltroResultado(resolucao), "resolution filter is independent of which side is smaller");
+            resolucao.original.largura = 0;
+            checar(!filtros.passaFiltroResultado(resolucao), "resolution filter excludes unknown dimensions");
+            filtros.filtrosResultados_[4]->onClick();
+            checar(filtros.quantidadeResultadosVisiveis() == 0 && !filtros.btnValidateAll_->isEnabled(),
+                   "empty result filter disables global batch actions");
+            filtros.filtrosResultados_[1]->onClick();
+            checar(filtros.quantidadeResultadosVisiveis() == 1 && filtros.gruposDetectados_.size() == 3,
+                   "IDENTICAL filter keeps non-contiguous original group indices");
+            {
+                juce::PNGImageFormat png;
+                auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output");
+                dir.createDirectory();
+                juce::FileOutputStream out(dir.getChildFile("duplicatas_filtros.png"));
+                if (out.openedOk()) png.writeImageToStream(filtros.createComponentSnapshot(filtros.getLocalBounds()), out);
+            }
+            filtros.aplicarEscolhaGlobal(1);
+            esperarAte([&] { return filtros.gruposDetectados_.size() == 2; });
+            checar(estado(v2) == "duplicata" && estado(h1) != "duplicata" && estado(h2) != "duplicata" &&
+                       filtros.gruposDetectados_.size() == 2 && filtros.quantidadeResultadosVisiveis() == 0,
+                   "filtered batch resolves only visible pairs and preserves hidden pairs");
+            filtros.estado_ = D::State::Scanning;
+            filtros.progressoVisivel_ = -1.0;
+            filtros.resized();
+            checar(filtros.barraScan_.isVisible() && filtros.getLocalBounds().contains(filtros.barraScan_.getBounds()),
+                   "scan shows the standard progress bar inside workspace bounds");
+            filtros.estado_ = D::State::Idle;
+            filtros.resized();
+            checar(!filtros.barraScan_.isVisible(), "progress bar hides outside scanning");
+        }
+
+    } catch (const std::exception& e) {
+        checar(false, juce::String("duplicate results selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+    std::cout << "Duplicates result checks: " << falhas << " failure(s)\n";
+    return falhas;
+}
+
 int rodarLoteSelfTest() {
     std::cout << "== Batch assignment, " << kItensPorLado << " items per side (Catalog + Intake) ==\n";
     int falhas = 0;
@@ -5541,6 +5639,8 @@ int rodarLoteSelfTest() {
         noBackup(a1, "2026-01-05T10:00:00Z");
         // Par B: nenhum tem backup.
         const auto b1 = novo("CRT-B1", "2026-02-01T10:00:00Z"), b2 = novo("CRT-B2", "2026-01-01T10:00:00Z");
+
+        falhas += rodarDuplicatasResultadosSelfTest();
 
         // Lote grande: um aviso só pra grade (não um por item).
         struct Contador : EventBusListener {

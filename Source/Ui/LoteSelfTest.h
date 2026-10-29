@@ -10,5 +10,7 @@
 namespace matriz::ui {
 
 int rodarLoteSelfTest();
+// Recorte rápido, com projeto temporário próprio: --selftest-duplicates-results.
+int rodarDuplicatasResultadosSelfTest();
 
 } // namespace matriz::ui

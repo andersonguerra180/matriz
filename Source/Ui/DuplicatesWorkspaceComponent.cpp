@@ -23,6 +23,25 @@
 namespace matriz::ui {
 
 namespace {
+    // O tema claro neutraliza o fundo dos botões coloridos (inclusive o selecionado).
+    // A faixa mantém a legenda da categoria visível nos dois temas, usando os botões padrão do app.
+    class BotaoFiltroResultado final : public juce::TextButton {
+    public:
+        explicit BotaoFiltroResultado(bool resolucao) : resolucao_(resolucao) {}
+        void paintButton(juce::Graphics& g, bool destacado, bool pressionado) override {
+            juce::TextButton::paintButton(g, destacado, pressionado);
+            auto faixa = getLocalBounds().reduced(4).withWidth(4).toFloat();
+            g.setColour(findColour(juce::TextButton::buttonOnColourId));
+            g.fillRoundedRectangle(faixa, 2.0f);
+            if (resolucao_) {
+                g.setColour(juce::Colour(0xff22c55e));
+                g.fillRoundedRectangle(faixa.withTrimmedTop(faixa.getHeight() / 2), 2.0f);
+            }
+        }
+    private:
+        bool resolucao_;
+    };
+
     // Diálogo de decisão de duplicata: mensagem + GRADE simétrica de botões (3 colunas, mesma largura/altura) + VOLTAR em
     // largura total. Substitui o AlertWindow, cujos 6 botões numa linha só estouravam a largura e cortavam o último.
     class DialogoEscolhaDuplicata : public juce::Component {
@@ -502,6 +521,12 @@ public:
         bool isLight = (tk.fundo.getBrightness() > 0.5f);
         juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
         g.fillAll(bg);
+        if (std::none_of(cards_.begin(), cards_.end(), [](const auto* c) { return c->isVisible(); })) {
+            g.setColour(tk.textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            g.drawFittedText(matriz::i18n::t("duplicatas.resultado_vazio"), getLocalBounds().reduced(20),
+                             juce::Justification::centredTop, 2);
+        }
     }
 
     void resized() override {
@@ -509,6 +534,7 @@ public:
         int y = 10;
         
         for (auto* card : cards_) {
+            if (!card->isVisible()) continue;
             int cardHeight = card->isExpanded() ? kAlturaAberto : kAlturaFechado;
             card->setBounds(10, y, getWidth() - 20, cardHeight);
             y += cardHeight + 10;
@@ -524,7 +550,16 @@ public:
             addAndMakeVisible(card);
         }
         
+        aplicarFiltro();
+    }
+
+    void aplicarFiltro() {
+        for (auto* card : cards_) {
+            card->setVisible(card->passaFiltro());
+            card->definirSelecionado(false);
+        }
         recalculateHeight();
+        owner_.atualizarFiltrosResultados();
         notifySelectionChanged();
     }
 
@@ -537,7 +572,7 @@ public:
     std::vector<int> indicesSelecionados() const {
         std::vector<int> resultado;
         for (auto* card : cards_) {
-            if (card->isSelected()) resultado.push_back(static_cast<int>(card->groupIndex()));
+            if (card->isVisible() && card->isSelected()) resultado.push_back(static_cast<int>(card->groupIndex()));
         }
         return resultado;
     }
@@ -548,7 +583,7 @@ public:
 
     // SELECT ALL / CLEAR (preferência de lote em todas as categorias): marca ou desmarca todos os cards da lista.
     void selecionarTodos(bool selecionar) {
-        for (auto* card : cards_) card->definirSelecionado(selecionar);
+        for (auto* card : cards_) card->definirSelecionado(card->isVisible() && selecionar);
         notifySelectionChanged();
     }
 
@@ -556,11 +591,15 @@ public:
 
     void recalculateHeight() {
         int totalHeight = 20;
+        bool temVisivel = false;
         for (auto* card : cards_) {
+            if (!card->isVisible()) continue;
+            temVisivel = true;
             totalHeight += (card->isExpanded() ? kAlturaAberto : kAlturaFechado) + 10;
         }
-        setSize(getWidth(), totalHeight);
+        setSize(getWidth(), temVisivel ? totalHeight : 80);
         resized();
+        repaint();
     }
 
 private:
@@ -956,6 +995,7 @@ private:
         bool isSelected() const { return chkSelecionar_->getToggleState(); }
         void definirSelecionado(bool s) { chkSelecionar_->setToggleState(s, juce::dontSendNotification); }
         size_t groupIndex() const { return index_; }
+        bool passaFiltro() const { return owner_.passaFiltroResultado(grupo_); }
 
         void toggleExpanded() {
             isExpanded_ = !isExpanded_;
@@ -1341,6 +1381,19 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     listaComponent_ = std::make_unique<ListaResultadosComponent>(*this);
     listaComponent_->onSelectionChanged = [this] { atualizarBotoesSelecionados(); };
     viewport_->setViewedComponent(listaComponent_.get(), false);
+
+    for (size_t i = 0; i < filtrosResultados_.size(); ++i) {
+        auto& botao = filtrosResultados_[i];
+        botao = std::make_unique<BotaoFiltroResultado>(i == 5);
+        botao->setTooltip(matriz::i18n::t(i == 5 ? "duplicatas.resultado_resolucao_dica" : "duplicatas.resultado_dica"));
+        botao->onClick = [this, i] {
+            filtroResultado_ = static_cast<FiltroResultado>(i);
+            listaComponent_->aplicarFiltro();  // só memória; a seleção antiga não atravessa recortes
+            viewport_->setViewPosition(0, 0);
+            resized();
+        };
+        addChildComponent(*botao);
+    }
 
     // Abas da área de resultados: DUPLICATES (N) | SEQUENCES (N).
     listaSequencias_ = std::make_unique<ListaSequenciasComponent>(*this);
@@ -3009,19 +3062,76 @@ bool DuplicatesWorkspaceComponent::ehSequenciaDeFotos(const std::string& nomeA, 
     return false;
 }
 
+bool DuplicatesWorkspaceComponent::passaFiltroResultado(const DuplicateGroup& grupo) const {
+    switch (filtroResultado_) {
+        case FiltroResultado::Todos: return true;
+        case FiltroResultado::Identical: return grupo.criterio == "IDENTICAL";
+        case FiltroResultado::Probable: return grupo.criterio == "PROBABLE";
+        case FiltroResultado::Similar: return grupo.criterio == "SIMILAR";
+        case FiltroResultado::Possible: return grupo.criterio.empty();
+        case FiltroResultado::Resolucao: {
+            const auto& a = grupo.original;
+            const auto& b = grupo.duplicata;
+            return a.largura > 0 && a.altura > 0 && b.largura > 0 && b.altura > 0 &&
+                   static_cast<long long>(a.largura) * a.altura != static_cast<long long>(b.largura) * b.altura;
+        }
+    }
+    return false;
+}
+
+int DuplicatesWorkspaceComponent::quantidadeResultadosVisiveis() const {
+    return static_cast<int>(std::count_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                                        [this](const auto& g) { return passaFiltroResultado(g); }));
+}
+
+void DuplicatesWorkspaceComponent::atualizarFiltrosResultados() {
+    const auto& tk = tema();
+    const juce::Colour cores[] = {tk.acento, juce::Colour(0xff1ec45b), juce::Colour(0xffffa000),
+                                  juce::Colour(0xff32bced), tk.textoSecundario, juce::Colour(0xffef4444)};
+    const char* chaves[] = {"duplicatas.resultado_todos", "duplicatas.resultado_identical", "duplicatas.resultado_probable",
+                            "duplicatas.resultado_similar", "duplicatas.resultado_possible", "duplicatas.resultado_resolucao"};
+    const auto atual = filtroResultado_;
+    for (size_t i = 0; i < filtrosResultados_.size(); ++i) {
+        if (!filtrosResultados_[i]) continue;
+        filtroResultado_ = static_cast<FiltroResultado>(i);
+        const int n = quantidadeResultadosVisiveis();
+        auto& b = *filtrosResultados_[i];
+        b.setButtonText(matriz::i18n::t(chaves[i]) + " (" + juce::String(n) + ")");
+        b.setToggleState(filtroResultado_ == atual, juce::dontSendNotification);
+        b.setColour(juce::TextButton::buttonColourId, cores[i].withAlpha(0.12f));
+        b.setColour(juce::TextButton::buttonOnColourId, cores[i]);
+        b.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        b.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+    }
+    filtroResultado_ = atual;
+    const bool podeResolver = std::any_of(gruposDetectados_.begin(), gruposDetectados_.end(), [this](const auto& g) {
+        return passaFiltroResultado(g) && (loteTodasCategorias() || !ehPrevisto(g));
+    });
+    const bool recortado = filtroResultado_ != FiltroResultado::Todos;
+    btnValidateAll_->setButtonText(matriz::i18n::t(recortado ? "duplicatas.resultado_validar_visiveis" : "duplicatas.btn_validate_all"));
+    btnDismissAll_->setButtonText(matriz::i18n::t(recortado ? "duplicatas.resultado_ignorar_visiveis" : "duplicatas.btn_dismiss_all"));
+    btnValidateAll_->setEnabled(podeResolver);
+    btnDismissAll_->setEnabled(podeResolver);
+    btnValidateAll_->setTooltip(matriz::i18n::t("duplicatas.resultado_lote_dica"));
+    btnDismissAll_->setTooltip(matriz::i18n::t("duplicatas.resultado_lote_dica"));
+}
+
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
-    if (gruposDetectados_.empty()) return;
+    if (quantidadeResultadosVisiveis() == 0) return;
 
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
     const bool todas = loteTodasCategorias();
+    const int quantidade = static_cast<int>(std::count_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+        [this, todas](const auto& g) { return passaFiltroResultado(g) && (todas || !ehPrevisto(g)); }));
+    if (quantidade == 0) return;
     if (!ehDuplicataReal) {
         // Dismiss All: inalterado — não sinaliza nada como duplicata, então
         // não afeta o Make Backup de forma nenhuma.
         juce::String titulo = isPt ? juce::String::fromUTF8("Ignorar Todas as Duplicatas") : juce::String("Dismiss All Duplicates");
         juce::String msg = isPt
-            ? (juce::String::fromUTF8("Tem certeza de que deseja ignorar todos os ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos? Eles não serão mais sinalizados como duplicatas."))
-            : ("Are you sure you want to dismiss all " + juce::String(gruposDetectados_.size()) + " duplicate groups? They will not be flagged as duplicates again.");
+            ? (juce::String::fromUTF8("Tem certeza de que deseja ignorar todos os ") + juce::String(quantidade) + juce::String::fromUTF8(" grupos visíveis elegíveis? Eles não serão mais sinalizados como duplicatas."))
+            : ("Are you sure you want to dismiss all " + juce::String(quantidade) + " eligible visible duplicate groups? They will not be flagged as duplicates again.");
 
         bool confirm = juce::AlertWindow::showOkCancelBox(
             juce::AlertWindow::QuestionIcon, titulo, msg,
@@ -3033,7 +3143,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         try {
             db.run("BEGIN TRANSACTION", {});
             for (const auto& group : gruposDetectados_) {
-                if (ehPrevisto(group) && !todas) continue;  // só decisão manual (sem a preferência de lote em todas)
+                if (!passaFiltroResultado(group) || (ehPrevisto(group) && !todas)) continue;  // só decisão manual (sem a preferência de lote em todas)
                 acrescentarNota(db, group.duplicata.itemId,
                                 "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
@@ -3043,7 +3153,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         }
 
         gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
-                                               [todas](const DuplicateGroup& g) { return todas || !ehPrevisto(g); }),
+                                               [this, todas](const DuplicateGroup& g) { return passaFiltroResultado(g) && (todas || !ehPrevisto(g)); }),
                                 gruposDetectados_.end());
         if (!gruposDetectados_.empty()) {  // sobraram só PROVÁVEIS: continuam na lista
             listaComponent_->updateList(gruposDetectados_);
@@ -3068,11 +3178,11 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
     // 'duplicata', que planejarConsolidacao agora respeita).
     juce::String titulo = isPt ? juce::String::fromUTF8("Validar Todas as Duplicatas") : juce::String("Validate All Duplicates");
     juce::String msg = isPt
-        ? (juce::String::fromUTF8("Aplicar a mesma escolha aos ") + juce::String(gruposDetectados_.size()) +
-           juce::String::fromUTF8(" grupos de duplicatas encontrados. Nada é apagado do disco nem do catálogo — "
+        ? (juce::String::fromUTF8("Aplicar a mesma escolha aos ") + juce::String(quantidade) +
+           juce::String::fromUTF8(" grupos visíveis elegíveis. Nada é apagado do disco nem do catálogo — "
                                    "o lado descartado só sai da próxima leva de Make Backup."))
-        : ("Apply the same choice to all " + juce::String(gruposDetectados_.size()) +
-           juce::String::fromUTF8(" detected duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
+        : ("Apply the same choice to all " + juce::String(quantidade) +
+           juce::String::fromUTF8(" eligible visible duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
            "won't be included in the next Make Backup run."));
 
     // Grade simétrica de botões (3 colunas). Códigos de aplicarEscolhaGlobal: 1/2/3 manter, 4 mais recente, 5 primeira no
@@ -3102,7 +3212,8 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
     std::vector<DuplicateGroup> grupos, provaveis;
     // Com a preferência de lote em todas as categorias, PROBABLE e SIMILAR entram no lote como os IDENTICAL.
     const bool todas = loteTodasCategorias();
-    for (const auto& g : gruposDetectados_) ((ehPrevisto(g) && !todas) ? provaveis : grupos).push_back(g);
+    for (const auto& g : gruposDetectados_)
+        ((!passaFiltroResultado(g) || (ehPrevisto(g) && !todas)) ? provaveis : grupos).push_back(g);
     if (grupos.empty()) {
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("duplicatas.aviso_lote_titulo"),
                                                matriz::i18n::t("duplicatas.aviso_lote_corpo").replace("{n}", juce::String((int) provaveis.size())),
@@ -3359,6 +3470,29 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
         }
     };
 
+    if (estado_ == State::Results && !abaSequencias_) {
+        g.setColour(tk.painelAlt.withAlpha(0.25f));
+        g.fillRoundedRectangle(cardFiltrosResultados_.toFloat(), tk.raioPequeno);
+        g.setColour(tk.borda.withAlpha(0.7f));
+        g.drawRoundedRectangle(cardFiltrosResultados_.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+        auto texto = cardFiltrosResultados_.reduced(10, 6);
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro, juce::Font::bold)));
+        g.drawText(matriz::i18n::t("duplicatas.card_resultados"), texto.removeFromTop(18), juce::Justification::centredLeft);
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        g.drawText(matriz::i18n::t("duplicatas.resultado_dica"), texto.removeFromTop(18), juce::Justification::centredLeft, true);
+        g.setColour(tk.painelAlt.withAlpha(0.25f));
+        g.fillRoundedRectangle(cardAcoesResultados_.toFloat(), tk.raioPequeno);
+        g.setColour(tk.borda.withAlpha(0.7f));
+        g.drawRoundedRectangle(cardAcoesResultados_.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro, juce::Font::bold)));
+        g.drawText(matriz::i18n::t("duplicatas.card_acoes"), cardAcoesResultados_.reduced(10, 6).withHeight(18),
+                   juce::Justification::centredLeft);
+        direita.removeFromTop(alturaCardsResultados());
+    }
+
     switch (estado_) {
         case State::Idle:
             desenharCardCentral(matriz::i18n::t("duplicatas.vazio_titulo"), matriz::i18n::t("duplicatas.vazio_dica"), -1.0f);
@@ -3380,7 +3514,9 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
                 g.drawFittedText(matriz::i18n::t("duplicatas.seq_dica"), linha, juce::Justification::centredLeft, 2, 1.0f);
                 break;
             }
-            g.drawText(matriz::i18n::t("duplicatas.resumo").replace("{n}", juce::String(gruposDetectados_.size())),
+            g.drawText(matriz::i18n::t("duplicatas.resultado_resumo")
+                           .replace("{n}", juce::String(quantidadeResultadosVisiveis()))
+                           .replace("{total}", juce::String(gruposDetectados_.size())),
                        direita.removeFromTop(kAlturaResumo), juce::Justification::centredLeft, true);
             if (const int previstos = contarPrevistos(gruposDetectados_); previstos > 0) {
                 const juce::Colour ambar(0xfff59e0b);
@@ -3423,10 +3559,11 @@ void DuplicatesWorkspaceComponent::resized() {
     coluna_.finalizarCard();
 
     // FILTROS — rótulo pequeno acima de cada controle.
-    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_filtros"));
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_filtros_scan"));
     auto linhaRotulo = [&](juce::Label& rotulo, juce::Component& controle) {
-        rotulo.setBounds(corpo.removeFromTop(14));
-        controle.setBounds(corpo.removeFromTop(26));
+        auto linha = corpo.removeFromTop(26);
+        rotulo.setBounds(linha.removeFromLeft(64));
+        controle.setBounds(linha);
         corpo.removeFromTop(6);
     };
     linhaRotulo(*lblScope_, *cbScope_);
@@ -3450,7 +3587,7 @@ void DuplicatesWorkspaceComponent::resized() {
     coluna_.finalizarCard();
 
     // COINCIDÊNCIAS — critérios que o usuário decide incluir ou não
-    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_coincidencias"));
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_criterios_scan"));
     auto linhaToggle = [&](juce::ToggleButton* tb) {
         if (tb != nullptr) {
             tb->setBounds(corpo.removeFromTop(18));
@@ -3468,28 +3605,11 @@ void DuplicatesWorkspaceComponent::resized() {
     linhaToggle(tbFormato_.get());
     coluna_.finalizarCard();
 
-    // AÇÕES — só com resultados.
+    // Ações dos resultados ficam junto da lista, separadas das opções da próxima varredura.
+    const bool acoesVisiveis = emResultados && !abaSequencias_;
     for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get(), btnReset_.get()})
-        b->setVisible(emResultados);
-    for (auto* b : {btnSelecionarTodos_.get(), btnLimparSelecao_.get()}) b->setVisible(emResultados && loteTodasCategorias());
-    if (emResultados) {
-        coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_acoes"));
-        if (loteTodasCategorias()) {  // SELECT ALL | CLEAR: só com a preferência de lote em todas as categorias
-            auto linha = corpo.removeFromTop(28);
-            btnSelecionarTodos_->setBounds(linha.removeFromLeft((linha.getWidth() - 4) / 2));
-            linha.removeFromLeft(4);
-            btnLimparSelecao_->setBounds(linha);
-            corpo.removeFromTop(4);
-        }
-        for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get()}) {
-            b->setBounds(corpo.removeFromTop(28));
-            corpo.removeFromTop(4);
-        }
-        corpo.removeFromTop(6);  // RESET fica separado: não resolve nada, só limpa o recorte atual
-        btnReset_->setBounds(corpo.removeFromTop(28));
-        corpo.removeFromTop(4);
-        coluna_.finalizarCard();
-    }
+        b->setVisible(acoesVisiveis);
+    for (auto* b : {btnSelecionarTodos_.get(), btnLimparSelecao_.get()}) b->setVisible(acoesVisiveis && loteTodasCategorias());
 
     // DUPLICATAS RESOLVIDAS — sempre visível: a lista dos escondidos e o RESTAURAR.
     coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_resolvidas"));
@@ -3510,6 +3630,35 @@ void DuplicatesWorkspaceComponent::resized() {
     if (!comSequencias) abaSequencias_ = false;
     btnAbaDuplicatas_->setVisible(comSequencias);
     btnAbaSequencias_->setVisible(comSequencias);
+    const bool mostrarFiltros = emResultados && !abaSequencias_;
+    for (auto& b : filtrosResultados_) b->setVisible(mostrarFiltros);
+    if (mostrarFiltros) {
+        auto cards = direita.removeFromTop(alturaCardsResultados() - 8);
+        direita.removeFromTop(8);
+        cardFiltrosResultados_ = cards.removeFromLeft(cards.getWidth() * 3 / 5);
+        cards.removeFromLeft(8);
+        cardAcoesResultados_ = cards;
+        auto acoes = cardAcoesResultados_.reduced(8, 6).withTrimmedTop(22);
+        const int larguraAcao = (acoes.getWidth() - 4) / 2;
+        int posicao = 0;
+        auto posicionarAcao = [&](juce::TextButton& b) {
+            b.setBounds(acoes.getX() + (posicao % 2) * (larguraAcao + 4),
+                        acoes.getY() + (posicao / 2) * 28, larguraAcao, 24);
+            ++posicao;
+        };
+        if (loteTodasCategorias()) {
+            posicionarAcao(*btnSelecionarTodos_);
+            posicionarAcao(*btnLimparSelecao_);
+        }
+        for (auto* b : {btnValidateAll_.get(), btnDismissAll_.get(), btnValidateSelected_.get(), btnDismissSelected_.get(), btnReset_.get()})
+            posicionarAcao(*b);
+        auto botoes = cardFiltrosResultados_.reduced(10, 6).withTrimmedTop(38);
+        const int largura = (botoes.getWidth() - 12) / 3;
+        for (size_t i = 0; i < filtrosResultados_.size(); ++i)
+            filtrosResultados_[i]->setBounds(botoes.getX() + static_cast<int>(i % 3) * (largura + 6),
+                                             botoes.getY() + static_cast<int>(i / 3) * 28, largura, 24);
+        atualizarFiltrosResultados();
+    }
     if (emResultados) {
         auto linhaResumo = direita.removeFromTop(kAlturaResumo);
         if (comSequencias) {

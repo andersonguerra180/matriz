@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <array>
 #include <functional>
 #include <set>
 #include <vector>
@@ -19,6 +20,7 @@ class DuplicatesWorkspaceComponent : public juce::Component,
                                       public juce::Thread,
                                       private juce::Timer {
 public:
+    friend int rodarDuplicatasResultadosSelfTest();
     friend int rodarLoteSelfTest();  // --selftest-lote: critérios rápidos (etapa 9)
     explicit DuplicatesWorkspaceComponent(ProjetoAberto& projeto);
     ~DuplicatesWorkspaceComponent() override;
@@ -161,6 +163,16 @@ private:
         bool coincidirEspacoCor = true;
         bool coincidirFormato = false;
     } activeFilters_;
+
+    // Recorte apenas da lista já escaneada; os índices continuam referindo-se a gruposDetectados_.
+    enum class FiltroResultado { Todos, Identical, Probable, Similar, Possible, Resolucao };
+    FiltroResultado filtroResultado_ = FiltroResultado::Todos;
+    bool passaFiltroResultado(const DuplicateGroup& grupo) const;
+    void atualizarFiltrosResultados();
+    int quantidadeResultadosVisiveis() const;
+    int alturaCardsResultados() const { return loteTodasCategorias() ? 148 : 120; }
+    juce::Rectangle<int> cardFiltrosResultados_, cardAcoesResultados_;
+    std::array<std::unique_ptr<juce::TextButton>, 6> filtrosResultados_;
 
     void resolverTudo(bool ehDuplicataReal);
 

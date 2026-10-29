@@ -291,6 +291,11 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--selftest-duplicates-results")) {
+            setApplicationReturnValue(matriz::ui::rodarDuplicatasResultadosSelfTest());
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest-lote")) {
             setApplicationReturnValue(matriz::ui::rodarLoteSelfTest());
             quit();
