@@ -1458,6 +1458,10 @@ void MosaicoComponent::mouseMove(const juce::MouseEvent& e) {
     repintarCelula(indice);
 }
 
+void MosaicoComponent::mouseEnter(const juce::MouseEvent&) {
+    if (aoMouseEntrar) aoMouseEntrar();
+}
+
 void MosaicoComponent::mouseExit(const juce::MouseEvent&) {
     if (indiceHover_ < 0) return;
     const int anterior = indiceHover_;

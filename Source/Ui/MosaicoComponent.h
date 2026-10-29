@@ -232,6 +232,7 @@ public:
     // caminho (clique, Shift, Cmd, selecionarTodos, limparSelecao) — a
     // barra de seleção e a ficha lateral acompanham por aqui.
     std::function<void()> aoMudarSelecao;
+    std::function<void()> aoMouseEntrar;  // o cursor entrou na grade (METADATA devolve o foco de teclado a ela)
 
     std::function<void(int indice, std::vector<std::string> itemIds)> aoCategorizarPorAtalho;
     std::function<void()> aoRenomearItem;
@@ -294,6 +295,7 @@ public:
     // Realce sob o cursor: sem ele a grade parece uma imagem estática, e o
     // operador não descobre que a célula é clicável até tentar.
     void mouseMove(const juce::MouseEvent&) override;
+    void mouseEnter(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
     // Cmd/Ctrl+A seleciona tudo que está no filtro atual.

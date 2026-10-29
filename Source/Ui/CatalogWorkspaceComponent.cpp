@@ -440,6 +440,12 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             if (safeMosaico != nullptr) safeMosaico->grabKeyboardFocus();
         });
     };
+    // Edição em lote: tirar o cursor da ficha e levá-lo à grade já devolve o foco de teclado a ela (o E/H/K...
+    // vale sem reselecionar um arquivo). Só com a ficha em lote e o foco dentro dela; fora disso nada muda.
+    mosaico_->aoMouseEntrar = [this] {
+        if (mosaico_ && fichaPanel_ && fichaPanel_->emLote() && fichaPanel_->hasKeyboardFocus(true))
+            mosaico_->grabKeyboardFocus();
+    };
     addAndMakeVisible(*fichaPanel_);
 
     auto resizer = std::make_unique<FichaResizerBar>();

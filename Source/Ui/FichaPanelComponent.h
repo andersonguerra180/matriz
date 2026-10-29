@@ -33,6 +33,7 @@ public:
 
     void setEditavel(bool editavel);
     bool isEditavel() const { return editavel_; }
+    bool emLote() const { return modoLote_; }  // ficha mostrando N arquivos (edição em lote)
 
     // Correção realtime (Bug 1 — perda de edições): commita agora qualquer
     // texto digitado e ainda não salvo (campo com foco que nunca perdeu
