@@ -1,4 +1,5 @@
 #include "DuplicatesWorkspaceComponent.h"
+#include "../Diag/Watchdog.h"
 #include "ProjetoAberto.h"
 #include "Tokens.h"
 #include "Moldura.h"
@@ -1900,6 +1901,16 @@ void DuplicatesWorkspaceComponent::run() {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
     faseScan_ = 1;
 
+    // A grade mostra só a capa de cada NEST/container: selecionar a capa vale para TODOS os arquivos dele (como a
+    // ficha em lote). Sem isto o scan "Selected files" comparava só a capa e ignorava o que a seleção cobre.
+    if (activeFilters_.scope == 2 && !activeFilters_.selecionadosNoGrid.empty()) {
+        try {
+            const auto expandido = projeto_.expandirMembrosDeNest(
+                std::vector<std::string>(activeFilters_.selecionadosNoGrid.begin(), activeFilters_.selecionadosNoGrid.end()));
+            activeFilters_.selecionadosNoGrid.insert(expandido.begin(), expandido.end());
+        } catch (...) {}
+    }
+
     // 1. Get all candidate items for duplicate detection
     struct ItemInfo {
         std::string criadoEm;
@@ -2069,6 +2080,10 @@ void DuplicatesWorkspaceComponent::run() {
     } else {
         carregarItensDeDb(db, projeto_.projeto().pasta(), "", "");
     }
+
+    matriz::diag::logarWatchdog("[DuplicatasScan] escopo=" + juce::String(activeFilters_.scope) + " selecionados=" +
+                                juce::String(static_cast<int>(activeFilters_.selecionadosNoGrid.size())) + " candidatos=" +
+                                juce::String(static_cast<int>(items.size())));
 
     if (items.empty()) {
         progressoScan_ = 1.0;
