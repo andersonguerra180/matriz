@@ -35,6 +35,7 @@ public:
         int acaoMaisRecente = -1;
         int acaoBackupPrimeiro = -1;
         int acaoMaiorResolucao = -1;  // 0 = manter o arquivo 1, 1 = manter o 2; -1 = sem dimensões / mesma resolução
+        int acaoMaiorTamanho = -1;    // 0 = manter o arquivo 1, 1 = manter o 2; -1 = sem tamanho / mesmo tamanho
         bool decisaoManual = false;
     };
 
@@ -58,7 +59,7 @@ private:
     class AmpliadorComponent;
 
     void aplicarATodos(int action);
-    void aplicarCriterio(int criterio);  // 0 = mais recente, 1 = primeira no backup, 2 = maior resolução
+    void aplicarCriterio(int criterio);  // 0 = mais recente, 1 = primeira no backup, 2 = maior resolução, 3 = maior tamanho
     void confirmar();
     void cancelar();
     void ampliarImagem(juce::Image imagem);
@@ -71,7 +72,7 @@ private:
     std::unique_ptr<juce::Label> lblApplyAll_;
     std::array<std::unique_ptr<juce::TextButton>, 3> btnsApplyAll_;
     std::unique_ptr<juce::Label> lblCriterios_;
-    std::unique_ptr<juce::TextButton> btnMaisRecente_, btnBackupPrimeiro_, btnMaiorResolucao_;
+    std::unique_ptr<juce::TextButton> btnMaisRecente_, btnBackupPrimeiro_, btnMaiorResolucao_, btnMaiorTamanho_;
     std::unique_ptr<juce::Label> lblManuais_;
     std::unique_ptr<juce::Viewport> viewport_;
     std::unique_ptr<juce::Component> listaContainer_;

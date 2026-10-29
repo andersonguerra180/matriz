@@ -1036,6 +1036,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.criterio_recente", "KEEP MOST RECENT INGEST"},
         {"duplicatas.criterio_backup", "KEEP FIRST IN BACKUP"},
         {"duplicatas.criterio_resolucao", "KEEP HIGHEST RESOLUTION"},
+        {"duplicatas.criterio_tamanho", "KEEP LARGEST FILE SIZE"},
         {"duplicatas.decisao_manual", "[MANUAL]"},
         {"duplicatas.manuais", "{n} group(s) need a manual decision (no backup yet, or a tie)."},
                 {"duplicatas.falha_titulo", "Could not resolve"},

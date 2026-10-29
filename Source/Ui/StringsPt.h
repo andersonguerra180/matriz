@@ -1051,6 +1051,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"duplicatas.criterio_recente", "MANTER A INGESTÃO MAIS RECENTE"},
         {"duplicatas.criterio_backup", "MANTER A PRIMEIRA NO BACKUP"},
         {"duplicatas.criterio_resolucao", "MANTER A MAIOR RESOLUÇÃO"},
+        {"duplicatas.criterio_tamanho", "MANTER O MAIOR TAMANHO"},
         {"duplicatas.decisao_manual", "[MANUAL]"},
         {"duplicatas.manuais", "{n} grupo(s) ficam para decisão manual (sem backup ainda, ou empate)."},
                 {"duplicatas.falha_titulo", "Não foi possível resolver"},

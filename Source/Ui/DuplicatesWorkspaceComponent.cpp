@@ -2864,7 +2864,8 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
            descricaoLado(juce::String("Arquivo 2 (Duplicata)"), group.duplicata))
         : ("How would you like to handle this duplicate pair?\n\n" + descricaoLado(juce::String("File 1 (Original)"), group.original) + "\n" +
            descricaoLado(juce::String("File 2 (Duplicate)"), group.duplicata));
-    // Códigos: 1 = manter 1, 2 = manter 2, 3 = ambos, 5 = mais recente, 6 = primeira no backup, 7 = maior resolução.
+    // Códigos: 1 = manter 1, 2 = manter 2, 3 = ambos, 5 = mais recente, 6 = primeira no backup, 7 = maior resolução,
+    // 8 = maior tamanho de arquivo.
     std::vector<DialogoEscolhaDuplicata::Botao> botoes = {
         {matriz::i18n::t("duplicatas.action_keep1"), 1},
         {matriz::i18n::t("duplicatas.action_keep2"), 2},
@@ -2872,6 +2873,7 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         {matriz::i18n::t("duplicatas.criterio_recente"), 5},
         {matriz::i18n::t("duplicatas.criterio_backup"), 6},
         {matriz::i18n::t("duplicatas.criterio_resolucao"), 7},
+        {matriz::i18n::t("duplicatas.criterio_tamanho"), 8},
     };
 
     // safeThis: o diálogo não impede o componente de ser destruído enquanto está aberto (ex.: trocar de aba).
@@ -2884,6 +2886,16 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         if (buttonResult == 7) {  // maior resolução: mantém o lado com mais pixels
             const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
             const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+            if (ao <= 0 || ad <= 0 || ao == ad) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("duplicatas.criterios"),
+                                                       matriz::i18n::t("duplicatas.criterio_nao_aplica"), {}, nullptr,
+                                                       juce::ModalCallbackFunction::create([](int) {}));
+                return;
+            }
+            buttonResult = ao > ad ? 1 : 2;
+        }
+        if (buttonResult == 8) {  // maior tamanho de arquivo: mantém o lado com mais bytes
+            const auto ao = group.original.tamanhoBytes, ad = group.duplicata.tamanhoBytes;
             if (ao <= 0 || ad <= 0 || ao == ad) {
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("duplicatas.criterios"),
                                                        matriz::i18n::t("duplicatas.criterio_nao_aplica"), {}, nullptr,
@@ -3228,8 +3240,8 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
            juce::String::fromUTF8(" eligible visible duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
            "won't be included in the next Make Backup run."));
 
-    // Grade simétrica de botões (3 colunas). Códigos de aplicarEscolhaGlobal: 1/2/3 manter, 4 mais recente, 5 primeira no
-    // backup, 6 maior resolução.
+    // Grade de botões (3 colunas). Códigos de aplicarEscolhaGlobal: 1/2/3 manter, 4 mais recente, 5 primeira no
+    // backup, 6 maior resolução, 7 maior tamanho de arquivo.
     std::vector<DialogoEscolhaDuplicata::Botao> botoes = {
         {matriz::i18n::t("duplicatas.action_keep1"), 1},
         {matriz::i18n::t("duplicatas.action_keep2"), 2},
@@ -3237,6 +3249,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         {matriz::i18n::t("duplicatas.criterio_recente"), 4},
         {matriz::i18n::t("duplicatas.criterio_backup"), 5},
         {matriz::i18n::t("duplicatas.criterio_resolucao"), 6},
+        {matriz::i18n::t("duplicatas.criterio_tamanho"), 7},
     };
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
     DialogoEscolhaDuplicata::exibir(titulo, msg, std::move(botoes), isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"),
@@ -3281,6 +3294,14 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
             if (escolha == 6) {  // maior resolução: o lado com mais pixels; sem dimensões ou empate => decisão manual
                 const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
                 const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+                escolhaDoGrupo = (ao > 0 && ad > 0 && ao != ad) ? (ao > ad ? 1 : 2) : 0;
+                if (escolhaDoGrupo == 0) {
+                    paraDecisaoManual->push_back(group);
+                    continue;
+                }
+            }
+            if (escolha == 7) {  // maior tamanho de arquivo: o lado com mais bytes; sem tamanho ou empate => decisão manual
+                const auto ao = group.original.tamanhoBytes, ad = group.duplicata.tamanhoBytes;
                 escolhaDoGrupo = (ao > 0 && ad > 0 && ao != ad) ? (ao > ad ? 1 : 2) : 0;
                 if (escolhaDoGrupo == 0) {
                     paraDecisaoManual->push_back(group);
@@ -3432,6 +3453,8 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
             const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
             const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
             e.acaoMaiorResolucao = (ao > 0 && ad > 0 && ao != ad) ? (ao > ad ? 0 : 1) : -1;
+            const auto to = group.original.tamanhoBytes, td = group.duplicata.tamanhoBytes;
+            e.acaoMaiorTamanho = (to > 0 && td > 0 && to != td) ? (to > td ? 0 : 1) : -1;
         }
         e.imagemA = carregarMiniaturaDoItem(projeto_, group.original.itemId, group.original.collectionCaminho);
         e.imagemB = carregarMiniaturaDoItem(projeto_, group.duplicata.itemId, group.duplicata.collectionCaminho);

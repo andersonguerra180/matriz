@@ -206,7 +206,10 @@ DuplicateResolutionDialog::DuplicateResolutionDialog(juce::String intro, std::ve
         btnMaiorResolucao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.criterio_resolucao"));
         btnMaiorResolucao_->onClick = [this] { aplicarCriterio(2); };
         addAndMakeVisible(*btnMaiorResolucao_);
-        for (auto* b : {btnMaisRecente_.get(), btnBackupPrimeiro_.get(), btnMaiorResolucao_.get()}) {
+        btnMaiorTamanho_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.criterio_tamanho"));
+        btnMaiorTamanho_->onClick = [this] { aplicarCriterio(3); };
+        addAndMakeVisible(*btnMaiorTamanho_);
+        for (auto* b : {btnMaisRecente_.get(), btnBackupPrimeiro_.get(), btnMaiorResolucao_.get(), btnMaiorTamanho_.get()}) {
             b->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
             b->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
         }
@@ -252,7 +255,9 @@ void DuplicateResolutionDialog::aplicarATodos(int action) {
 void DuplicateResolutionDialog::aplicarCriterio(int criterio) {
     int manuais = 0;
     for (auto& e : entries_) {
-        const int acao = criterio == 0 ? e.acaoMaisRecente : (criterio == 1 ? e.acaoBackupPrimeiro : e.acaoMaiorResolucao);
+        const int acao = criterio == 0 ? e.acaoMaisRecente
+                       : criterio == 1 ? e.acaoBackupPrimeiro
+                       : criterio == 2 ? e.acaoMaiorResolucao : e.acaoMaiorTamanho;
         e.decisaoManual = acao < 0;
         if (acao >= 0) e.action = acao;
         else ++manuais;
@@ -315,6 +320,7 @@ void DuplicateResolutionDialog::resized() {
         btn->setBounds(applyAllRow.removeFromLeft(120));
         applyAllRow.removeFromLeft(8);
     }
+    const auto applyAllLinhaLivre = applyAllRow;
     if (lblCriterios_) {
         area.removeFromTop(6);
         auto linha = area.removeFromTop(32);
@@ -325,8 +331,9 @@ void DuplicateResolutionDialog::resized() {
         btnBackupPrimeiro_->setBounds(linha.removeFromLeft(200));
         linha.removeFromLeft(8);
         btnMaiorResolucao_->setBounds(linha.removeFromLeft(200));
-        linha.removeFromLeft(12);
-        lblManuais_->setBounds(linha);
+        linha.removeFromLeft(8);
+        btnMaiorTamanho_->setBounds(linha.removeFromLeft(200));
+        lblManuais_->setBounds(applyAllLinhaLivre);  // o aviso de "decisão manual" fica na linha de cima, que sobra espaço
     }
     area.removeFromTop(14);
 
@@ -355,7 +362,7 @@ void DuplicateResolutionDialog::show(const juce::String& windowTitle,
     auto dlg = std::make_unique<DuplicateResolutionDialog>(intro, std::move(entries), std::move(actionLabels));
     dlg->onDone_ = std::move(onDone);
     int alturaLista = static_cast<int>(dlg->entries_.size()) * (kRowH + 8);
-    dlg->setSize(920, juce::jlimit(360, 700, 180 + alturaLista));
+    dlg->setSize(1000, juce::jlimit(360, 700, 180 + alturaLista));
     auto* rawDlg = dlg.get();
 
     juce::DialogWindow::LaunchOptions opt;
