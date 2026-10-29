@@ -224,8 +224,13 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
         repaint();
         if (ocultarEditados_) agendarRefiltroCoalescido();
         // Snapshot em voo foi lido ANTES do E: ao chegar, traria a flag
-        // antiga por cima. Pede um recarregar logo depois dele.
-        if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
+        // antiga por cima (com Hide Edited os arquivos sumiam, voltavam e
+        // sumiam de novo). Descarta-o (geração nova, como em "nest" e em
+        // atualizarItemEmMemoria) e pede um recarregar logo depois dele.
+        if (snapshotPendente_) {
+            recarregarAoTerminarSnapshot_ = true;
+            ++geracaoSnapshot_;
+        }
         return;
     }
     // Lote (renomear, tipo...): cada item atualizado em memória como no evento por item,
