@@ -2,6 +2,7 @@
 
 #include "../Model/Project.h"
 #include "../Model/CaminhosBanco.h"
+#include "../Model/NomesSeguros.h"
 #include "ProcessoExterno.h"
 #include "MiniaturaPsd.h"
 #include "MiniaturaDocumento.h"
@@ -148,90 +149,84 @@ DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& 
 
 std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double duracaoSegundos, int quantidade,
                                                  const juce::File& dirDestino, const juce::String& prefixo,
-                                                 int larguraPx, bool primeiroFrame, double janelaInicio, double janelaFim) {
-    if (quantidade <= 0)
-        throw MiniaturaError("quantidade de keyframes deve ser positiva");
-    if (duracaoSegundos <= 0.0)
+                                                 int larguraPx, bool primeiroFrame, double janelaInicio, double janelaFim,
+                                                 matriz::app::CancelamentoPtr cancelamento) {
+    if (quantidade <= 0 || larguraPx <= 0)
+        throw MiniaturaError("quantidade e largura de keyframes devem ser positivas");
+    // Um frame em t=0 não depende da duração no container (MOV pode não a informar).
+    if (duracaoSegundos <= 0.0 && !(quantidade == 1 && primeiroFrame))
         throw MiniaturaError("invalid duration for keyframe extraction: " + origem.getFullPathName().toStdString());
 
     dirDestino.createDirectory();
     std::vector<KeyframeGerado> resultado;
     resultado.reserve(static_cast<size_t>(quantidade));
-
-    int alturaPx = static_cast<int>(larguraPx * 9.0 / 16.0); // 16:9 ratio
-
     juce::Random rng;
 
     for (int i = 0; i < quantidade; ++i) {
+        if (cancelamento && cancelamento->pedido()) throw MiniaturaError("keyframe extraction cancelled");
         double tempo = quantidade == 1
             ? (primeiroFrame ? 0.0 : duracaoSegundos * (janelaInicio + rng.nextDouble() * (janelaFim - janelaInicio)))
             : duracaoSegundos * (i + 0.5) / quantidade;
-        juce::File destino = dirDestino.getChildFile(prefixo + "_" + juce::String(i).paddedLeft('0', 4) + ".jpg");
-
-        juce::StringArray argv;
-        argv.add(resolverCaminhoExecutavel("ffmpeg"));
-        argv.add("-ss"); argv.add(juce::String(tempo, 3));
-        argv.add("-i"); argv.add(origem.getFullPathName());
-        argv.add("-frames:v"); argv.add("1");
-        argv.add("-vf"); argv.add("scale=" + juce::String(larguraPx) + ":-2");
-        argv.add("-q:v"); argv.add("5");
-        argv.add("-y"); argv.add(destino.getFullPathName());
-
-        juce::ChildProcess proc;
-        bool ok = proc.start(argv) && proc.waitForProcessToFinish(15000);
-
-        if (!ok || !destino.existsAsFile() || destino.getSize() == 0) {
-            juce::StringArray argv2;
-            argv2.add(resolverCaminhoExecutavel("ffmpeg"));
-            argv2.add("-i"); argv2.add(origem.getFullPathName());
-            argv2.add("-ss"); argv2.add(juce::String(tempo, 3));
-            argv2.add("-frames:v"); argv2.add("1");
-            argv2.add("-vf"); argv2.add("scale=" + juce::String(larguraPx) + ":-2");
-            argv2.add("-q:v"); argv2.add("5");
-            argv2.add("-y"); argv2.add(destino.getFullPathName());
-
-            juce::ChildProcess proc2;
-            ok = proc2.start(argv2) && proc2.waitForProcessToFinish(15000);
+        const auto nome = matriz::nomes_seguros::sanitizarComponente(prefixo + "_" + juce::String(i).paddedLeft('0', 4) + ".jpg");
+        juce::File destino = dirDestino.getChildFile(nome);
+        juce::Image frame;
+        // Primeiro seek rápido; depois seek decodificando; por último, primeiro frame sem seek.
+        // O wrapper drena stdout/stderr enquanto roda. waitForProcessToFinish sozinho deixava o ffmpeg
+        // preso no pipe de logs (comum em MOV/ProRes), além de cortar decodificações após 15 segundos.
+        for (int tentativa = 0; tentativa < 3; ++tentativa) {
+            if (cancelamento && cancelamento->pedido()) throw MiniaturaError("keyframe extraction cancelled");
+            juce::StringArray args{"-progress", "pipe:1"};
+            if (tentativa == 0) { args.add("-ss"); args.add(juce::String(tempo, 3)); }
+            args.add("-i"); args.add(origem.getFullPathName());
+            if (tentativa == 1) { args.add("-ss"); args.add(juce::String(tempo, 3)); }
+            args.addArray({"-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-vf",
+                           "scale=" + juce::String(larguraPx) + ":-2", "-pix_fmt", "yuvj420p", "-q:v", "5",
+                           destino.getFullPathName()});
+            destino.deleteFile();
+            try {
+                rodarEsperandoSucesso("ffmpeg", args, 300000, cancelamento);
+                frame = juce::ImageFileFormat::loadFrom(destino);
+                if (frame.isValid()) {
+                    if (tentativa == 2) tempo = 0.0;
+                    break;
+                }
+            } catch (const ProcessoExternoError&) {
+                if (cancelamento && cancelamento->pedido()) { destino.deleteFile(); throw; }
+            }
         }
-
-        if (!ok || !destino.existsAsFile() || destino.getSize() == 0) {
-            juce::StringArray argv3;
-            argv3.add(resolverCaminhoExecutavel("ffmpeg"));
-            argv3.add("-i"); argv3.add(origem.getFullPathName());
-            argv3.add("-frames:v"); argv3.add("1");
-            argv3.add("-vf"); argv3.add("scale=" + juce::String(larguraPx) + ":-2");
-            argv3.add("-q:v"); argv3.add("5");
-            argv3.add("-y"); argv3.add(destino.getFullPathName());
-
-            juce::ChildProcess proc3;
-            ok = proc3.start(argv3) && proc3.waitForProcessToFinish(15000);
+        if (!frame.isValid()) {
+            destino.deleteFile();
+            // Não indexar um placeholder como sucesso: o próximo carregamento pode tentar de novo.
+            throw MiniaturaError("Falha ao extrair keyframe de " + origem.getFullPathName().toStdString());
         }
-
-        if (!ok || !destino.existsAsFile()) {
-            juce::Image img(juce::Image::RGB, larguraPx, alturaPx, true);
-            juce::Graphics g(img);
-            g.fillAll(juce::Colour(0xff2d2d32));
-            // Sem texto: este código roda em thread de fundo e o cache de análise
-            // Unicode do JUCE (drawText) não é thread-safe — causava SIGSEGV na UI.
-            g.setColour(juce::Colour(0xff3c3c44));
-            const int lado = juce::jmax(8, juce::jmin(larguraPx, alturaPx) / 4);
-            g.fillRect(img.getBounds().getCentreX() - lado / 2,
-                       img.getBounds().getCentreY() - lado / 2, lado, lado);
-            gravarJpeg(img, destino);
-        }
-
-        if (!destino.existsAsFile())
-            throw MiniaturaError("Falha ao gravar keyframe em " + destino.getFullPathName().toStdString());
-
         KeyframeGerado kf;
         kf.tempoSegundos = tempo;
         kf.arquivo = destino;
-        kf.dimensao.largura = larguraPx;
-        kf.dimensao.altura = alturaPx;
+        kf.dimensao.largura = frame.getWidth();
+        kf.dimensao.altura = frame.getHeight();
         resultado.push_back(std::move(kf));
     }
-
     return resultado;
+}
+
+bool miniaturaVideoPrecisaSerRegenerada(const juce::File& miniatura) {
+    if (!miniatura.existsAsFile() || miniatura.getSize() == 0) return true;
+    // Comparação dos bytes do JPEG que o código antigo produzia: não confundir uma cena escura real com falha.
+    static const juce::MemoryBlock placeholder = [] {
+        juce::Image img(juce::Image::RGB, 320, 180, true);
+        juce::Graphics g(img);
+        g.fillAll(juce::Colour(0xff2d2d32));
+        g.setColour(juce::Colour(0xff3c3c44));
+        const int lado = 45;
+        g.fillRect(img.getBounds().getCentreX() - lado / 2, img.getBounds().getCentreY() - lado / 2, lado, lado);
+        juce::MemoryOutputStream out;
+        juce::JPEGImageFormat jpeg;
+        jpeg.writeImageToStream(img, out);
+        return out.getMemoryBlock();
+    }();
+    if (miniatura.getSize() != static_cast<juce::int64>(placeholder.getSize())) return false;
+    juce::MemoryBlock bytes;
+    return miniatura.loadFileAsData(bytes) && bytes == placeholder;
 }
 
 std::vector<uint8_t> FormaDeOnda::paraBlob() const {
@@ -385,7 +380,6 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
             altura = dim.altura;
         } else if (categoria == CategoriaMidia::Video) {
             double duracao = duracaoSegundosConhecida.value_or(0.0);
-            if (duracao <= 0.0) return;
             auto frames = gerarKeyframesVideo(arquivoNoProjeto, duracao, 1, pastaMiniaturas, arquivoId,
                                                320, /*primeiroFrame=*/true);
             if (frames.empty()) return;

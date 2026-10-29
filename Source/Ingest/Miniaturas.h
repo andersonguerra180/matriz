@@ -11,6 +11,7 @@
 
 #include "../Db/Database.h"
 #include "LeituraTecnica.h"
+#include "../App/Cancelamento.h"
 
 // Miniaturas, keyframes e forma de onda (§7.2 estágio 1, §11.3). Gera os
 // arquivos de cache visual — a leitura/renderização propriamente dita (tira
@@ -61,7 +62,12 @@ struct KeyframeGerado {
 std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double duracaoSegundos, int quantidade,
                                                  const juce::File& dirDestino, const juce::String& prefixo,
                                                  int larguraPx = 320, bool primeiroFrame = false,
-                                                 double janelaInicio = 0.1, double janelaFim = 0.9);
+                                                 double janelaInicio = 0.1, double janelaFim = 0.9,
+                                                 matriz::app::CancelamentoPtr cancelamento = nullptr);
+
+// Reconhece somente o JPEG exato do placeholder antigo (320x180), arquivo ausente ou vazio.
+// Usado em background para recuperar miniaturas de vídeo que antes eram indexadas como sucesso.
+bool miniaturaVideoPrecisaSerRegenerada(const juce::File& miniatura);
 
 struct FormaDeOnda {
     double duracaoSegundos = 0.0;

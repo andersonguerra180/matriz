@@ -32,6 +32,7 @@
 #include "Ingest/LeituraTecnica.h"
 #include "Ingest/Loudness.h"
 #include "Ingest/Miniaturas.h"
+#include "Ingest/ProcessoExterno.h"
 #include "Ingest/PainelInconsistencias.h"
 #include "Ui/OriginalSourceMedium.h"
 #include "Ingest/CacheArquivo.h"
@@ -241,6 +242,57 @@ void testarMiniaturas(const juce::File& dir) {
         check(kfs.front().dimensao.largura == 160, "the keyframe respects the requested width (160px)");
     } catch (const std::exception& e) {
         check(false, std::string("video keyframes: ") + e.what());
+    }
+
+    // MOV: formato de alta profundidade (ProRes), orientação vertical, caminhos Unicode/espaços e duração ausente.
+    try {
+        using namespace matriz::ingest;
+        const auto mov = dir.getChildFile(juce::String::fromUTF8("vídeo retrato.MOV"));
+        rodarEsperandoSucesso("ffmpeg", {"-f", "lavfi", "-i", "color=c=red:s=240x320:r=2:d=1",
+                                         "-c:v", "prores_ks", "-threads", "1", "-profile:v", "3",
+                                         "-pix_fmt", "yuv422p10le", mov.getFullPathName()}, 30000);
+        auto frames = gerarKeyframesVideo(mov, 0.0, 1, dir.getChildFile("mov_frames"), "portrait", 160, true);
+        const auto img = juce::ImageFileFormat::loadFrom(frames.front().arquivo);
+        check(img.isValid() && img.getHeight() > img.getWidth() && img.getWidth() == 160,
+              "MOV ProRes without duration produces a real portrait thumbnail");
+        check(frames.front().dimensao.altura == img.getHeight(), "MOV keyframe records the actual aspect ratio");
+        check(img.getPixelAt(img.getWidth() / 2, img.getHeight() / 2).getRed() > 180,
+              "MOV thumbnail contains decoded video pixels, not a placeholder");
+
+        const auto pasta = dir.getChildFile("mov_project");
+        pasta.createDirectory();
+        matriz::db::Database indice(pasta.getChildFile("indice.sqlite").getFullPathName().toStdString());
+        indice.run("CREATE TABLE miniatura (id TEXT, item_id TEXT, arquivo_id TEXT, tipo TEXT, caminho_relativo TEXT, "
+                    "largura INTEGER, altura INTEGER, gerado_em TEXT)", {});
+        gerarEGravarMiniaturaPrincipal(indice, pasta, "mov-item", "mov-file", mov, CategoriaMidia::Video, std::nullopt);
+        auto st = indice.prepare("SELECT caminho_relativo FROM miniatura WHERE item_id = 'mov-item'");
+        check(st.step() && pasta.getChildFile(matriz::caminhos::doBanco(st.columnText(0))).existsAsFile(),
+              "MOV without known duration is indexed for INTAKE and METADATA");
+        check(!miniaturaVideoPrecisaSerRegenerada(frames.front().arquivo), "real MOV frame is preserved by legacy repair");
+        const auto legado = dir.getChildFile("legacy-placeholder.jpg");
+        {
+            juce::Image img(juce::Image::RGB, 320, 180, true);
+            juce::Graphics g(img);
+            g.fillAll(juce::Colour(0xff2d2d32));
+            g.setColour(juce::Colour(0xff3c3c44));
+            g.fillRect(138, 68, 45, 45);
+            gravarJpeg(img, legado);
+        }
+        check(miniaturaVideoPrecisaSerRegenerada(legado), "exact legacy video placeholder is retried");
+        const auto invalido = dir.getChildFile("invalid.mov");
+        invalido.replaceWithText("invalid video");
+        gerarEGravarMiniaturaPrincipal(indice, pasta, "invalid-item", "invalid-file", invalido, CategoriaMidia::Video, 1.0);
+        auto falha = indice.prepare("SELECT COUNT(*) FROM miniatura WHERE item_id = 'invalid-item'");
+        check(falha.step() && falha.columnInt(0) == 0,
+              "failed video extraction does not index a placeholder and can be retried");
+        auto cancelamento = matriz::app::novoCancelamento();
+        cancelamento->pedir();
+        bool cancelou = false;
+        try { gerarKeyframesVideo(mov, 1.0, 1, dir, "cancelled", 160, true, 0.1, 0.9, cancelamento); }
+        catch (const std::exception&) { cancelou = true; }
+        check(cancelou && !dir.getChildFile("cancelled_0000.jpg").existsAsFile(), "MOV extraction honors cancellation");
+    } catch (const std::exception& e) {
+        check(false, std::string("MOV thumbnails: ") + e.what());
     }
 
     juce::File tomAudio = dir.getChildFile("tom_forma_onda.wav");
@@ -3358,7 +3410,7 @@ void testarFiltroPhoneDump() {
     check(!V::itemIsPhoneDump("", "", ""), "Phone Dump: item comum NÃO entra no filtro");
 }
 
-int main() {
+int main(int argc, char** argv) {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
         return 1;
@@ -3367,6 +3419,12 @@ int main() {
     juce::File tmpDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
                             .getChildFile("matriz_ingest_selftest_" + juce::Uuid().toDashedString());
     tmpDir.createDirectory();
+
+    if (argc > 1 && std::string(argv[1]) == "--miniaturas-only") {
+        testarMiniaturas(tmpDir);
+        tmpDir.deleteRecursively();
+        return failures == 0 ? 0 : 1;
+    }
 
     testarCategoriaPorExtensao();
     testarCategoriaSemExtensaoPorAssinatura(tmpDir);

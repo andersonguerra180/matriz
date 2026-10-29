@@ -3036,9 +3036,13 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
     auto pasta = projeto_->pasta();
 
     std::set<std::string> comMiniatura;
+    std::map<std::string, std::string> caminhosMiniaturas;
     {
-        auto stmt = idx.prepare("SELECT DISTINCT item_id FROM miniatura WHERE tipo = 'miniatura'");
-        while (stmt.step()) comMiniatura.insert(stmt.columnText(0));
+        auto stmt = idx.prepare("SELECT item_id, caminho_relativo FROM miniatura WHERE tipo = 'miniatura' ORDER BY gerado_em DESC");
+        while (stmt.step()) {
+            comMiniatura.insert(stmt.columnText(0));
+            caminhosMiniaturas.emplace(stmt.columnText(0), stmt.columnText(1));
+        }
     }
     DBG("gerarMiniaturasFaltantes: " + juce::String((int)comMiniatura.size()) + " itens já têm miniatura");
 
@@ -3065,13 +3069,20 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
     int gerados = 0, pulados = 0;
     while (stmt.step()) {
         std::string itemId = stmt.columnText(0);
-        if (comMiniatura.count(itemId) || jaProcessados.count(itemId)) continue;
-        jaProcessados.insert(itemId);
+        if (jaProcessados.count(itemId)) continue;
 
         std::string arquivoId = stmt.columnText(1);
         std::string jsonTecnico = stmt.columnText(2);
         juce::File arq = matriz::vault::caminhoEsperado(pasta, stmt.columnText(3),
                                                          stmt.columnText(4), stmt.columnText(5));
+        const auto cat = matriz::ingest::categoriaPorExtensao(arq);
+        if (comMiniatura.count(itemId)) {
+            if (cat != matriz::ingest::CategoriaMidia::Video ||
+                !matriz::ingest::miniaturaVideoPrecisaSerRegenerada(
+                    matriz::caminhos::resolverDoBanco(pasta, caminhosMiniaturas.at(itemId))))
+                continue;
+        }
+        jaProcessados.insert(itemId);
         if (totalFaltando > 0) {
             const juce::uint32 agora = juce::Time::getMillisecondCounter();
             if (agora - ultimoAviso >= 250) {
@@ -3084,7 +3095,6 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
         }
         if (!arq.existsAsFile()) { ++pulados; continue; }
 
-        auto cat = matriz::ingest::categoriaPorExtensao(arq);
         if (cat != matriz::ingest::CategoriaMidia::Video &&
             cat != matriz::ingest::CategoriaMidia::Audio &&
             cat != matriz::ingest::CategoriaMidia::Imagem &&
