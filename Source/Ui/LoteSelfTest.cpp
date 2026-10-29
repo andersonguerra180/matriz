@@ -3215,7 +3215,10 @@ int rodarDuplicatasResultadosSelfTest() {
                 auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output");
                 dir.createDirectory();
                 juce::FileOutputStream out(dir.getChildFile("duplicatas_filtros.png"));
-                if (out.openedOk()) png.writeImageToStream(filtros.createComponentSnapshot(filtros.getLocalBounds()), out);
+                if (out.openedOk()) {
+                    out.setPosition(0); out.truncate();
+                    png.writeImageToStream(filtros.createComponentSnapshot(filtros.getLocalBounds()), out);
+                }
             }
             filtros.aplicarEscolhaGlobal(1);
             esperarAte([&] { return filtros.gruposDetectados_.size() == 2; });

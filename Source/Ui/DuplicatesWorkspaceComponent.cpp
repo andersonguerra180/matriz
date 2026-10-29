@@ -139,6 +139,38 @@ namespace {
                                                matriz::i18n::t("duplicatas.falha_corpo"), {}, nullptr,
                                                juce::ModalCallbackFunction::create([](int) {}));
     }
+    // Barra de progresso global (rodapé + modal do app) de um lote de Validate/Dismiss. O corpo da resolução roda no
+    // job de fundo; ProgressoGlobal é seguro entre threads, e as atualizações são espaçadas para não inundar a message thread.
+    class ProgressoLote {
+    public:
+        ProgressoLote(const char* chaveTitulo, int total, bool ativo) : total_(total), ativo_(ativo && total > 0) {
+            if (!ativo_) return;
+            ProgressoGlobal::obterInstancia().iniciarTarefa(kId, matriz::i18n::t(chaveTitulo), total_, nullptr,
+                                                            detalhe(0));
+        }
+        void avancar(int feitos) {
+            if (!ativo_) return;
+            const auto agora = juce::Time::getMillisecondCounter();
+            if (feitos > 0 && agora - ultimo_ < 80) return;
+            ultimo_ = agora;
+            ProgressoGlobal::obterInstancia().atualizarProgresso(kId, feitos, detalhe(feitos));
+        }
+        void concluir(bool ok) {
+            if (!ativo_) return;
+            ProgressoGlobal::obterInstancia().concluirTarefa(
+                kId, ok ? matriz::i18n::t("duplicatas.progresso_ok").replace("{n}", juce::String(total_))
+                        : matriz::i18n::t("duplicatas.progresso_falhou"));
+        }
+    private:
+        static constexpr const char* kId = "duplicates_resolve";
+        juce::String detalhe(int feitos) const {
+            return matriz::i18n::t("duplicatas.progresso_detalhe").replace("{i}", juce::String(feitos)).replace("{n}", juce::String(total_));
+        }
+        int total_;
+        bool ativo_;
+        juce::uint32 ultimo_ = 0;
+    };
+
     // Texto do que sobrou depois de uma decisão em lote: parecidos (pHash) são decisão olhando; empate/sem backup é outro motivo.
     template <class V> juce::String textoManuais(const V& gs) {
         const int previstos = contarPrevistos(gs);
@@ -3139,35 +3171,46 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
             isPt ? juce::String::fromUTF8("Não") : "No", this);
         if (!confirm) return;
 
-        auto& db = projeto_.projeto().registro();
-        try {
-            db.run("BEGIN TRANSACTION", {});
-            for (const auto& group : gruposDetectados_) {
-                if (!passaFiltroResultado(group) || (ehPrevisto(group) && !todas)) continue;  // só decisão manual (sem a preferência de lote em todas)
+        // Em background (barra de progresso + Undo); a lista só muda quando a gravação conclui.
+        std::vector<DuplicateGroup> alvo, restantes;
+        std::vector<std::string> ids;
+        for (const auto& group : gruposDetectados_) {
+            if (passaFiltroResultado(group) && (todas || !ehPrevisto(group))) {  // só decisão manual (sem a preferência de lote em todas)
+                alvo.push_back(group);
+                ids.push_back(group.duplicata.itemId);
+            } else {
+                restantes.push_back(group);
+            }
+        }
+        auto progresso = std::make_shared<ProgressoLote>("duplicatas.progresso_ignorar", static_cast<int>(alvo.size()), !projeto_.somenteLeitura());
+        juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
+        projeto_.resolverDuplicatasEmSegundoPlano(ids, [alvo, progresso](matriz::db::Database& db) {
+            int feitos = 0;
+            for (const auto& group : alvo) {
+                progresso->avancar(feitos++);
                 acrescentarNota(db, group.duplicata.itemId,
                                 "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
-            db.run("COMMIT", {});
-        } catch (...) {
-            try { db.run("ROLLBACK", {}); } catch (...) {}
-        }
-
-        gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
-                                               [this, todas](const DuplicateGroup& g) { return passaFiltroResultado(g) && (todas || !ehPrevisto(g)); }),
-                                gruposDetectados_.end());
-        if (!gruposDetectados_.empty()) {  // sobraram só PROVÁVEIS: continuam na lista
-            listaComponent_->updateList(gruposDetectados_);
-            lblStatus_->setText(textoManuais(gruposDetectados_), juce::dontSendNotification);
-            resized();
-            repaint();
-            return;
-        }
-        estado_ = estadoSemDuplicatas();
-        listaComponent_->updateList(gruposDetectados_);
-        lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
-        viewport_->setVisible(false);
-        resized();
-        repaint();
+            return std::vector<ProjetoAberto::ResultadoSanitizacao>{};
+        }, [safeThis, progresso, restantes](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao>) {
+            progresso->concluir(ok);
+            if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
+            safeThis->gruposDetectados_ = restantes;
+            if (!safeThis->gruposDetectados_.empty()) {  // sobraram só PROVÁVEIS: continuam na lista
+                safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
+                safeThis->lblStatus_->setText(textoManuais(safeThis->gruposDetectados_), juce::dontSendNotification);
+                safeThis->resized();
+                safeThis->repaint();
+                return;
+            }
+            safeThis->estado_ = safeThis->estadoSemDuplicatas();
+            safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
+            safeThis->lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+            safeThis->viewport_->setVisible(false);
+            safeThis->resized();
+            safeThis->repaint();
+        }, "Dismiss Duplicates");
         return;
     }
 
@@ -3226,10 +3269,13 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
         ids.push_back(g.duplicata.itemId);
     }
     auto paraDecisaoManual = std::make_shared<std::vector<DuplicateGroup>>();  // critério não se aplica / empate (etapa 9)
+    auto progresso = std::make_shared<ProgressoLote>("duplicatas.progresso_validar", static_cast<int>(grupos.size()), !projeto_.somenteLeitura());
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
-    projeto_.resolverDuplicatasEmSegundoPlano(ids, [grupos, escolha, paraDecisaoManual](matriz::db::Database& db) {
+    projeto_.resolverDuplicatasEmSegundoPlano(ids, [grupos, escolha, paraDecisaoManual, progresso](matriz::db::Database& db) {
         std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+        int feitos = 0;
         for (const auto& grupo : grupos) {
+            progresso->avancar(feitos++);
             const auto& group = grupo;
             int escolhaDoGrupo = escolha;
             if (escolha == 6) {  // maior resolução: o lado com mais pixels; sem dimensões ou empate => decisão manual
@@ -3260,7 +3306,8 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
             }
         }
         return resultados;
-    }, [safeThis, ids, paraDecisaoManual, provaveis](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+    }, [safeThis, ids, paraDecisaoManual, provaveis, progresso](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+        progresso->concluir(ok);
         if (!safeThis) return;
             if (!ok) { avisarFalhaResolucao(); return; }
         publicarSanitizacoes(safeThis->projeto_, resultados, ids);
@@ -3330,24 +3377,40 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
             this);
         if (!confirm) return;
 
-        auto& db = projeto_.projeto().registro();
-        try {
-            db.run("BEGIN TRANSACTION", {});
-            for (int idx : indices) {
-                if (idx < 0 || idx >= static_cast<int>(gruposDetectados_.size())) continue;
-                const auto& group = gruposDetectados_[static_cast<size_t>(idx)];
+        // Em background (barra de progresso + Undo); a lista só muda quando a gravação conclui.
+        std::vector<DuplicateGroup> alvo;
+        std::vector<std::string> ids;
+        for (int idx : indices) {
+            if (idx < 0 || idx >= static_cast<int>(gruposDetectados_.size())) continue;
+            alvo.push_back(gruposDetectados_[static_cast<size_t>(idx)]);
+            ids.push_back(alvo.back().duplicata.itemId);
+        }
+        if (alvo.empty()) return;
+        auto progresso = std::make_shared<ProgressoLote>("duplicatas.progresso_ignorar", static_cast<int>(alvo.size()), !projeto_.somenteLeitura());
+        juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
+        projeto_.resolverDuplicatasEmSegundoPlano(ids, [alvo, progresso](matriz::db::Database& db) {
+            int feitos = 0;
+            for (const auto& group : alvo) {
+                progresso->avancar(feitos++);
                 acrescentarNota(db, group.duplicata.itemId,
                                 "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
-            db.run("COMMIT", {});
-        } catch (...) {
-            try { db.run("ROLLBACK", {}); } catch (...) {}
-        }
-
-        for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
-            gruposDetectados_.erase(gruposDetectados_.begin() + *it);
-        }
-        atualizarListaEStatusAposResolucao();
+            return std::vector<ProjetoAberto::ResultadoSanitizacao>{};
+        }, [safeThis, progresso, alvo](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao>) {
+            progresso->concluir(ok);
+            if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
+            // Pelo par (não pelo índice): a lista pode ter mudado enquanto isto rodava.
+            auto& grupos = safeThis->gruposDetectados_;
+            for (const auto& group : alvo) {
+                grupos.erase(std::remove_if(grupos.begin(), grupos.end(), [&](const DuplicateGroup& g) {
+                                 return g.original.itemId == group.original.itemId &&
+                                        g.duplicata.itemId == group.duplicata.itemId;
+                             }),
+                             grupos.end());
+            }
+            safeThis->atualizarListaEStatusAposResolucao();
+        }, "Dismiss Duplicates");
         return;
     }
 
@@ -3400,9 +3463,12 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
                 ids.push_back(group.original.itemId);
                 ids.push_back(group.duplicata.itemId);
             }
-            safeThis->projeto_.resolverDuplicatasEmSegundoPlano(ids, [escolhas](matriz::db::Database& db) {
+            auto progresso = std::make_shared<ProgressoLote>("duplicatas.progresso_validar", static_cast<int>(escolhas.size()), !safeThis->projeto_.somenteLeitura());
+            safeThis->projeto_.resolverDuplicatasEmSegundoPlano(ids, [escolhas, progresso](matriz::db::Database& db) {
                 std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+                int feitos = 0;
                 for (const auto& [group, action] : escolhas) {
+                    progresso->avancar(feitos++);
 
                     if (action == 0) { // Keep File 1 — o outro fica só no SOURCE, fora do backup
                         resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.original.itemId, group.duplicata.itemId));
@@ -3415,7 +3481,8 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
                     }
                 }
                 return resultados;
-            }, [safeThis, ids, escolhas](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+            }, [safeThis, ids, escolhas, progresso](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+                progresso->concluir(ok);
                 if (!safeThis) return;
             if (!ok) { avisarFalhaResolucao(); return; }
                 publicarSanitizacoes(safeThis->projeto_, resultados, ids);
