@@ -836,7 +836,20 @@ private:
                 // Badge / Header text
                 g.setColour(juce::Colours::black);
                 g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-                juce::String headerTag = "#" + juce::String(m.ordemChegada) + "/" + juce::String(m.totalRelacionados);
+                // Esquerda = ARQUIVO 1, direita = ARQUIVO 2, sempre (é o que MANTER ARQUIVO 1/2 age). A ordem de ingestão
+                // dentro do conjunto de relacionados (#2/3) é outra coisa e vai como etiqueta menor, depois.
+                const juce::String rotuloLado = matriz::i18n::t(isDup ? "duplicatas.lado_arquivo2" : "duplicatas.lado_arquivo1");
+                const juce::Font fonteLado(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold));
+                const int larguraLado = juce::GlyphArrangement::getStringWidthInt(fonteLado, rotuloLado) + 14;
+                g.setColour(juce::Colours::black);
+                g.fillRoundedRectangle(static_cast<float>(x + 6), static_cast<float>(y + 3), static_cast<float>(larguraLado), 18.0f, 4.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(fonteLado);
+                g.drawText(rotuloLado, x + 6, y + 3, larguraLado, 18, juce::Justification::centred);
+                g.setColour(juce::Colours::black);
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+                juce::String headerTag = matriz::i18n::t("duplicatas.ordem_ingestao")
+                                             .replace("{a}", juce::String(m.ordemChegada)).replace("{b}", juce::String(m.totalRelacionados));
                 if (!m.collectionNome.empty()) {
                     headerTag << " \u00B7 " << juce::String(m.collectionNome).toUpperCase();
                 }
@@ -864,7 +877,7 @@ private:
                         larguraSelo += 6;
                     }
                 }
-                g.drawText(headerTag, x + 8, y + 2, subWidth - 16 - larguraSelo, 20, juce::Justification::centredLeft, true);
+                g.drawText(headerTag, x + 6 + larguraLado + 8, y + 2, subWidth - 14 - larguraLado - 8 - larguraSelo, 20, juce::Justification::centredLeft, true);
 
                 // 4. Miniatura grande: ocupa toda a altura do sub-card abaixo
                 // da faixa do cabeçalho, colada à esquerda; as informações
@@ -946,6 +959,11 @@ private:
                                                           : juce::String::formatted("%.1f KB", kb);
                 linhaInfo(matriz::i18n::t("duplicatas.file_size"), tamanho,
                           m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
+
+                if (m.outrosPares > 0)
+                    linhaInfo(matriz::i18n::t("duplicatas.tambem_em"),
+                              matriz::i18n::t("duplicatas.outros_pares").replace("{n}", juce::String(m.outrosPares)),
+                              juce::Colour(0xfff59e0b));
 
                 // Caminho no rodapé, até 2 linhas.
                 const int rodapeY = y + subHeight - 36;
@@ -2764,10 +2782,13 @@ void DuplicatesWorkspaceComponent::run() {
         });
         for (size_t i = 0; i < ids.size(); ++i) numeracao[ids[i]] = {static_cast<int>(i + 1), static_cast<int>(ids.size())};
     }
+    std::map<std::string, int> paresPorMembro;
+    for (auto& grupo : gruposDetectados_) for (auto* m : {&grupo.original, &grupo.duplicata}) ++paresPorMembro[chaveMembro(*m)];
     for (auto& grupo : gruposDetectados_) for (auto* m : {&grupo.original, &grupo.duplicata}) {
         const auto n = numeracao.at(chaveMembro(*m));
         m->ordemChegada = n.first;
         m->totalRelacionados = n.second;
+        m->outrosPares = paresPorMembro.at(chaveMembro(*m)) - 1;
     }
     progressoScan_ = 1.0;
 }

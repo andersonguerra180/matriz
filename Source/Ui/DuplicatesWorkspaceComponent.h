@@ -50,6 +50,7 @@ private:
     struct DuplicateMatch {
         int ordemChegada = 0;
         int totalRelacionados = 0;
+        int outrosPares = 0;  // em quantos OUTROS pares da lista este arquivo também aparece (3º arquivo do conjunto)
         std::string criadoEm;
         std::string itemId;
         std::string codigoAcervo;

@@ -106,12 +106,16 @@ public:
 
         int tx = 10;
         int ty = getHeight() / 2 - kThumbSize / 2;
+        // Par de miniaturas (DUPLICATES): 1 = esquerda = ARQUIVO 1, 2 = direita = ARQUIVO 2.
+        const bool par = entry_.imagemA.isValid() && entry_.imagemB.isValid();
         if (entry_.imagemA.isValid()) {
             desenharThumb(g, entry_.imagemA, tx, ty);
+            if (par) desenharNumero(g, "1", tx, ty);
             tx += kThumbSize + kThumbGap;
         }
         if (entry_.imagemB.isValid()) {
             desenharThumb(g, entry_.imagemB, tx, ty);
+            if (par) desenharNumero(g, "2", tx, ty);
         }
     }
 
@@ -157,6 +161,14 @@ private:
         g.drawImageWithin(img, x, y, kThumbSize, kThumbSize, juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
         g.setColour(tk.borda.withAlpha(0.8f));
         g.drawRect(r, 1);
+    }
+
+    void desenharNumero(juce::Graphics& g, const juce::String& numero, int x, int y) {
+        g.setColour(juce::Colours::black.withAlpha(0.85f));
+        g.fillRoundedRectangle(static_cast<float>(x + 3), static_cast<float>(y + 3), 20.0f, 20.0f, 4.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
+        g.drawText(numero, x + 3, y + 3, 20, 20, juce::Justification::centred);
     }
 
     DuplicateResolutionDialog::Entry& entry_;
