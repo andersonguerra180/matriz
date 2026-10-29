@@ -2611,7 +2611,22 @@ void DuplicatesWorkspaceComponent::run() {
             return assinaturaDe.emplace(idx, s).first->second;
         };
         static const int kLarg[11] = {6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5};
-        for (int faixa = 0, desloc = 0; faixa < 11; desloc += kLarg[faixa], ++faixa) {
+        // Critérios se somam (E), nunca um apaga o outro. Com SHA-256 marcado só valem pares de mesmo SHA (já gerados em
+        // B2): o pHash vira filtro sobre eles — sai o par com imagem que não gerou pHash (arquivo que não é imagem não é
+        // vetado, o pHash não se aplica) — e a busca por similaridade abaixo não gera par novo (par parecido mas de SHA
+        // diferente não cumpre o SHA).
+        const bool shaLigado = activeFilters_.coincidirSha256;
+        if (shaLigado) {
+            std::unordered_set<std::string> imagemSemHash;
+            for (auto i : imagens)
+                if (!phashDe.count(items[i].arquivoId)) imagemSemHash.insert(items[i].itemId);
+            gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                [&](const DuplicateGroup& g) {
+                    return g.criterio == "IDENTICAL" && (imagemSemHash.count(g.original.itemId) || imagemSemHash.count(g.duplicata.itemId));
+                }), gruposDetectados_.end());
+            achadosScan_ = static_cast<int>(gruposDetectados_.size());
+        }
+        for (int faixa = 0, desloc = 0; faixa < (shaLigado ? 0 : 11); desloc += kLarg[faixa], ++faixa) {
             if (threadShouldExit()) return;
             progressoScan_ = 0.9 + 0.1 * static_cast<double>(faixa) / 11.0;
             std::unordered_map<uint32_t, std::vector<size_t>> baldes;
@@ -2630,9 +2645,6 @@ void DuplicatesWorkspaceComponent::run() {
                         const auto& b = items[cb.idx];
                         const auto chave = chavePar(a.itemId, b.itemId);
                         if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
-                        // Mesmo SHA-256 = IDENTICAL, nunca PROBABLE (com 3+ cópias o par B-C não está no "em estrela" acima).
-                        if (!a.sha256.empty() && a.sha256 == b.sha256) continue;
-
                         if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
                         if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
                         if (activeFilters_.coincidirTamanho && a.tamanhoBytes > 0 && b.tamanhoBytes > 0 && a.tamanhoBytes != b.tamanhoBytes) continue;
@@ -2721,8 +2733,9 @@ void DuplicatesWorkspaceComponent::run() {
                               gruposDetectados_.end(), [](const DuplicateGroup& g) { return g.criterio == "PROBABLE"; });
         }
 
-        // ---- B4: Mesmo nome de arquivo (quando coincidirNome está ativo)
-        if (activeFilters_.coincidirNome) {
+        // ---- B4: Mesmo nome de arquivo — só quando o nome é o ÚNICO critério. Com SHA-256 e/ou pHash marcados o nome é
+        // filtro dessas buscas (B2/B3 já exigem nome igual); gerar aqui pares só de nome faria um critério somar ao outro.
+        if (activeFilters_.coincidirNome && !activeFilters_.coincidirSha256 && !activeFilters_.coincidirPHash) {
             std::unordered_map<std::string, std::vector<size_t>> porNome;
             for (size_t i = 0; i < items.size(); ++i) {
                 if (!items[i].titulo.empty()) {
