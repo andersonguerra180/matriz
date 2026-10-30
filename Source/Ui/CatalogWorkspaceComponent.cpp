@@ -310,6 +310,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
     mosaico_->aoAbrirPreview = [this](const std::string& itemId) { abrirWorkbench(itemId); };
     mosaico_->aoAbrirRelinkOffline = [this](const std::string& itemId) { abrirRelinkOffline(itemId); };
+    mosaico_->aoAbrirJanelaDoContainer = [this](const std::string& nestId, const juce::String& nome) {
+        if (aoAbrirJanelaDoContainer) aoAbrirJanelaDoContainer(nestId, nome);
+    };
     mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> itemIds) {
         abrirMenuContexto(std::move(itemIds));
     };

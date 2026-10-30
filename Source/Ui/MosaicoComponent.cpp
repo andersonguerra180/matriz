@@ -5,6 +5,7 @@
 #include "../Model/CaminhosBanco.h"
 #include "LogosTipoArquivo.h"
 #include "ContainerVisual.h"
+#include "TiposContainer.h"
 #include "../Whatsapp/WhatsappIngestao.h"
 
 #include "../Ficha/FichaI18n.h"
@@ -865,6 +866,12 @@ void MosaicoComponent::definirFiltroItens(std::optional<std::set<std::string>> i
     else aplicarFiltrosEOrdenacao();
 }
 
+void MosaicoComponent::definirAgruparNests(bool agrupar) {
+    if (agruparNests_ == agrupar) return;
+    agruparNests_ = agrupar;
+    aplicarFiltrosEOrdenacao();
+}
+
 void MosaicoComponent::definirSubpastas(std::vector<SubpastaInfo> subpastas) {
     subpastas_ = std::move(subpastas);
     recalcularLayout();
@@ -1263,7 +1270,7 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
 
     // NEST: cada nest vira UMA célula — a capa. Se a busca/filtro só achou outro arquivo do nest, a célula é
     // esse arquivo (o nest "aberto" nele): o arquivo nunca some da busca. Os demais membros ficam escondidos.
-    {
+    if (agruparNests_) {
         std::map<std::string, size_t> representante;  // nestId -> posição em `saida`
         std::vector<uint32_t> saida;
         saida.reserve(indices.size());
@@ -2298,7 +2305,13 @@ void MosaicoComponent::mouseDoubleClick(const juce::MouseEvent& e) {
     }
 
     // Container com player próprio (DDP = player de CD): abre o player em vez do preview do 1º arquivo.
-    if (item.nestTotal > 1 && !item.nestOrigem.empty() && abrirContainerPorTipo(projeto_, item.nestId, item.nestOrigem)) return;
+    if (agruparNests_ && item.nestTotal > 1 && !item.nestOrigem.empty() && abrirContainerPorTipo(projeto_, item.nestId, item.nestOrigem)) return;
+    // Container sem player: a janela dele, com as pastas de origem.
+    if (agruparNests_ && item.nestTotal > 1 && item.nestOrigem == kOrigemContainerGenerico && aoAbrirJanelaDoContainer) {
+        aoAbrirJanelaDoContainer(item.nestId, item.nestNome.empty() ? juce::String::fromUTF8(item.titulo.c_str())
+                                                                    : juce::String::fromUTF8(item.nestNome.c_str()));
+        return;
+    }
 
     if (aoAbrirPreview) aoAbrirPreview(item.id);
 }

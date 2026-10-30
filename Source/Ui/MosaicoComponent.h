@@ -323,6 +323,11 @@ public:
     std::function<void(const std::string& itemId)> aoAbrirPreview;
     // Double click on offline item opens relink dialog instead of normal preview player
     std::function<void(const std::string& itemId)> aoAbrirRelinkOffline;
+    // Duplo clique num CONTAINER sem player ("Group as Project Container" / PRODUCTION PACKAGE): abre a janela do container
+    // (pastas de origem navegáveis). Sem o callback, abre o preview da capa como antes.
+    std::function<void(const std::string& nestId, const juce::String& nome)> aoAbrirJanelaDoContainer;
+    // false = cada membro de NEST é uma célula (janela do próprio container); true (padrão) = o nest vira UMA célula, a capa.
+    void definirAgruparNests(bool agrupar);
     // Estado vazio inteiro é clicável, além de alvo de drop (§3.2) — abre o
     // mesmo seletor de arquivo/pasta que o botão "Add material".
     std::function<void()> aoClicarEstadoVazio;
@@ -562,6 +567,7 @@ private:
     std::set<std::string> selecaoAntesDoClique_;
 
     std::vector<SubpastaInfo> subpastas_;
+    bool agruparNests_ = true;
 
     ModoVisao modoVisao_ = ModoVisao::Grade;
     TamanhoCelula tamanhoCelula_ = TamanhoCelula::Medio;

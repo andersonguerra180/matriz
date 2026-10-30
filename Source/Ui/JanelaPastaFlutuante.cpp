@@ -50,6 +50,7 @@ public:
         mosaico_->aoAbrirPreview = [this](const std::string& id) { abrirPreview(id); };
         mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> ids) { abrirMenu(std::move(ids)); };
         mosaico_->aoMudarSelecao = [this] { aoMudarSelecao(); };
+        if (!nestId_.empty()) mosaico_->definirAgruparNests(false);  // container: cada arquivo é uma célula, não a pilha do nest
         if (!nestId_.empty())  // card de subpasta do container: entra nela
             mosaico_->aoNavegarParaSubpasta = [this](const SubpastaInfo& sub) { entrarNaPasta(sub.id, sub.nome); };
         mosaico_->aoMudarConteudoVisivel = [this] {
@@ -286,9 +287,17 @@ private:
         ProjetoAberto* proj = &projeto_;
         poolSemPasta_.addJob([seguro, proj, nest = nestId_, geracao] {
             ProjetoAberto::NoArvore arvore;
-            try { arvore = proj->arvoreDoContainer(nest); } catch (...) { arvore.id = nest; }
-            juce::MessageManager::callAsync([seguro, geracao, arvore = std::move(arvore)]() mutable {
+            bool noIntake = false;  // container ainda no INTAKE: os arquivos estão em quarentena (a grade normal não os lista)
+            try {
+                arvore = proj->arvoreDoContainer(nest);
+                auto st = proj->projeto().registroLeitura().prepare(
+                    "SELECT COUNT(*) FROM nest_item ni JOIN item i ON i.id = ni.item_id WHERE ni.nest_id = ? AND COALESCE(i.em_quarentena, 0) = 1");
+                st.bind(1, matriz::db::Value::of(nest));
+                noIntake = st.step() && st.columnInt(0) > 0;
+            } catch (...) { arvore.id = nest; }
+            juce::MessageManager::callAsync([seguro, geracao, noIntake, arvore = std::move(arvore)]() mutable {
                 if (seguro == nullptr || geracao != seguro->geracaoSemPasta_.load()) return;
+                seguro->mosaico_->definirModoQuarentena(noIntake);
                 seguro->mostrarPastaDoContainer(std::move(arvore));
             });
         });

@@ -2544,6 +2544,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
             it.containerNestId = item.nestId;
             it.containerCapaCaminho = juce::String::fromUTF8(item.nestCapaImagem.c_str());
             it.containerIcone = juce::String::fromUTF8(item.nestIcone.c_str());
+            it.containerNome = juce::String::fromUTF8(item.nestNome.c_str());
             if (item.nestOrigem != "whatsapp") it.nomeArquivo = (item.nestNome.empty() ? rotuloDaOrigem(it.containerOrigem) : juce::String::fromUTF8(item.nestNome.c_str())) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
                              i18n::t("intake.container_arquivos").replace("{n}", juce::String(item.nestTotal));
             it.titulo = it.nomeArquivo;
@@ -3537,6 +3538,11 @@ void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
 
 void IntakeWorkspaceComponent::abrirPreviewDoItem(const std::string& itemId) {
     if (itemId.empty()) return;
+    for (const auto& it : todosItens_)  // container sem player: a janela dele, com as pastas de origem
+        if (it.id == itemId && itemEhContainer(it) && it.containerOrigem == kOrigemContainerGenerico && aoAbrirJanelaDoContainer) {
+            aoAbrirJanelaDoContainer(it.containerNestId, it.containerNome.isNotEmpty() ? it.containerNome : it.nomeArquivo);
+            return;
+        }
     for (const auto& it : todosItens_)  // container de importação: duplo clique abre o grid de miniaturas (não o preview)
         if (it.id == itemId && itemEhContainer(it) && it.containerOrigem != "whatsapp" && it.containerOrigem != "youtube" &&
             (!ehOrigemProject(it.containerOrigem) || it.containerOrigem == "ddp")) { abrirGridDoContainer(itemId); return; }  // WhatsApp abre a conversa; YouTube, vinil, fita e produção abrem a janela do projeto (preview com a capa); DDP, o player de CD

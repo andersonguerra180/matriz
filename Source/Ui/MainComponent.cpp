@@ -1830,6 +1830,7 @@ void MainComponent::mostrarIntake() {
     if (!intakeWorkspace_) {
         intakeWorkspace_ = std::make_unique<IntakeWorkspaceComponent>(*projetoAberto_);
         intakeWorkspace_->aoPedirIngerirArquivos = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
+        intakeWorkspace_->aoAbrirJanelaDoContainer = [this](const std::string& nestId, const juce::String& nome) { abrirJanelaDoContainer(nestId, nome); };
         intakeWorkspace_->aoIngerirArquivosDireto = [this](const juce::Array<juce::File>& arqs) {
             ingerirArquivos(arqs);
         };
@@ -1905,6 +1906,7 @@ void MainComponent::mostrarGrid() {
     if (!catalogWorkspace_) {
         catalogWorkspace_ = std::make_unique<CatalogWorkspaceComponent>(*projetoAberto_);
         catalogWorkspace_->aoEditarProjeto = [this](const std::string& nestId, const std::string& origem) { editarProjetoDoContainer(nestId, origem); };
+        catalogWorkspace_->aoAbrirJanelaDoContainer = [this](const std::string& nestId, const juce::String& nome) { abrirJanelaDoContainer(nestId, nome); };
         catalogWorkspace_->obterOverlay = [this]() -> PainelOverlay* { return overlay_.estaAberto() ? nullptr : &overlay_; };
         catalogWorkspace_->aoAbrirDuplicatas = [this] { mostrarDuplicates(); };
         catalogWorkspace_->definirResultadoDuplicatas(resultadoDuplicatas_);

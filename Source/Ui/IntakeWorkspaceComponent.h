@@ -77,6 +77,8 @@ public:
 
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void(const juce::Array<juce::File>&)> aoIngerirArquivosDireto;
+    // Duplo clique num container sem player ("projeto"): a janela do container, com as pastas de origem navegáveis.
+    std::function<void(const std::string& nestId, const juce::String& nome)> aoAbrirJanelaDoContainer;
     // Importação escolhida na janela IMPORT: os arquivos entram com o contexto do card (CONTENT, source medium, tags).
     std::function<void(const juce::Array<juce::File>&, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoIngerirComContexto;
     // Avisa de onde vem a PRÓXIMA ingestão (ex.: "gallery"): vira um container no Intake. Chamado antes de aoIngerirArquivosDireto.
@@ -136,6 +138,7 @@ private:
         std::string containerNestId;
         juce::String containerCapaCaminho;  // imagem da capa do container (vinil, fita); vazio = sem capa própria
         juce::String containerIcone;        // ícone escolhido na ficha (DAW da produção); vazio = ícone da origem
+        juce::String containerNome;         // nest.nome; vazio = sem nome próprio
     };
     bool itemEhContainer(const ItemIntake& it) const { return it.containerNestId.size() > 0; }
     void abrirGridDoContainer(const std::string& itemId);
