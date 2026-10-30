@@ -50,6 +50,8 @@ public:
         mosaico_->aoAbrirPreview = [this](const std::string& id) { abrirPreview(id); };
         mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> ids) { abrirMenu(std::move(ids)); };
         mosaico_->aoMudarSelecao = [this] { aoMudarSelecao(); };
+        if (!nestId_.empty())  // card de subpasta do container: entra nela
+            mosaico_->aoNavegarParaSubpasta = [this](const SubpastaInfo& sub) { entrarNaPasta(sub.id, sub.nome); };
         mosaico_->aoMudarConteudoVisivel = [this] {
             atualizarContagem();
             if (aguardandoCarga_) {  // a grade terminou de carregar: agora as contagens dos filtros (só desta pasta) são calculáveis
@@ -205,17 +207,7 @@ public:
     void recarregarItens() {
         ids_.clear();
         const ProjetoAberto::NoArvore* noRaiz = nullptr;
-        if (!nestId_.empty()) {  // container: só os arquivos dele
-            for (const auto& id : projeto_.membrosDoNest(nestId_)) ids_.insert(id);
-            ProjetoAberto::NoArvore soRaiz;
-            soRaiz.id = nestId_;
-            soRaiz.nome = nome_;
-            soRaiz.itemIds = ids_;
-            lblTitulo_.setText(nome_, juce::dontSendNotification);
-            construirArvore(soRaiz);
-            carregarGrade();
-            return;
-        }
+        if (!nestId_.empty()) { recarregarContainer(); return; }
         if (semPasta_) { recarregarSemPasta(); return; }
         try {
             std::string mapa = projeto_.mapaSelecionadoNoFolderMap();
@@ -285,6 +277,45 @@ private:
         });
     }
 
+    // CONTAINER: as pastas de origem dos membros, como no Finder — a grade mostra as subpastas (cards) e os arquivos que estão
+    // direto na pasta atual; duplo clique entra, VOLTAR/ESC sobe. A árvore é lida fora da message thread.
+    void recarregarContainer() {
+        lblTitulo_.setText(nome_, juce::dontSendNotification);
+        const int geracao = ++geracaoSemPasta_;
+        juce::Component::SafePointer<Conteudo> seguro(this);
+        ProjetoAberto* proj = &projeto_;
+        poolSemPasta_.addJob([seguro, proj, nest = nestId_, geracao] {
+            ProjetoAberto::NoArvore arvore;
+            try { arvore = proj->arvoreDoContainer(nest); } catch (...) { arvore.id = nest; }
+            juce::MessageManager::callAsync([seguro, geracao, arvore = std::move(arvore)]() mutable {
+                if (seguro == nullptr || geracao != seguro->geracaoSemPasta_.load()) return;
+                seguro->mostrarPastaDoContainer(std::move(arvore));
+            });
+        });
+    }
+
+    void mostrarPastaDoContainer(ProjetoAberto::NoArvore arvore) {
+        arvoreDoMapa_ = std::move(arvore);
+        const auto* atual = acharNo(arvoreDoMapa_, pastaId_);
+        if (atual == nullptr) atual = &arvoreDoMapa_;  // pastaId de quem abriu não é nó do container: a raiz
+        ProjetoAberto::NoArvore no = *atual;
+        no.nome = nome_;  // a raiz não tem nome no disco: vale o do container (nas subpastas, nome_ já é o da pasta)
+        std::vector<SubpastaInfo> subpastas;
+        for (const auto& f : no.filhos) {
+            SubpastaInfo s;
+            s.id = f.id;
+            s.nome = f.nome;
+            coletarIdsRecursivos(f, s.itemIds);
+            s.quantidade = static_cast<int>(s.itemIds.size());
+            subpastas.push_back(std::move(s));
+        }
+        // Sem subpastas a grade é a de sempre (todos os membros); com elas, só os arquivos que estão direto nesta pasta.
+        ids_ = no.filhos.empty() ? no.itemIds : no.itemIdsDiretos;
+        mosaico_->definirSubpastas(std::move(subpastas));
+        construirArvore(no);
+        carregarGrade();
+    }
+
     // REJECT MARKED (`_no folder`): os arquivos desta pasta marcados com R vão para o _trash do mapa (de lá, RESTORE os traz de
     // volta) e perdem a marca R. As marcas são lidas da memória (sem banco).
     void rejeitarMarcados() {
@@ -347,7 +378,11 @@ private:
             g.setColour(tk.textoTerciario);
             g.drawText(juce::String(static_cast<int>(ids_.size())), w - 48, 0, 42, h, juce::Justification::centredRight, false);
         }
-        void itemClicked(const juce::MouseEvent&) override { dono_.aoSelecionarSubpasta(ids_); }
+        void itemClicked(const juce::MouseEvent&) override {
+            // No container a grade só carrega a pasta atual: clicar numa subpasta entra nela (como a barra lateral do Finder).
+            if (!raiz_ && !dono_.nestId_.empty()) { dono_.entrarNaPasta(no_.id, no_.nome); return; }
+            dono_.aoSelecionarSubpasta(ids_);
+        }
         void itemDoubleClicked(const juce::MouseEvent&) override { if (!raiz_) dono_.entrarNaPasta(no_.id, no_.nome); }
         juce::String getUniqueName() const override { return juce::String(no_.id); }
 
@@ -371,7 +406,7 @@ private:
     }
 
     void entrarNaPasta(const std::string& id, const juce::String& nome) {
-        if (id.empty()) return;
+        if (id.empty() || id == pastaId_) return;  // clique + duplo clique no mesmo nó: entra uma vez só
         historico_.emplace_back(pastaId_, nome_);
         pastaId_ = id;
         nome_ = nome;

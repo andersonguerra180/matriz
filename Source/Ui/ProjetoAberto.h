@@ -1081,6 +1081,10 @@ public:
     // A capa passa a ser `itemId`; as marcas P/K/H/W da capa antiga acompanham (EXPORT leva só a capa).
     void definirCapaDoNest(const std::string& nestId, const std::string& itemId);
     std::vector<std::string> membrosDoNest(const std::string& nestId) const;  // por data (o mais antigo primeiro)
+    // Pastas de origem dos membros do CONTAINER (arquivo.caminho_absoluto_origem), a partir da pasta em comum: a raiz (id = nestId)
+    // tem os arquivos que estão direto nela e cada subpasta vira um nó com o mesmo nome do disco. Membro sem caminho de origem
+    // fica na raiz. Só leitura (nada é gravado); pode rodar fora da message thread.
+    NoArvore arvoreDoContainer(const std::string& nestId) const;
     std::vector<std::string> ordenarPorDataDeCriacao(const std::vector<std::string>& itemIds) const;
     std::optional<NestInfo> nestDoItem(const std::string& itemId) const;
     // EXPORT / ZIP / HTML / Print / Watermark: de cada NEST comum sai só a capa (tira dos ids os membros que não são capa).

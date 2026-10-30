@@ -287,6 +287,51 @@ void rodarTestesGradeConsistente(const Checar& checar) {
     raiz.deleteRecursively();
 }
 
+// CONTAINER com pasta importada: as subpastas de origem viram nós (sub-containers) com os nomes do disco.
+void rodarTestesArvoreDoContainer(const Checar& checar) {
+    std::cout << "\n-- Container: folder tree from the original folders --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_arvore_container_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Arvore";
+        params.prefixoNomenclatura = "ARV";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const juce::File origem = raiz.getChildFile("Podcast");
+        auto comOrigem = [&](const std::string& codigo, const juce::File& arquivo) {
+            const std::string id = inserirItem(reg, projetoId, codigo, false, ".wav");
+            reg.run("UPDATE arquivo SET caminho_absoluto_origem = ? WHERE item_id = ?",
+                    {matriz::db::Value::of(arquivo.getFullPathName().toStdString()), matriz::db::Value::of(id)});
+            return id;
+        };
+        const std::string capa = comOrigem("ARV-1", origem.getChildFile("cover.wav"));
+        const std::string ep1 = comOrigem("ARV-2", origem.getChildFile("Ep 01").getChildFile("mic1.wav"));
+        const std::string ep1b = comOrigem("ARV-3", origem.getChildFile("Ep 01").getChildFile("Raw").getChildFile("mic2.wav"));
+        const std::string ep2 = comOrigem("ARV-4", origem.getChildFile("Ep 02").getChildFile("mix.wav"));
+        const std::string semCaminho = inserirItem(reg, projetoId, "ARV-5", false, ".wav");
+        const std::string nest = pa.criarContainerImportacao({capa, ep1, ep1b, ep2, semCaminho}, "projeto");
+        checar(!nest.empty(), "container with 5 files exists");
+        const auto arvore = pa.arvoreDoContainer(nest);
+        checar(arvore.id == nest && arvore.itemIds.size() == 5, "root is the container and holds all 5 files");
+        checar(arvore.itemIdsDiretos == std::set<std::string>{capa, semCaminho},
+               "root shows the file of the common folder and the one with no origin path");
+        checar(arvore.filhos.size() == 2 && arvore.filhos[0].nome == "Ep 01" && arvore.filhos[1].nome == "Ep 02",
+               "each subfolder becomes a sub-container with the original name");
+        if (arvore.filhos.size() == 2) {
+            const auto& e1 = arvore.filhos[0];
+            checar(e1.itemIdsDiretos == std::set<std::string>{ep1} && e1.itemIds.size() == 2 && e1.filhos.size() == 1 &&
+                       e1.filhos[0].nome == "Raw" && e1.filhos[0].itemIdsDiretos == std::set<std::string>{ep1b},
+                   "nested subfolders keep the original hierarchy");
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("container tree selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
 // Auditoria do UNDO (docs/auditoria_undo_2026-10-24.md): cada ação que gravava sem entrar na pilha agora volta.
 void rodarTestesUndoAuditoria(const Checar& checar) {
     std::cout << "\n-- UNDO audit: actions that used to write without Undo --\n";
@@ -7361,6 +7406,7 @@ int rodarLoteSelfTest() {
     rodarTestesUndoPersistente(checar);
     rodarTestesUndoPersistenteFase2(checar);
     rodarTestesNomesCanonicos(checar);
+    rodarTestesArvoreDoContainer(checar);
     rodarTestesPacote(checar);
     rodarSnapshotsFicha();
     rodarTestesMerge(checar);

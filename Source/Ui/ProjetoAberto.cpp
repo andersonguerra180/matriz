@@ -6366,6 +6366,54 @@ std::vector<std::string> ProjetoAberto::membrosDoNest(const std::string& nestId)
     return ordenarPorDataDeCriacao(ids);
 }
 
+ProjetoAberto::NoArvore ProjetoAberto::arvoreDoContainer(const std::string& nestId) const {
+    NoArvore vazia;
+    vazia.id = nestId;
+    if (!projeto_ || nestId.empty()) return vazia;
+    struct Par { std::string itemId; juce::StringArray segmentos; };
+    std::vector<Par> comCaminho;
+    std::set<std::string> semCaminho;
+    auto st = leitura().prepare(
+        "SELECT ni.item_id, (SELECT a.caminho_absoluto_origem FROM arquivo a WHERE a.item_id = ni.item_id "
+        "ORDER BY a.eh_master DESC, a.id LIMIT 1) FROM nest_item ni WHERE ni.nest_id = ?");
+    st.bind(1, matriz::db::Value::of(nestId));
+    while (st.step()) {
+        const juce::String caminho(st.columnText(1));
+        if (caminho.isEmpty()) { semCaminho.insert(st.columnText(0)); continue; }
+        Par p;
+        p.itemId = st.columnText(0);
+        p.segmentos.addTokens(juce::File(caminho).getParentDirectory().getFullPathName(), juce::File::getSeparatorString(), "");
+        p.segmentos.removeEmptyStrings();
+        comCaminho.push_back(std::move(p));
+    }
+    // Pasta em comum (prefixo de segmentos): ela é o próprio container; o que estiver abaixo vira subpasta.
+    int prefixoComum = comCaminho.empty() ? 0 : comCaminho[0].segmentos.size();
+    for (size_t i = 1; i < comCaminho.size(); ++i) {
+        const int n = juce::jmin(prefixoComum, comCaminho[i].segmentos.size());
+        int iguais = 0;
+        while (iguais < n && comCaminho[0].segmentos[iguais] == comCaminho[i].segmentos[iguais]) ++iguais;
+        prefixoComum = iguais;
+    }
+    NoBuilder raiz;
+    raiz.id = nestId;
+    raiz.itemIdsDiretos = semCaminho;
+    for (const auto& p : comCaminho) {
+        NoBuilder* atual = &raiz;
+        juce::String caminhoAcumulado;
+        for (int s = prefixoComum; s < p.segmentos.size(); ++s) {
+            caminhoAcumulado += (caminhoAcumulado.isEmpty() ? "" : "/") + p.segmentos[s];
+            NoBuilder* filho = obterOuCriarFilhoPorNome(*atual, p.segmentos[s]);
+            if (filho->id.empty()) {
+                filho->id = "container:" + nestId + ":" + caminhoAcumulado.toStdString();
+                filho->pastaPaiId = atual->id;
+            }
+            atual = filho;
+        }
+        atual->itemIdsDiretos.insert(p.itemId);
+    }
+    return materializar(raiz, true);
+}
+
 std::optional<ProjetoAberto::NestInfo> ProjetoAberto::nestDoItem(const std::string& itemId) const {
     if (!projeto_ || itemId.empty()) return std::nullopt;
     auto st = leitura().prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
