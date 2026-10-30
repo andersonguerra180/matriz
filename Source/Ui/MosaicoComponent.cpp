@@ -1005,7 +1005,10 @@ MosaicoComponent::TextosCelula MosaicoComponent::calcularTextos(const ItemResumo
     t.categoria = categoriaDaLista(item.extensaoArquivo);
     t.categoriaMaiuscula = t.categoria.toUpperCase();
 
-    if (item.duracaoSegundos.has_value() && *item.duracaoSegundos > 0.0) {
+    // Duração só em áudio e vídeo (o ffprobe dá ~0,04 s a uma foto, que aparecia como "00:00").
+    const auto categoriaMidia = matriz::ingest::categoriaPorExtensao(juce::String(item.extensaoArquivo));
+    const bool temDuracao = categoriaMidia == matriz::ingest::CategoriaMidia::Audio || categoriaMidia == matriz::ingest::CategoriaMidia::Video;
+    if (temDuracao && item.duracaoSegundos.has_value() && *item.duracaoSegundos > 0.0) {
         int total = static_cast<int>(*item.duracaoSegundos + 0.5);
         int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
         if (h > 0)
@@ -2306,8 +2309,8 @@ void MosaicoComponent::mouseDoubleClick(const juce::MouseEvent& e) {
 
     // Container com player próprio (DDP = player de CD): abre o player em vez do preview do 1º arquivo.
     if (agruparNests_ && item.nestTotal > 1 && !item.nestOrigem.empty() && abrirContainerPorTipo(projeto_, item.nestId, item.nestOrigem)) return;
-    // Container sem player: a janela dele, com as pastas de origem.
-    if (agruparNests_ && item.nestTotal > 1 && item.nestOrigem == kOrigemContainerGenerico && aoAbrirJanelaDoContainer) {
+    // PROJECT (produção, YouTube, vinil, fita, tipos sem player): a janela do container, com as pastas de origem.
+    if (agruparNests_ && item.nestTotal > 1 && abreNaJanelaDoContainer(juce::String(item.nestOrigem)) && aoAbrirJanelaDoContainer) {
         aoAbrirJanelaDoContainer(item.nestId, item.nestNome.empty() ? juce::String::fromUTF8(item.titulo.c_str())
                                                                     : juce::String::fromUTF8(item.nestNome.c_str()));
         return;
@@ -2760,7 +2763,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     juce::String nome = tx.nome;
                     g.setColour(tk.textoPrimario);
                     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-                    if (item.nestTotal > 1) {  // NEST / container: o nome ganha o número de arquivos do grupo
+                    const bool emGrupo = agruparNests_ && item.nestTotal > 1;  // janela do container: cada arquivo é ele mesmo
+                    if (emGrupo) {  // NEST / container: o nome ganha o número de arquivos do grupo
                         const juce::String tag = item.nestOrigem.empty()
                                                      ? "  [NEST " + juce::String(item.nestTotal) + "]"
                                                      : "  [" + i18n::t("intake.container_" + juce::String::fromUTF8(item.nestOrigem.c_str())).toUpperCase() + " " + juce::String(item.nestTotal) + "]";
@@ -2864,7 +2868,11 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             juce::Rectangle<int> areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
             // CONTAINER (nest com origem: DDP, produção, vinil, fita, YouTube): ícone grande do tipo ou a capa, não o 1º arquivo.
             const juce::String origemContainer = juce::String::fromUTF8(item.nestOrigem.c_str());
-            const bool containerGrafico = item.nestTotal > 1 && ehContainerGrafico(origemContainer);
+            // Na janela do próprio container (agruparNests_ = false) cada membro é ele mesmo: miniatura própria, sem pilha nem
+            // contagem do grupo; só a tag PROJECT diz que ele faz parte de um.
+            const bool emGrupo = agruparNests_ && item.nestTotal > 1;
+            const bool membroDeProject = !agruparNests_ && item.nestTotal > 1 && ehOrigemProject(origemContainer);
+            const bool containerGrafico = emGrupo && ehContainerGrafico(origemContainer);
             const juce::Image* img = containerGrafico ? nullptr : miniaturaCache(item.id);
             if (containerGrafico) {
                 g.setColour(tk.painelAlt);
@@ -2898,7 +2906,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
             // NEST: duas linhas "empilhadas" saindo do cartão (direita/baixo) e o selo com o número de arquivos.
             // (Container não: o ícone/capa dele já é o desenho de "vários arquivos juntos".)
-            if (item.nestTotal > 1 && !containerGrafico) {
+            if (emGrupo && !containerGrafico) {
                 g.setColour(juce::Colour(0xffe11d48).withAlpha(0.85f));
                 for (int off : {3, 6}) {
                     g.drawLine((float) bounds.getRight() + off, (float) bounds.getY() + off + 2,
@@ -2925,7 +2933,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
             // Extension badge (top-left). Num container PROJECT a extensão não serve para nada: no lugar dela vai a tag PROJECT.
             const juce::String& ext = tx.extensao;
-            if (containerGrafico && ehOrigemProject(origemContainer)) {
+            if ((containerGrafico && ehOrigemProject(origemContainer)) || membroDeProject) {
                 const juce::String rotulo = i18n::t("projeto.tag");
                 const int badgeW = juce::jmax(52, static_cast<int>(rotulo.length()) * 7 + 12);
                 const juce::Rectangle<int> tag(areaImagem.getX() + 4, areaImagem.getY() + 4, badgeW, 16);
@@ -2956,7 +2964,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                         : item.etapaProducao == "MSTR" ? juce::Colour(0xff8b5cf6) : juce::Colour(0xff22a06b);
                 const juce::String rotuloEtapa = juce::String(item.etapaProducao);
                 const int w = juce::jmax(34, static_cast<int>(rotuloEtapa.length()) * 8 + 12);
-                juce::Rectangle<int> selo(areaImagem.getX() + 8, areaImagem.getY() + ((ext.isNotEmpty() || (containerGrafico && ehOrigemProject(origemContainer))) ? 30 : 8), w, 18);
+                juce::Rectangle<int> selo(areaImagem.getX() + 8, areaImagem.getY() + ((ext.isNotEmpty() || (containerGrafico && ehOrigemProject(origemContainer)) || membroDeProject) ? 30 : 8), w, 18);
                 g.setColour(corEtapa);
                 g.fillRoundedRectangle(selo.toFloat(), 9.0f);
                 g.setColour(juce::Colours::white);
@@ -2978,7 +2986,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (durText.isNotEmpty()) {
                 int badgeW = juce::jmax(36, static_cast<int>(durText.length()) * 7 + 8);
                 int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - badgeW - 4);
-                if (item.nestTotal > 1 && !modoQuarentena_) badgeX -= 20;  // abre espaço para o selo "N" do nest
+                if (emGrupo && !modoQuarentena_) badgeX -= 20;  // abre espaço para o selo "N" do nest
                 juce::Rectangle<int> durBadge(badgeX, areaImagem.getBottom() - 20, badgeW, 16);
                 g.setColour(juce::Colour(0xcc000000));
                 g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
@@ -2988,7 +2996,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             // NEST: selo "N" vermelho no canto inferior direito — mesmo padrão dos selos H/K/P/W (16x16, raio 3, fonte 9 bold).
-            if (item.nestTotal > 1 && containerGrafico) {
+            if (emGrupo && containerGrafico) {
                 // Container: contagem de arquivos em pílula escura (mesmo desenho do INTAKE), sem o "N" de nest.
                 const juce::String n(item.nestTotal);
                 const int w = juce::jmax(22, juce::GlyphArrangement::getStringWidthInt(font9Bold, n) + 10);
@@ -2998,7 +3006,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(tk.textoSobreAcento);
                 g.setFont(font9Bold);
                 g.drawText(n, contagem, juce::Justification::centred);
-            } else if (item.nestTotal > 1) {
+            } else if (emGrupo) {
                 juce::Rectangle<int> stampN(areaImagem.getRight() - 4 - 16, areaImagem.getBottom() - 4 - 16, 16, 16);
                 g.setColour(juce::Colour(0xffe11d48));
                 g.fillRoundedRectangle(stampN.toFloat(), 3.0f);
@@ -3008,7 +3016,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             // Container x NEST x arquivo avulso: contorno + rótulo próprios (container = cor de destaque, NEST = rosa).
-            if (item.nestTotal > 1) {
+            if (emGrupo) {
                 const auto corGrupo = containerGrafico ? tk.acento : juce::Colour(0xffe11d48);
                 g.setColour(corGrupo);
                 g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), kRaioCardGrade, 2.5f);
