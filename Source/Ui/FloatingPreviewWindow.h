@@ -79,7 +79,8 @@ public:
         // Moldura do sistema de janelas: sem barra nativa; o cabeçalho (título + X) é desenhado pela JanelaMoldura.
         setUsingNativeTitleBar(false);
         setTitleBarHeight(0);
-        setResizable(true, true);
+        setResizable(true, false);  // borda invisível: o canto de redimensionar do JUCE aparecia fora do cartão
+        moldura::deixarJanelaTransparente(*this);
 
         auto display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
         auto displayArea = display != nullptr ? display->userBounds.toNearestInt() : juce::Rectangle<int>(0, 0, 1920, 1080);

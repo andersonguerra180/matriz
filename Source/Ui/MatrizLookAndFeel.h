@@ -28,6 +28,11 @@ public:
 
     juce::Typeface::Ptr getTypefaceForFont(const juce::Font& font) override;
 
+    // Janelas da moldura (fundo transparente, ver moldura::deixarJanelaTransparente): nada de contorno retangular nem da
+    // moldura fina do redimensionador do JUCE em volta do cartão arredondado.
+    void drawResizableWindowBorder(juce::Graphics&, int w, int h, const juce::BorderSize<int>& border, juce::ResizableWindow&) override;
+    void drawResizableFrame(juce::Graphics&, int w, int h, const juce::BorderSize<int>& border) override;
+
     // Redesenho tablet: botões pílula (raio = metade da altura), campos e combos
     // com raio 12, slider em pílula. Cores sempre vindas de tema().
     void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour& backgroundColour,

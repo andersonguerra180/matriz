@@ -16,8 +16,8 @@ public:
         // Moldura do sistema de janelas: sem barra nativa; cabeçalho + X redondo desenhados pela JanelaMoldura.
         setUsingNativeTitleBar(false);
         setTitleBarHeight(0);
-        setBackgroundColour(moldura::paleta().fundo);
-        setResizable(true, true);
+        moldura::deixarJanelaTransparente(*this);
+        setResizable(true, false);
         setResizeLimits(900 + 2 * moldura::kMargemJanelaNativa, 560 + moldura::kAlturaCabecalho + 2 * moldura::kMargemJanelaNativa,
                         4000, 3000);
         setContentOwned(new moldura::JanelaMoldura(&conteudo, moldura::Secao::Explorador, "Metadata", titulo, true, false), false);

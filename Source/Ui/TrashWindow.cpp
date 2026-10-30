@@ -456,8 +456,8 @@ TrashWindow::TrashWindow(ProjetoAberto& projeto, const std::string& mapaId, std:
     // Moldura do sistema de janelas: sem barra nativa; cabeçalho + X redondo desenhados pela JanelaMoldura.
     setUsingNativeTitleBar(false);
     setTitleBarHeight(0);
-    setBackgroundColour(moldura::paleta().fundo);
-    setResizable(true, true);
+    moldura::deixarJanelaTransparente(*this);
+    setResizable(true, false);
     setResizeLimits(500 + 2 * moldura::kMargemJanelaNativa, 360 + moldura::kAlturaCabecalho + 2 * moldura::kMargemJanelaNativa,
                     1200, 900);
     conteudo_ = std::make_unique<Conteudo>(projeto, mapaId, std::move(aoRestaurar));

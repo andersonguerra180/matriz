@@ -222,6 +222,14 @@ juce::Typeface::Ptr MatrizLookAndFeel::getTypefaceForFont(const juce::Font& font
     return LookAndFeel_V4::getTypefaceForFont(font);  // fallback: fonte do sistema
 }
 
+void MatrizLookAndFeel::drawResizableWindowBorder(juce::Graphics& g, int w, int h, const juce::BorderSize<int>& border,
+                                                  juce::ResizableWindow& janela) {
+    if (janela.getBackgroundColour().isTransparent()) return;
+    LookAndFeel_V4::drawResizableWindowBorder(g, w, h, border, janela);
+}
+
+void MatrizLookAndFeel::drawResizableFrame(juce::Graphics&, int, int, const juce::BorderSize<int>&) {}
+
 juce::Font MatrizLookAndFeel::getAlertWindowTitleFont() { return fonteUi(tema().tamanhoFonteTitulo, juce::Font::bold); }
 juce::Font MatrizLookAndFeel::getAlertWindowMessageFont() { return fonteUi(tema().tamanhoFonteCorpo); }
 juce::Font MatrizLookAndFeel::getAlertWindowFont() { return fonteUi(tema().tamanhoFonteCorpo, juce::Font::bold); }

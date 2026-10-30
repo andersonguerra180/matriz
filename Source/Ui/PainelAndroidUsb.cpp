@@ -632,6 +632,7 @@ public:
         setUsingNativeTitleBar(false);
         setTitleBarHeight(0);
         setResizable(true, false);
+        moldura::deixarJanelaTransparente(*this);
         preview_ = new Preview(c);
         setContentOwned(new moldura::JanelaMoldura(preview_, moldura::Secao::Explorador, "Phone", t("cel.usb.preview.titulo")), true);
         setResizeLimits(640, 420, 4000, 3000);
@@ -1530,6 +1531,7 @@ JanelaAndroidUsb::JanelaAndroidUsb(std::function<ConjuntoExistentes()> existente
     setUsingNativeTitleBar(false);
     setTitleBarHeight(0);
     setResizable(true, false);
+    moldura::deixarJanelaTransparente(*this);
     auto* conteudo = new Conteudo(std::move(existentes), std::move(aoImportar), std::move(aoFechar));
     conteudo_ = conteudo;
     setContentOwned(new moldura::JanelaMoldura(conteudo, moldura::Secao::Explorador, "Phone Dump", t("cel.usb.titulo")), true);

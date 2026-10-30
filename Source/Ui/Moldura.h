@@ -226,6 +226,14 @@ inline void deixarJanelaTransparente(juce::DialogWindow& dw) {
     dw.setDropShadowEnabled(false);
 }
 
+// Mesma coisa para as janelas DocumentWindow que hospedam uma JanelaMoldura (preview, pasta, _trash, duplicatas, Android USB):
+// fundo transparente e sem sombra do sistema, senão aparece o retângulo bege (e os cantos pretos) atrás do cartão. O moldura
+// fino e o canto de redimensionar do JUCE também não são desenhados numa janela transparente (MatrizLookAndFeel).
+inline void deixarJanelaTransparente(juce::DocumentWindow& w) {
+    w.setBackgroundColour(juce::Colours::transparentBlack);
+    w.setDropShadowEnabled(false);
+}
+
 // Abre `conteudo` numa janela própria no estilo da moldura (sem barra de título; o cabeçalho é da moldura).
 inline juce::DialogWindow* abrirJanela(juce::Component* conteudoNovo, const juce::String& titulo, bool modal = false) {
     juce::DialogWindow::LaunchOptions opt;
