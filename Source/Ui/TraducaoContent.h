@@ -34,6 +34,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Demo", "Demo"},
         {"Demo Tape", "Demo"},  // valor antigo: lido como Demo
         {"Raw Audio", juce::String::fromUTF8("Áudio Bruto")},
+        {"Podcast", "Podcast"},
         {"Live Concert", "Concerto ao Vivo"},
         {"VS", "VS"},
         {"Impulse Response", "Resposta ao Impulso (IR)"},

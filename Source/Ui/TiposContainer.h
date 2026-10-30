@@ -16,7 +16,7 @@ namespace matriz::ui {
 
 class ProjetoAberto;
 
-enum class CategoriaContainer { Video, Audio, Image, Docs, Outro };
+enum class CategoriaContainer { Video, Audio, Image, Docs, Podcast, Acervo, Outro };
 // Lista de CONTENT (collection_type) a que o valor pertence: so os arquivos dessa categoria de midia o recebem.
 enum class CategoriaConteudo { Nenhuma, Video, Audio, Image, Docs };
 

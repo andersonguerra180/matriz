@@ -338,6 +338,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Demo", "Demo"},
         {"Demo Tape", "Demo"},  // valor antigo: lido como Demo
         {"Raw Audio", juce::String::fromUTF8("Áudio Bruto")},
+        {"Podcast", "Podcast"},
         {"Live Concert", "Concerto ao Vivo"},
         {"VS", "VS"},
         {"Impulse Response", "Resposta ao Impulso (IR)"},
@@ -432,11 +433,11 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     if (cat == MediaCategory::Audio) {
         keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
                 "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-                "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Raw Audio"};
+                "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Raw Audio", "Podcast"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                 "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
-                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial", "CCTV (Security Camera)"};
+                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial", "CCTV (Security Camera)", "Podcast"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
                 "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "360 Photo", "Technical Photography", "Document"};

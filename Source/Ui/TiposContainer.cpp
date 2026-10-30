@@ -44,6 +44,19 @@ const std::vector<TipoContainer>& tiposDeContainer() {
     { "doc.contract", CategoriaContainer::Docs, "tipoc.doc.contract", "", "Contract", CategoriaConteudo::Docs, "ci_doc_digital_native_png" },
     { "doc.technical", CategoriaContainer::Docs, "tipoc.doc.technical", "", "Technical Documentation", CategoriaConteudo::Docs, "ci_doc_digital_native_png" },
     { "doc.project_documentation", CategoriaContainer::Docs, "tipoc.doc.project_documentation", "", "Documentation", CategoriaConteudo::Docs, "ci_doc_digital_native_png" },
+    { "podcast.audio", CategoriaContainer::Podcast, "tipoc.podcast.audio", "", "Podcast", CategoriaConteudo::Audio, "ci_aud_voice_over_png" },
+    { "podcast.video", CategoriaContainer::Podcast, "tipoc.podcast.video", "", "Podcast", CategoriaConteudo::Video, "ci_vid_native_digital_png" },
+    { "podcast.session", CategoriaContainer::Podcast, "tipoc.podcast.session", "", "Podcast", CategoriaConteudo::Audio, "ci_aud_music_production_png" },
+    { "podcast.assets", CategoriaContainer::Podcast, "tipoc.podcast.assets", "", "", CategoriaConteudo::Nenhuma, "ci_doc_other_png" },
+    // Acervo multimídia: misturam mídias, então não gravam CONTENT.
+    { "archive.historical", CategoriaContainer::Acervo, "tipoc.archive.historical", "", "", CategoriaConteudo::Nenhuma, "ci_doc_scanned_png" },
+    { "archive.documentary", CategoriaContainer::Acervo, "tipoc.archive.documentary", "", "", CategoriaConteudo::Nenhuma, "ci_doc_scanned_png" },
+    { "archive.environmental", CategoriaContainer::Acervo, "tipoc.archive.environmental", "", "", CategoriaConteudo::Nenhuma, "ci_aud_field_recording_png" },
+    { "archive.art_collection", CategoriaContainer::Acervo, "tipoc.archive.art_collection", "", "", CategoriaConteudo::Nenhuma, "ci_foto_computer_folder_png" },
+    { "archive.museum", CategoriaContainer::Acervo, "tipoc.archive.museum", "", "", CategoriaConteudo::Nenhuma, "ci_arm_other_png" },
+    { "archive.exhibition", CategoriaContainer::Acervo, "tipoc.archive.exhibition", "", "", CategoriaConteudo::Nenhuma, "ci_foto_computer_folder_png" },
+    { "archive.oral_history", CategoriaContainer::Acervo, "tipoc.archive.oral_history", "", "", CategoriaConteudo::Nenhuma, "ci_aud_voice_memo_png" },
+    { "archive.digitization", CategoriaContainer::Acervo, "tipoc.archive.digitization", "", "", CategoriaConteudo::Nenhuma, "ci_arm_external_hdd_png" },
     { "other.branding", CategoriaContainer::Outro, "tipoc.other.branding", "", "", CategoriaConteudo::Nenhuma, "ci_doc_other_png" },
     { "other.marketing", CategoriaContainer::Outro, "tipoc.other.marketing", "", "", CategoriaConteudo::Nenhuma, "ci_doc_other_png" },
     };
@@ -75,6 +88,8 @@ juce::String rotuloDaCategoriaContainer(CategoriaContainer c) {
         case CategoriaContainer::Audio: return matriz::i18n::t("tipoc.cat.audio");
         case CategoriaContainer::Image: return matriz::i18n::t("tipoc.cat.image");
         case CategoriaContainer::Docs:  return matriz::i18n::t("tipoc.cat.docs");
+        case CategoriaContainer::Podcast: return matriz::i18n::t("tipoc.cat.podcast");
+        case CategoriaContainer::Acervo:  return matriz::i18n::t("tipoc.cat.acervo");
         case CategoriaContainer::Outro: break;
     }
     return matriz::i18n::t("tipoc.cat.outro");
@@ -164,7 +179,8 @@ constexpr int kBotaoConfirmar = 1;
 // Ordem das categorias no dialogo: a dominante na selecao primeiro, as outras logo abaixo.
 std::vector<CategoriaContainer> ordemDasCategorias(CategoriaContainer dominante) {
     std::vector<CategoriaContainer> ordem{ dominante };
-    for (auto c : { CategoriaContainer::Video, CategoriaContainer::Audio, CategoriaContainer::Image, CategoriaContainer::Docs, CategoriaContainer::Outro })
+    for (auto c : { CategoriaContainer::Video, CategoriaContainer::Audio, CategoriaContainer::Image, CategoriaContainer::Docs, CategoriaContainer::Podcast,
+                   CategoriaContainer::Acervo, CategoriaContainer::Outro })
         if (c != dominante) ordem.push_back(c);
     return ordem;
 }
