@@ -42,6 +42,16 @@ namespace matriz::ui {
 
 namespace {
 
+// Container no INTAKE: só a capa aparece, e editar a capa vale para todos os arquivos dele. `nests` sai da lista em memória
+// (message thread); os membros são lidos aqui, já dentro do job de gravação.
+std::vector<std::string> comMembrosDosContainers(ProjetoAberto& projeto, std::vector<std::string> ids, const std::set<std::string>& nests) {
+    std::set<std::string> ja(ids.begin(), ids.end());
+    for (const auto& n : nests)
+        for (const auto& m : projeto.membrosDoNest(n))
+            if (ja.insert(m).second) ids.push_back(m);
+    return ids;
+}
+
 enum ColumnId {
     kColSelect = 1,
     kColType = 2,
@@ -2926,8 +2936,8 @@ void IntakeWorkspaceComponent::aplicarColecaoAosSelecionados(const juce::String&
     if (!ids.empty()) {
         ProjetoAberto* projeto = &projeto_;
         std::string colecaoStd = colecao.toStdString();
-        poolMetadadoLote_.addJob([projeto, ids, colecaoStd] {
-            projeto->salvarMetadadoEmLote(ids, {{"collection_type", colecaoStd}});
+        poolMetadadoLote_.addJob([projeto, ids, colecaoStd, nests = containersDosIds(ids)] {
+            projeto->salvarMetadadoEmLote(comMembrosDosContainers(*projeto, ids, nests), {{"collection_type", colecaoStd}});
         });
     }
 
@@ -2938,6 +2948,25 @@ void IntakeWorkspaceComponent::aplicarColecaoAosSelecionados(const juce::String&
 
 void IntakeWorkspaceComponent::definirColecaoItem(const std::string& itemId, const juce::String& colecao) {
     projeto_.salvarMetadado(itemId, "collection_type", colecao.toStdString());
+    gravarNosMembrosDoContainer(itemId, "collection_type", colecao.toStdString());
+}
+
+// Capa de container editada numa célula: os demais arquivos dele recebem o mesmo valor (fora da message thread, uma transação).
+void IntakeWorkspaceComponent::gravarNosMembrosDoContainer(const std::string& itemId, const std::string& coluna, const std::string& valor) {
+    const auto nests = containersDosIds({itemId});
+    if (nests.empty()) return;
+    ProjetoAberto* projeto = &projeto_;
+    poolMetadadoLote_.addJob([projeto, nests, coluna, valor] {
+        projeto->salvarMetadadoEmLote(comMembrosDosContainers(*projeto, {}, nests), {{coluna, valor}});
+    });
+}
+
+std::set<std::string> IntakeWorkspaceComponent::containersDosIds(const std::vector<std::string>& ids) const {
+    std::set<std::string> nests;
+    const std::set<std::string> procurados(ids.begin(), ids.end());
+    for (const auto& it : todosItens_)
+        if (itemEhContainer(it) && procurados.count(it.id) != 0) nests.insert(it.containerNestId);
+    return nests;
 }
 
 void IntakeWorkspaceComponent::aplicarOriginalSourceMediumAosSelecionados(const std::string& sourceMediaJson) {
@@ -2955,8 +2984,8 @@ void IntakeWorkspaceComponent::aplicarOriginalSourceMediumAosSelecionados(const 
     if (!ids.empty()) {
         ProjetoAberto* projeto = &projeto_;
         std::string valorStd = sourceMediaJson;
-        poolMetadadoLote_.addJob([projeto, ids, valorStd] {
-            projeto->salvarMetadadoEmLote(ids, {{"source_media", valorStd}});
+        poolMetadadoLote_.addJob([projeto, ids, valorStd, nests = containersDosIds(ids)] {
+            projeto->salvarMetadadoEmLote(comMembrosDosContainers(*projeto, ids, nests), {{"source_media", valorStd}});
         });
     }
     if (tabela_) tabela_->repaint();
@@ -2965,6 +2994,7 @@ void IntakeWorkspaceComponent::aplicarOriginalSourceMediumAosSelecionados(const 
 
 void IntakeWorkspaceComponent::definirSourceMediaItem(const std::string& itemId, const std::string& sourceMediaJson) {
     projeto_.salvarMetadado(itemId, "source_media", sourceMediaJson);
+    gravarNosMembrosDoContainer(itemId, "source_media", sourceMediaJson);
 }
 
 // CREATOR e SUBJECT (item 2 da correção "BACKUP e INTAKE"): mesma coluna
@@ -2985,8 +3015,8 @@ void IntakeWorkspaceComponent::aplicarCreatorAosSelecionados(const juce::String&
     if (ids.empty()) return;
     ProjetoAberto* projeto = &projeto_;
     std::string valorStd = valor.toStdString();
-    poolMetadadoLote_.addJob([projeto, ids, valorStd] {
-        projeto->salvarMetadadoEmLote(ids, {{"dc_creator", valorStd}});
+    poolMetadadoLote_.addJob([projeto, ids, valorStd, nests = containersDosIds(ids)] {
+        projeto->salvarMetadadoEmLote(comMembrosDosContainers(*projeto, ids, nests), {{"dc_creator", valorStd}});
     });
 }
 
@@ -3000,8 +3030,8 @@ void IntakeWorkspaceComponent::aplicarSubjectAosSelecionados(const juce::String&
     if (ids.empty()) return;
     ProjetoAberto* projeto = &projeto_;
     std::string valorStd = valor.toStdString();
-    poolMetadadoLote_.addJob([projeto, ids, valorStd] {
-        projeto->salvarMetadadoEmLote(ids, {{"dc_subject", valorStd}});
+    poolMetadadoLote_.addJob([projeto, ids, valorStd, nests = containersDosIds(ids)] {
+        projeto->salvarMetadadoEmLote(comMembrosDosContainers(*projeto, ids, nests), {{"dc_subject", valorStd}});
     });
 }
 
@@ -3039,8 +3069,14 @@ void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::Strin
     if (ids.empty()) return;
     ProjetoAberto* projeto = &projeto_;
     std::string vStd = v.toStdString();
-    poolMetadadoLote_.addJob([projeto, ids, vStd, manterDateCreated] {
-        projeto->salvarMetadadoEmLote(ids, {{"ano", vStd}, {"dc_created", vStd}}, manterDateCreated);
+    poolMetadadoLote_.addJob([projeto, ids, vStd, manterDateCreated, soAno, nests = containersDosIds(ids)]() mutable {
+        // Arquivos escondidos dos containers: a mesma exceção do só-ano, decidida pelo DATE CREATED gravado de cada um.
+        const auto todos = comMembrosDosContainers(*projeto, ids, nests);
+        if (soAno)
+            for (size_t i = ids.size(); i < todos.size(); ++i)
+                if (projeto->lerMetadado(todos[i], "dc_created").value_or(std::string()).rfind(vStd, 0) == 0)
+                    manterDateCreated.insert({todos[i], "dc_created"});
+        projeto->salvarMetadadoEmLote(todos, {{"ano", vStd}, {"dc_created", vStd}}, manterDateCreated);
     });
     if (tabela_) {
         tabela_->updateContent();

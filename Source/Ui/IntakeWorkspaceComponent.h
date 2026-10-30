@@ -156,6 +156,8 @@ private:
     void atualizarVisibilidadeEmptyState();
     void aplicarColecaoAosSelecionados(const juce::String& colecao);
     void definirColecaoItem(const std::string& itemId, const juce::String& colecao);
+    void gravarNosMembrosDoContainer(const std::string& itemId, const std::string& coluna, const std::string& valor);
+    std::set<std::string> containersDosIds(const std::vector<std::string>& ids) const;  // nestId dos containers entre os ids
     void aplicarOriginalSourceMediumAosSelecionados(const std::string& sourceMediaJson);
     void definirSourceMediaItem(const std::string& itemId, const std::string& sourceMediaJson);
     void mostrarEditorOriginalSourceMedium(int itemIndex, juce::Rectangle<int> screenBounds);
