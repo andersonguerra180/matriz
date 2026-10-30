@@ -174,6 +174,13 @@ constexpr int kMargemJanelaNativa = 18;
 inline juce::Rectangle<int> areaDoCartaoNativo(juce::Rectangle<int> total) { return total.reduced(kMargemJanelaNativa); }
 inline int tamanhoComMargem(int tamanho) { return tamanho + 2 * kMargemJanelaNativa; }
 
+// Janela nativa sem barra: transparente e sem a sombra retangular do sistema — o cartão arredondado e a sombra
+// suave são desenhados pela moldura. Com fundo opaco aparecia um retângulo atrás dos cantos arredondados.
+inline void deixarJanelaTransparente(juce::DialogWindow& dw) {
+    dw.setBackgroundColour(juce::Colours::transparentBlack);
+    dw.setDropShadowEnabled(false);
+}
+
 // Abre `conteudo` numa janela própria no estilo da moldura (sem barra de título; o cabeçalho é da moldura).
 inline juce::DialogWindow* abrirJanela(juce::Component* conteudoNovo, const juce::String& titulo, bool modal = false) {
     juce::DialogWindow::LaunchOptions opt;
@@ -184,6 +191,7 @@ inline juce::DialogWindow* abrirJanela(juce::Component* conteudoNovo, const juce
     opt.useNativeTitleBar = false;
     opt.resizable = false;
     auto* dw = opt.create();
+    deixarJanelaTransparente(*dw);
     dw->setTitleBarHeight(0);
     dw->setContentComponentSize(conteudoNovo->getWidth(), conteudoNovo->getHeight());
     dw->centreWithSize(dw->getWidth(), dw->getHeight());
@@ -220,8 +228,13 @@ public:
         fora.addRectangle(cartao);
         fora.addRoundedRectangle(cartao, kRaio);
         fora.setUsingNonZeroWinding(false);
-        g.setColour(paleta().fundo);
-        g.fillPath(fora);
+        // A janela é transparente (ver deixarJanelaTransparente): os cantos são APAGADOS, não pintados com o fundo,
+        // senão aparece um retângulo atrás do cartão arredondado.
+        g.saveState();
+        g.reduceClipRegion(fora);
+        g.setColour(juce::Colours::transparentBlack);
+        g.getInternalContext().fillRect(cartao.toNearestInt().expanded(1), true);
+        g.restoreState();
         g.setColour(paleta().linha);
         g.drawRoundedRectangle(cartao.reduced(0.5f), kRaio, 1.0f);
     }
@@ -265,6 +278,7 @@ inline juce::DialogWindow* abrirSemBarra(juce::DialogWindow::LaunchOptions& opt)
     opt.useNativeTitleBar = false;
     opt.dialogBackgroundColour = paleta().fundo;
     auto* dw = opt.create();
+    deixarJanelaTransparente(*dw);
     dw->setTitleBarHeight(0);
     dw->setContentComponentSize(w, h);
     dw->centreWithSize(dw->getWidth(), dw->getHeight());
