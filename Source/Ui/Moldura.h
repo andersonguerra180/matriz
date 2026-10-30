@@ -284,6 +284,7 @@ inline juce::DialogWindow* abrirSemBarra(juce::DialogWindow::LaunchOptions& opt)
     dw->centreWithSize(dw->getWidth(), dw->getHeight());
     dw->setVisible(true);
     dw->enterModalState(true, nullptr, true);
+    dw->toFront(true);  // um diálogo aberto por cima de outro modal (ex.: duplicatas sobre o progresso do ingest) fica na frente
     return dw;
 }
 
