@@ -32,6 +32,7 @@ struct SubpastaInfo {
     juce::String nome;
     int quantidade = 0;
     std::set<std::string> itemIds;
+    int subpastas = 0;  // subpastas diretas (cartão de pasta do estilo explorer: "573 items · 3 subfolders")
 };
 
 class MosaicoComponent : public juce::Component, public juce::TooltipClient, public EventBusListener, private juce::Timer {
@@ -261,6 +262,13 @@ public:
 
     void definirSubpastas(std::vector<SubpastaInfo> subpastas);
     std::function<void(const SubpastaInfo&)> aoNavegarParaSubpasta;
+    // Clique simples num cartão de pasta (estilo explorer): seleciona a pasta (contorno grafite) e avisa; a seleção de arquivos sai.
+    std::function<void(const SubpastaInfo&)> aoSelecionarSubpastaCard;
+    // Pasta selecionada pelo clique simples (nullptr = nenhuma). Selecionar um arquivo tira a seleção da pasta.
+    const SubpastaInfo* subpastaSelecionada() const;
+    // Estilo da janela Explorer · Folder Map (EstiloExplorer.h): cartões de 132 px de imagem com nome e "JPG · 138.6 KB · 1022 × 800",
+    // até 4 colunas que se ajustam à largura, sem cabeçalhos de grupo, ordem por nome, cartões de pasta no mesmo formato.
+    void definirEstiloExplorer(bool explorer);
 
     // Item 9 (fix de UI): telas sem Vault/pasta pra soltar arquivo (a grade
     // do METADATA, por exemplo) chamam isto com false — clicar numa
@@ -568,6 +576,15 @@ private:
 
     std::vector<SubpastaInfo> subpastas_;
     bool agruparNests_ = true;
+    bool estiloExplorer_ = false;
+    int subpastaSelecionada_ = -1;
+    static constexpr int kAlturaImagemExplorer = 132;
+    static constexpr int kAlturaTextoExplorer = 62;
+    static constexpr int kVaoExplorer = 14;  // espaço entre cartões
+    int alturaCabecalhoGrupo() const;
+    void desenharCartaoExplorer(juce::Graphics& g, juce::Rectangle<int> bounds, const ItemResumo& item, const TextosCelula& tx,
+                                bool selecionado);
+    void desenharSubpastaExplorer(juce::Graphics& g, juce::Rectangle<int> bounds, const SubpastaInfo& sub, bool selecionada) const;
 
     ModoVisao modoVisao_ = ModoVisao::Grade;
     TamanhoCelula tamanhoCelula_ = TamanhoCelula::Medio;

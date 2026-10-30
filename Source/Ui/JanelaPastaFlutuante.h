@@ -29,6 +29,9 @@ public:
 
     void closeButtonPressed() override;
     bool keyPressed(const juce::KeyPress& key) override;
+    // Self-test (--selftest-explorer-visual): entra na pasta `id` como o duplo clique faria.
+    void irParaPastaParaTeste(const std::string& id, const juce::String& nome);
+    void mostrarArquivoParaTeste(const std::string& itemId);
 
 private:
     class Conteudo;

@@ -184,6 +184,9 @@ public:
     void editarProjetoDoContainer(const std::string& nestId, const std::string& origem);
     void abrirProjectDoContainer(const std::string& nestId, const std::string& origem);
     std::unique_ptr<class JanelaPastaFlutuante> janelaPasta_;
+    // Película #1B1917 a 38% sobre a tela principal enquanto a janela Explorer · Folder Map está aberta (padrão das modais).
+    std::unique_ptr<juce::Component> peliculaJanelaPasta_;
+    void atualizarPeliculaDaJanelaPasta();
     void extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId);
     // Consumido pelo próximo processarLoteEmBackground() sem aoConcluir próprio (ver ingerirPastaDoBridge).
     std::function<void(const std::vector<std::string>&)> aoConcluirDoProximoLote_;

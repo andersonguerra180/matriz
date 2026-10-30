@@ -383,7 +383,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "TRIM(COALESCE(g.state_province, '')) != '' OR TRIM(COALESCE(g.country, '')) != '')), "
         // Original Source Medium (Phone Dump decide a categoria): sem ele aqui a grade nunca via o Phone Dump e a
         // releitura de um item editado (obterItemResumo, que lê) o mudava de categoria — a foto sumia após um GET.
-        "i.source_media "
+        "i.source_media, "
+        "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN CAST(json_extract(a.caracteristicas_tecnicas_json, '$.larguraPx') AS INTEGER) ELSE NULL END, "
+        "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN CAST(json_extract(a.caracteristicas_tecnicas_json, '$.alturaPx') AS INTEGER) ELSE NULL END "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -469,6 +471,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         r.aiGenerated = stmt.columnInt(33) != 0;
         r.temGeolocalizacao = stmt.columnInt(34) != 0;
         if (!stmt.columnIsNull(35)) r.sourceMedia = stmt.columnText(35);
+        if (!stmt.columnIsNull(36)) r.larguraPx = stmt.columnInt(36);
+        if (!stmt.columnIsNull(37)) r.alturaPx = stmt.columnInt(37);
         if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
         else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
@@ -1166,6 +1170,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                         if (varObj.hasProperty("duracaoSegundos")) {
                             r.duracaoSegundos = static_cast<double>(varObj["duracaoSegundos"]);
                         }
+                        r.larguraPx = static_cast<int>(varObj["larguraPx"]);
+                        r.alturaPx = static_cast<int>(varObj["alturaPx"]);
                         if (!r.ano.has_value() && varObj.hasProperty("exifDataOriginal")) {
                             juce::String exifDt = varObj["exifDataOriginal"].toString();
                             for (int i = 0; i + 3 < exifDt.length(); ++i) {

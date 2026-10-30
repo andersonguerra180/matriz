@@ -3512,6 +3512,7 @@ void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::S
         [seguro] {
             if (!seguro) return;
             seguro->janelaPasta_.reset();
+            seguro->atualizarPeliculaDaJanelaPasta();
             if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
         },
         [seguro] {
@@ -3523,6 +3524,35 @@ void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::S
             if (seguro->cartoesAnalytics_) seguro->cartoesAnalytics_->recarregar();  // MOVE TO FOLDER muda o NO FOLDER
         },
         std::string(), selecionarTudo);
+    atualizarPeliculaDaJanelaPasta();
+}
+
+namespace {
+// Película da janela Explorer · Folder Map: escurece a tela principal; clicar nela traz a janela de volta para a frente.
+class PeliculaJanela : public juce::Component {
+public:
+    explicit PeliculaJanela(std::function<void()> aoClicar) : aoClicar_(std::move(aoClicar)) {}
+    void paint(juce::Graphics& g) override { g.fillAll(juce::Colour(0xff1b1917).withAlpha(0.38f)); }
+    void mouseDown(const juce::MouseEvent&) override { if (aoClicar_) aoClicar_(); }
+private:
+    std::function<void()> aoClicar_;
+};
+}  // namespace
+
+void MainComponent::atualizarPeliculaDaJanelaPasta() {
+    if (janelaPasta_ == nullptr) {
+        peliculaJanelaPasta_.reset();
+        return;
+    }
+    if (peliculaJanelaPasta_ == nullptr) {
+        juce::Component::SafePointer<MainComponent> seguro(this);
+        peliculaJanelaPasta_ = std::make_unique<PeliculaJanela>([seguro] {
+            if (seguro && seguro->janelaPasta_) seguro->janelaPasta_->toFront(true);
+        });
+        addAndMakeVisible(*peliculaJanelaPasta_);
+    }
+    peliculaJanelaPasta_->setBounds(getLocalBounds());
+    peliculaJanelaPasta_->toFront(false);
 }
 
 // Open Project: o player de CD no DDP; nos demais PROJECTS o preview do arquivo-capa, com a capa do projeto e a coluna dos arquivos.
@@ -3560,6 +3590,7 @@ void MainComponent::abrirJanelaDoContainer(const std::string& nestId, const juce
         [seguro] {
             if (!seguro) return;
             seguro->janelaPasta_.reset();
+            seguro->atualizarPeliculaDaJanelaPasta();
             if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
         },
         [seguro] {
@@ -3570,6 +3601,7 @@ void MainComponent::abrirJanelaDoContainer(const std::string& nestId, const juce
             if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
         },
         nestId);
+    atualizarPeliculaDaJanelaPasta();
 }
 
 void MainComponent::extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId) {
@@ -5350,6 +5382,7 @@ void MainComponent::resized() {
     // O overlay cobre a janela inteira, sempre — é o que faz o scrim
     // escurecer tudo e engolir o clique de qualquer painel atrás.
     overlay_.setBounds(getLocalBounds());
+    if (peliculaJanelaPasta_) peliculaJanelaPasta_->setBounds(getLocalBounds());
 
     auto area = getLocalBounds();
     if (faixaAviso_ && faixaAviso_->isVisible()) faixaAviso_->setBounds(area.removeFromTop(FaixaAvisoComponent::kAltura));

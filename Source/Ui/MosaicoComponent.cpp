@@ -6,6 +6,7 @@
 #include "LogosTipoArquivo.h"
 #include "ContainerVisual.h"
 #include "TiposContainer.h"
+#include "EstiloExplorer.h"
 #include "../Whatsapp/WhatsappIngestao.h"
 
 #include "../Ficha/FichaI18n.h"
@@ -872,7 +873,23 @@ void MosaicoComponent::definirAgruparNests(bool agrupar) {
     aplicarFiltrosEOrdenacao();
 }
 
+void MosaicoComponent::definirEstiloExplorer(bool explorer) {
+    if (estiloExplorer_ == explorer) return;
+    estiloExplorer_ = explorer;
+    aplicarFiltrosEOrdenacao();
+}
+
+int MosaicoComponent::alturaCabecalhoGrupo() const {
+    return (estiloExplorer_ && modoVisao_ == ModoVisao::Grade) ? 0 : kAlturaCabecalhoGrupo;
+}
+
+const SubpastaInfo* MosaicoComponent::subpastaSelecionada() const {
+    return subpastaSelecionada_ >= 0 && subpastaSelecionada_ < static_cast<int>(subpastas_.size())
+               ? &subpastas_[static_cast<size_t>(subpastaSelecionada_)] : nullptr;
+}
+
 void MosaicoComponent::definirSubpastas(std::vector<SubpastaInfo> subpastas) {
+    subpastaSelecionada_ = -1;
     subpastas_ = std::move(subpastas);
     recalcularLayout();
     repaint();
@@ -1147,6 +1164,181 @@ void MosaicoComponent::desenharSubpasta(juce::Graphics& g, juce::Rectangle<int> 
     g.drawText(juce::String(sub.quantidade) + " items", areaTexto, juce::Justification::centredLeft, true);
 }
 
+// Estilo explorer (EstiloExplorer.h): cartão #FBF9F5 com borda #D8D1C6, imagem de 132 px no topo preenchendo o espaço, nome
+// (até duas linhas, sem reticências) e a linha de dados "JPG · 138.6 KB · 1022 × 800" (+ duração só em áudio e vídeo).
+void MosaicoComponent::desenharCartaoExplorer(juce::Graphics& g, juce::Rectangle<int> bounds, const ItemResumo& item,
+                                              const TextosCelula& tx, bool selecionado) {
+    const auto c = explorer::cores();
+    constexpr float kRaio = 12.0f;
+    const auto cartao = bounds.toFloat();
+    g.setColour(c.cartao);
+    g.fillRoundedRectangle(cartao, kRaio);
+
+    const auto areaImagem = bounds.withHeight(juce::jmin(kAlturaImagemExplorer, bounds.getHeight()));
+    {
+        juce::Graphics::ScopedSaveState estado(g);
+        juce::Path topo;
+        topo.addRoundedRectangle(static_cast<float>(areaImagem.getX()), static_cast<float>(areaImagem.getY()),
+                                 static_cast<float>(areaImagem.getWidth()), static_cast<float>(areaImagem.getHeight()),
+                                 kRaio, kRaio, true, true, false, false);
+        g.reduceClipRegion(topo);
+        if (const juce::Image* img = miniaturaCache(item.id)) {
+            g.drawImage(*img, areaImagem.toFloat(), juce::RectanglePlacement::fillDestination);
+        } else {
+            pedirCarregamentoMiniatura(item.id);
+            g.setColour(c.lateral);
+            g.fillRect(areaImagem);
+            desenharPlaceholderCategoria(g, areaImagem, item.extensaoArquivo);
+        }
+        if (item.marcadoRejeitado) {
+            g.setColour(tema().perigo.withAlpha(0.22f));
+            g.fillRect(areaImagem);
+        }
+    }
+    g.setColour(c.borda);
+    g.fillRect(areaImagem.getX(), areaImagem.getBottom() - 1, areaImagem.getWidth(), 1);
+
+    // Etiqueta PROJECT (dourada, pequena) no canto superior esquerdo da imagem: o arquivo faz parte de um Project Container.
+    const auto fonteEtiqueta = explorer::fonte(9.5f, true).withExtraKerningFactor(0.08f);
+    if (item.nestTotal > 1 && ehOrigemProject(juce::String(item.nestOrigem))) {
+        const auto rotulo = i18n::t("projeto.tag").toUpperCase();
+        const int w = explorer::larguraDoTexto(fonteEtiqueta, rotulo) + 14;
+        const juce::Rectangle<float> tag(static_cast<float>(areaImagem.getX() + 8), static_cast<float>(areaImagem.getY() + 8),
+                                         static_cast<float>(w), 17.0f);
+        g.setColour(c.dourado);
+        g.fillRoundedRectangle(tag, 8.5f);
+        g.setColour(juce::Colours::white);
+        g.setFont(fonteEtiqueta);
+        g.drawText(rotulo, tag.toNearestInt(), juce::Justification::centred, false);
+    }
+    // Marcas do arquivo (R, H, K, P, W, B) no canto superior direito, como nas outras grades.
+    {
+        int x = areaImagem.getRight() - 8;
+        auto selo = [&](bool on, const char* letra, juce::Colour cor) {
+            if (!on) return;
+            const juce::Rectangle<float> r(static_cast<float>(x - 17), static_cast<float>(areaImagem.getY() + 8), 17.0f, 17.0f);
+            g.setColour(cor);
+            g.fillRoundedRectangle(r, 4.0f);
+            g.setColour(juce::Colours::white);
+            g.setFont(explorer::fonte(9.5f, true));
+            g.drawText(letra, r.toNearestInt(), juce::Justification::centred, false);
+            x -= 20;
+        };
+        selo(item.marcadoRejeitado, "R", tema().perigo);
+        selo(item.marcadoPublicacao, "H", juce::Colour(0xff2e8b57));
+        selo(item.marcadoZip, "K", juce::Colour(0xff0077ff));
+        selo(item.marcadoPrint, "P", juce::Colour(0xffff6b00));
+        selo(item.marcadoWatermark, "W", juce::Colour(0xffc79a00));
+        selo(item.marcadoBounce, "B", juce::Colour(0xff9333ea));
+    }
+    if (item.offline) {
+        const auto off = areaImagem.withSizeKeepingCentre(72, 20).toFloat();
+        g.setColour(c.texto.withAlpha(0.82f));
+        g.fillRoundedRectangle(off, 10.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(explorer::fonte(10.0f, true));
+        g.drawText("OFFLINE", off.toNearestInt(), juce::Justification::centred, false);
+    }
+
+    // Nome: o do arquivo (na janela do container a capa não vira o nome do container).
+    juce::String nome = tx.nome;
+    if (!agruparNests_ && item.nestCapa && !item.nestOrigem.empty()) {
+        const juce::String caminho = juce::String::fromUTF8((!item.caminhoAbsolutoOrigem.empty() ? item.caminhoAbsolutoOrigem
+                                                                                                   : item.caminhoRelativoArquivo).c_str());
+        const auto arquivo = caminho.fromLastOccurrenceOf("/", false, false).fromLastOccurrenceOf("\\", false, false);
+        if (arquivo.isNotEmpty()) nome = arquivo.upToLastOccurrenceOf(".", false, false).isNotEmpty() ? arquivo.upToLastOccurrenceOf(".", false, false) : arquivo;
+    }
+    auto texto = bounds.withTop(areaImagem.getBottom()).reduced(10, 7);
+    juce::StringArray dados;
+    if (tx.extensao.isNotEmpty()) dados.add(tx.extensao);
+    if (item.tamanhoBytes > 0) dados.add(tx.tamanho);
+    if (item.larguraPx > 0 && item.alturaPx > 0) dados.add(juce::String(item.larguraPx) + juce::String::fromUTF8(" \xc3\x97 ") + juce::String(item.alturaPx));
+    if (tx.duracao.isNotEmpty()) dados.add(tx.duracao);
+    const auto linhaDados = dados.joinIntoString(juce::String::fromUTF8(" \xc2\xb7 "));
+    const auto fonteDados = explorer::fonte(11.5f);
+    const auto fonteNome = explorer::fonte(13.5f);
+    // A linha de dados vem logo abaixo do nome (uma ou duas linhas, conforme o nome couber).
+    const int linhasNome = explorer::larguraDoTexto(fonteNome, nome) > texto.getWidth() ? 2 : 1;
+    const auto areaNome = texto.removeFromTop(linhasNome * 19);
+    const auto areaDados = texto.removeFromTop(18);
+    g.setColour(c.texto);
+    g.setFont(fonteNome);
+    g.drawFittedText(nome, areaNome, juce::Justification::topLeft, 2, 0.8f);
+    g.setColour(c.secundario);
+    g.setFont(fonteDados);
+    g.drawFittedText(linhaDados, areaDados, juce::Justification::centredLeft, 1, 0.8f);
+
+    if (selecionado) {
+        g.setColour(c.grafite);
+        g.drawRoundedRectangle(cartao.reduced(1.0f), kRaio, 2.0f);
+    } else {
+        g.setColour(c.borda);
+        g.drawRoundedRectangle(cartao.reduced(0.5f), kRaio, 1.0f);
+    }
+}
+
+// Cartão de pasta do estilo explorer: ícone de pasta no fundo #EDE8E0, nome e "573 items · 3 subfolders".
+void MosaicoComponent::desenharSubpastaExplorer(juce::Graphics& g, juce::Rectangle<int> bounds, const SubpastaInfo& sub,
+                                                bool selecionada) const {
+    const auto c = explorer::cores();
+    constexpr float kRaio = 12.0f;
+    const auto cartao = bounds.toFloat();
+    g.setColour(c.cartao);
+    g.fillRoundedRectangle(cartao, kRaio);
+    const auto areaImagem = bounds.withHeight(juce::jmin(kAlturaImagemExplorer, bounds.getHeight()));
+    {
+        juce::Path topo;
+        topo.addRoundedRectangle(static_cast<float>(areaImagem.getX()), static_cast<float>(areaImagem.getY()),
+                                 static_cast<float>(areaImagem.getWidth()), static_cast<float>(areaImagem.getHeight()),
+                                 kRaio, kRaio, true, true, false, false);
+        g.setColour(c.lateral);
+        g.fillPath(topo);
+    }
+    g.setColour(c.borda);
+    g.fillRect(areaImagem.getX(), areaImagem.getBottom() - 1, areaImagem.getWidth(), 1);
+    // Pasta em contorno, centrada.
+    const auto icone = areaImagem.toFloat().withSizeKeepingCentre(54.0f, 42.0f);
+    juce::Path pasta;
+    const float x = icone.getX(), y = icone.getY(), w = icone.getWidth(), h = icone.getHeight();
+    pasta.startNewSubPath(x + 4.0f, y);
+    pasta.lineTo(x + w * 0.36f, y);
+    pasta.lineTo(x + w * 0.46f, y + h * 0.16f);
+    pasta.lineTo(x + w - 4.0f, y + h * 0.16f);
+    pasta.quadraticTo(x + w, y + h * 0.16f, x + w, y + h * 0.16f + 4.0f);
+    pasta.lineTo(x + w, y + h - 4.0f);
+    pasta.quadraticTo(x + w, y + h, x + w - 4.0f, y + h);
+    pasta.lineTo(x + 4.0f, y + h);
+    pasta.quadraticTo(x, y + h, x, y + h - 4.0f);
+    pasta.lineTo(x, y + 4.0f);
+    pasta.quadraticTo(x, y, x + 4.0f, y);
+    pasta.closeSubPath();
+    g.setColour(c.secundario.withAlpha(0.85f));
+    g.strokePath(pasta, juce::PathStrokeType(2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.drawLine(x + 1.5f, y + h * 0.34f, x + w - 1.5f, y + h * 0.34f, 2.0f);
+
+    auto texto = bounds.withTop(areaImagem.getBottom()).reduced(10, 7);
+    const bool pt = i18n::localeAtivo().startsWith("pt");
+    juce::String info = i18n::t(sub.quantidade == 1 ? "janela_pasta.n_itens.1" : "janela_pasta.n_itens.n")
+                            .replace("{n}", explorer::comMilhares(sub.quantidade, pt));
+    if (sub.subpastas > 0)
+        info << juce::String::fromUTF8(" \xc2\xb7 ")
+             << i18n::t(sub.subpastas == 1 ? "janela_pasta.n_subpastas.1" : "janela_pasta.n_subpastas.n")
+                    .replace("{n}", explorer::comMilhares(sub.subpastas, pt));
+    const auto fonteNome = explorer::fonte(13.5f, true);
+    const int linhasNome = explorer::larguraDoTexto(fonteNome, sub.nome) > texto.getWidth() ? 2 : 1;
+    const auto areaNome = texto.removeFromTop(linhasNome * 19);
+    const auto areaDados = texto.removeFromTop(18);
+    g.setColour(c.texto);
+    g.setFont(fonteNome);
+    g.drawFittedText(sub.nome, areaNome, juce::Justification::topLeft, 2, 0.8f);
+    g.setColour(c.secundario);
+    g.setFont(explorer::fonte(11.5f));
+    g.drawFittedText(info, areaDados, juce::Justification::centredLeft, 1, 0.8f);
+
+    g.setColour(selecionada ? c.grafite : c.borda);
+    g.drawRoundedRectangle(cartao.reduced(selecionada ? 1.0f : 0.5f), kRaio, selecionada ? 2.0f : 1.0f);
+}
+
 void MosaicoComponent::definirModoVisao(ModoVisao modo) {
     if (modoVisao_ == modo) return;
     modoVisao_ = modo;
@@ -1304,6 +1496,8 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
             if (c != 0) return ordenacaoListaAscendente_ ? c < 0 : c > 0;
             return a.criadoEm > b.criadoEm;
         }
+        if (estiloExplorer_)  // como no Finder: por nome
+            return juce::String::fromUTF8(a.titulo.c_str()).compareNatural(juce::String::fromUTF8(b.titulo.c_str())) < 0;
         switch (ordenacao_) {
             case Ordenacao::Titulo: return a.titulo < b.titulo;
             case Ordenacao::Estado: return a.estado < b.estado;
@@ -1318,7 +1512,9 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     for (uint32_t pos : indices) {
         const ItemResumo& item = itensTodos_[pos];
         juce::String chave;
-        if (colunaOrdenacaoLista_ > 0) {
+        if (estiloExplorer_ && colunaOrdenacaoLista_ <= 0) {
+            chave = "0:" + matriz::i18n::t("grade.todos_ordenados");  // explorer: um grupo só, por nome (como no Finder)
+        } else if (colunaOrdenacaoLista_ > 0) {
             // Ordenação por coluna vale pra lista INTEIRA (todas as páginas):
             // um grupo só, senão cada grupo de tipo/ano ordenaria à parte e a
             // página 1 mostraria só o começo do primeiro grupo.
@@ -1494,6 +1690,11 @@ void MosaicoComponent::recalcularLayout() {
     if (modoVisao_ == ModoVisao::Lista) {
         colunas_ = 1;
         celulaLargura_ = juce::jmax(200, larguraDisponivel);
+    } else if (estiloExplorer_) {
+        // Até 4 colunas que se ajustam à largura; o cartão tem altura fixa (imagem de 132 px + nome + dados).
+        colunas_ = juce::jlimit(1, 4, larguraDisponivel / 170);
+        celulaLargura_ = juce::jmax(1, larguraDisponivel / colunas_);
+        celulaAltura_ = kAlturaImagemExplorer + kAlturaTextoExplorer + kVaoExplorer;
     } else {
         colunas_ = juce::jmax(1, larguraDisponivel / celulaLargura_);
     }
@@ -1504,7 +1705,7 @@ void MosaicoComponent::recalcularLayout() {
     int cursor = matriz::ui::tema().espacoPainel + alturaSecaoSubpastas();
     for (auto& g : grupos_) {
         g.yTopo = cursor;
-        g.yItens = cursor + kAlturaCabecalhoGrupo + (modoVisao_ == ModoVisao::Lista ? kAlturaCabecalhoColunas : 0);
+        g.yItens = cursor + alturaCabecalhoGrupo() + (modoVisao_ == ModoVisao::Lista ? kAlturaCabecalhoColunas : 0);
         g.linhas = (g.quantidade + colunas_ - 1) / colunas_;
         cursor = g.yItens + g.linhas * celulaAltura_ + kEspacoEntreGrupos;
     }
@@ -1594,8 +1795,17 @@ juce::Colour MosaicoComponent::corPorCategoria(const std::string& tipoMidia) con
 }
 
 void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
-    if (indiceSubpastaNaPosicao(e.getPosition()) >= 0)
+    if (const int sub = indiceSubpastaNaPosicao(e.getPosition()); sub >= 0) {
+        if (aoSelecionarSubpastaCard && !e.mods.isPopupMenu()) {
+            subpastaSelecionada_ = sub;
+            selecionados_.clear();
+            selecionadoId_.clear();
+            repaint();
+            aoSelecionarSubpastaCard(subpastas_[static_cast<size_t>(sub)]);
+        }
         return;
+    }
+    if (subpastaSelecionada_ >= 0) { subpastaSelecionada_ = -1; repaint(); }
 
     // Clique no cabeçalho de colunas da LISTA: ordena por aquela coluna
     // (de novo na mesma coluna inverte), como na tabela do INTAKE.
@@ -2509,7 +2719,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
     // eventos que chegaram escondida são aplicados logo depois deste quadro.
     if (temEventosPendentes()) agendarAplicarPendentes();
     const auto& tk = matriz::ui::tema();
-    g.fillAll(tk.fundo);
+    g.fillAll(estiloExplorer_ ? explorer::cores().fundo : tk.fundo);
 
     static const juce::Font font14Bold(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
     static const juce::Font font13Bold(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
@@ -2540,6 +2750,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
         g.drawFittedText(*mensagemVazia_, getLocalBounds().reduced(24), juce::Justification::centred, 2);
         return;
     }
+    if (itensFiltrados_.empty() && subpastas_.empty() && estiloExplorer_) return;  // pasta vazia na janela explorer: só o papel
     if (itensFiltrados_.empty() && subpastas_.empty()) {
         // Estado vazio explicativo (Reorientação completa §3.2) — nunca
         // tela preta. Borda tracejada + duas linhas de instrução + nota
@@ -2582,7 +2793,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
     for (int si = 0; si < static_cast<int>(subpastas_.size()); ++si) {
         auto bounds = boundsSubpasta(si);
         if (bounds.getBottom() < clip.getY() || bounds.getY() > clip.getBottom()) continue;
-        desenharSubpasta(g, bounds, subpastas_[static_cast<size_t>(si)]);
+        if (estiloExplorer_ && modoVisao_ == ModoVisao::Grade)
+            desenharSubpastaExplorer(g, bounds.reduced(kVaoExplorer / 2), subpastas_[static_cast<size_t>(si)], si == subpastaSelecionada_);
+        else
+            desenharSubpasta(g, bounds, subpastas_[static_cast<size_t>(si)]);
     }
 
     // Só os grupos cujo intervalo vertical cruza o clip entram no laço —
@@ -2592,7 +2806,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
         int yFimGrupo = grupo.yItens + grupo.linhas * celulaAltura_;
         if (yFimGrupo < clip.getY() || grupo.yTopo > clip.getBottom()) continue;
 
-        if (grupo.yTopo < clip.getBottom() && yFimGrupo > clip.getY()) {
+        if (alturaCabecalhoGrupo() > 0 && grupo.yTopo < clip.getBottom() && yFimGrupo > clip.getY()) {
             juce::Rectangle<int> areaCabecalho(0, grupo.yTopo, getWidth(), kAlturaCabecalhoGrupo);
             g.setColour(tk.painelAlt);
             g.fillRect(areaCabecalho);
@@ -2855,6 +3069,11 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     selo(item.marcadoRejeitado, "R", tema().perigo, juce::Colours::white);
                 }
 
+                continue;
+            }
+
+            if (estiloExplorer_) {
+                desenharCartaoExplorer(g, boundsDaCelula(i).reduced(kVaoExplorer / 2), item, tx, selecionado);
                 continue;
             }
 

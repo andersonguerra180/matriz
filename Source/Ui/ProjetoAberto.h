@@ -91,6 +91,7 @@ struct ItemResumo {
 
     // Fields for detailed preview and micro-site generation
     std::optional<double> duracaoSegundos;
+    int larguraPx = 0, alturaPx = 0;  // dimensões da imagem/vídeo (características técnicas); 0 = desconhecidas
     std::string masterArquivoId;
     std::string caminhoRelativoArquivo;
     std::string caminhoAbsolutoOrigem;

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include "../Diag/Watchdog.h"
 #include "PainelMetadadosArquivo.h"
+#include "JanelaPastaFlutuante.h"
 
 #include <JuceHeader.h>
 #include <thread>
@@ -7428,6 +7429,104 @@ int rodarLoteSelfTest() {
     rodarTestesConexaoLeitura(checar);
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
+    return falhas == 0 ? 0 : 1;
+}
+
+
+// Janela Explorer · Folder Map de um container com pastas de origem: PNGs em ./test-output para conferir o padrão visual.
+int rodarExplorerVisualSelfTest() {
+    std::cout << "== Explorer window snapshots ==\n";
+    int falhas = 0;
+    const auto girar = [](int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); };
+    juce::File saida = juce::File::getCurrentWorkingDirectory().getChildFile("test-output");
+    saida.createDirectory();
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_explorer_visual_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Explorer";
+        params.prefixoNomenclatura = "EXP";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const juce::File origem = raiz.getChildFile("Acervo Djalma Correa");
+        std::vector<std::string> ids;
+        auto comOrigem = [&](const std::string& codigo, const juce::File& arquivo, const char* ext, int w, int h, double dur) {
+            const std::string id = inserirItem(reg, projetoId, codigo, false, ext);
+            juce::DynamicObject::Ptr tec = new juce::DynamicObject();
+            if (w > 0) { tec->setProperty("larguraPx", w); tec->setProperty("alturaPx", h); }
+            if (dur > 0) tec->setProperty("duracaoSegundos", dur);
+            reg.run("UPDATE arquivo SET caminho_absoluto_origem = ?, caracteristicas_tecnicas_json = ?, tamanho_bytes = ? WHERE item_id = ?",
+                    {matriz::db::Value::of(arquivo.getFullPathName().toStdString()),
+                     matriz::db::Value::of(juce::JSON::toString(juce::var(tec.get()), true).toStdString()),
+                     matriz::db::Value::of(static_cast<int64_t>(141970)), matriz::db::Value::of(id)});
+            reg.run("UPDATE item SET titulo = ? WHERE id = ?",
+                    {matriz::db::Value::of(arquivo.getFileNameWithoutExtension().toStdString()), matriz::db::Value::of(id)});
+            ids.push_back(id);
+        };
+        const auto site = origem.getChildFile("Djalma Correa - SIte");
+        for (int i = 1; i <= 9; ++i)
+            comOrigem("EXP-F" + std::to_string(i), site.getChildFile("IMAGES").getChildFile("PEDRA DE GUARATIBA").getChildFile("foto-" + std::to_string(i) + ".jpg"),
+                      ".jpg", 1022, 800, 0.04);
+        comOrigem("EXP-D1", site.getChildFile("IMAGES").getChildFile("PEDRA DE GUARATIBA").getChildFile("release.pdf"), ".pdf", 0, 0, 0);
+        for (int i = 1; i <= 4; ++i)
+            comOrigem("EXP-A" + std::to_string(i), site.getChildFile("Sotaques do Samba").getChildFile("Audio").getChildFile("faixa " + std::to_string(i) + ".wav"),
+                      ".wav", 0, 0, 185.0 + i);
+        for (int i = 1; i <= 3; ++i)
+            comOrigem("EXP-V" + std::to_string(i), site.getChildFile("Sotaques do Samba").getChildFile("Video").getChildFile("take " + std::to_string(i) + ".mp4"),
+                      ".mp4", 1920, 1080, 61.0 * i);
+        for (int i = 1; i <= 3; ++i)
+            comOrigem("EXP-P" + std::to_string(i), origem.getChildFile("DJALMA PPT").getChildFile("slide " + std::to_string(i) + ".png"), ".png", 1280, 720, 0);
+        const std::string nest = pa.criarContainerImportacao(ids, "projeto", "image.exhibition");
+        pa.definirNomeDoContainer(nest, "Acervo Djalma Correa");
+        if (nest.empty()) { std::cout << "  FAIL container\n"; return 1; }
+
+        auto salvar = [&](juce::Component& c, const juce::String& nome) {
+            juce::Image img = c.createComponentSnapshot(c.getLocalBounds());
+            juce::File arquivo = saida.getChildFile(nome + ".png");
+            arquivo.deleteFile();
+            if (auto stream = std::unique_ptr<juce::FileOutputStream>(arquivo.createOutputStream())) {
+                juce::PNGImageFormat png;
+                png.writeImageToStream(img, *stream);
+            }
+            const bool ok = img.isValid() && img.getWidth() > 0;
+            std::cout << (ok ? "  OK   " : "  FAIL ") << nome << " -> " << arquivo.getFullPathName() << "\n";
+            if (!ok) ++falhas;
+        };
+        {
+            auto janela = std::make_unique<JanelaPastaFlutuante>(pa, std::string(), "Acervo Djalma Correa", [] {}, [] {}, nest);
+            girar(6000);
+            salvar(*janela, "explorer_raiz");
+            const auto arvore = pa.arvoreDoContainer(nest);
+            const ProjetoAberto::NoArvore* pedra = nullptr;
+            std::function<void(const ProjetoAberto::NoArvore&)> achar = [&](const ProjetoAberto::NoArvore& n) {
+                if (n.nome == "PEDRA DE GUARATIBA") pedra = &n;
+                for (const auto& f : n.filhos) achar(f);
+            };
+            achar(arvore);
+            if (pedra != nullptr) {
+                janela->irParaPastaParaTeste(pedra->id, pedra->nome);
+                girar(2500);
+                salvar(*janela, "explorer_pasta");
+                janela->mostrarArquivoParaTeste(*pedra->itemIdsDiretos.begin());
+                girar(2500);
+                salvar(*janela, "explorer_arquivo");
+                janela->irParaPastaParaTeste(nest, "Acervo Djalma Correa");
+                girar(1500);
+                salvar(*janela, "explorer_raiz_volta");
+            } else {
+                std::cout << "  FAIL PEDRA DE GUARATIBA not found\n";
+                ++falhas;
+            }
+        }
+        girar(300);
+    } catch (const std::exception& e) {
+        std::cout << "  FAIL " << e.what() << "\n";
+        ++falhas;
+    }
+    raiz.deleteRecursively();
+    std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
 }
 

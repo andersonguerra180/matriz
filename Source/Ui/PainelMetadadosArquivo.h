@@ -28,6 +28,15 @@ public:
         std::vector<Linha> linhas;
     };
 
+    // Resumo de uma pasta (janela Explorer · Folder Map: nada selecionado = a pasta atual; ou o cartão de pasta selecionado).
+    struct ResumoPasta {
+        juce::String nome, caminho, vault;  // caminho: "Acervo › Site › IMAGES"
+        int arquivos = 0, subpastas = 0;
+        juce::int64 bytes = 0;
+        int video = 0, audio = 0, foto = 0, documento = 0;
+        juce::String maisAntigo, maisRecente;  // "AAAA-MM-DD"
+    };
+
     explicit PainelMetadadosArquivo(ProjetoAberto& projeto);
     ~PainelMetadadosArquivo() override;
 
@@ -37,6 +46,8 @@ public:
 
     // itemId vazio: mostra a frase discreta de "nada selecionado".
     void mostrarItem(const std::string& itemId);
+    // Só no visual compacto (estilo explorer): resumo da pasta, sem ler o banco (quem chama já tem os números).
+    void mostrarResumoPasta(const ResumoPasta& resumo);
 
     // Leitura pura (sem UI): segura para thread de fundo.
     static std::vector<Card> lerCards(ProjetoAberto& projeto, const std::string& itemId);
@@ -49,6 +60,7 @@ private:
     void aplicarCards(std::vector<Card> cards, int geracao);
 
     ProjetoAberto& projeto_;
+    bool compacto_ = false;
     juce::Label lblVazio_;
     juce::Viewport viewport_;
     std::unique_ptr<Conteudo> conteudo_;

@@ -296,6 +296,11 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--selftest-explorer-visual")) {
+            setApplicationReturnValue(matriz::ui::rodarExplorerVisualSelfTest());
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest-lote")) {
             setApplicationReturnValue(matriz::ui::rodarLoteSelfTest());
             quit();

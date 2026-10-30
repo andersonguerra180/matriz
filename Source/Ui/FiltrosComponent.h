@@ -44,6 +44,12 @@ public:
     // Contagens só dos itens deste conjunto (janela de uma pasta). nullopt = o projeto todo. Vale do próximo recarregar em diante.
     void definirEscopo(std::optional<std::set<std::string>> itemIds) { escopo_ = std::move(itemIds); }
 
+    // Estilo da janela Explorer · Folder Map (EstiloExplorer.h): linhas de 28 px sem caixas atrás, títulos de seção em caixa alta
+    // pequena, bolinha de cor, nome inteiro (quebra em duas linhas em vez de cortar) e contagem inteira à direita; selecionado em
+    // grafite. Seções: MEDIA TYPE, FILE TYPE, CONTENT, STATUS (só com `comChips`), VAULTS e SMART COLLECTIONS (só com
+    // `comColecoes`, uma seção só, terminando em "+ Save current search…"). Sem "Group: type" e sem a legenda.
+    void definirEstiloExplorer(bool comChips, bool comColecoes);
+
     // A caixa de busca mora na barra de ferramentas superior, não mais
     // aqui: duas caixas de busca na mesma tela (uma no topo, outra na
     // coluna esquerda) deixavam ambíguo qual delas manda. Este callback é
@@ -108,6 +114,7 @@ private:
         std::vector<ProjetoAberto::VaultResumo> vaults;
         std::vector<ProjetoAberto::ColecaoEmbutida> embutidas;
         std::vector<ProjetoAberto::ColecaoInteligente> salvas;
+        int semCollectionType = 0;  // só com escopo: itens sem CONTENT ("No content type" no estilo explorer)
     };
     static DadosDoBanco coletarDoBanco(ProjetoAberto& projeto);
     // Com escopo: as seis contagens saem dos itens em memória da grade que estão no conjunto.
@@ -115,6 +122,10 @@ private:
     std::optional<std::set<std::string>> escopo_;
 
     void reconstruirLinhas();
+    void reconstruirLinhasExplorer();
+    int alturaDaLinha(int indice) const;
+    void pintarExplorer(juce::Graphics& g);
+    bool explorer_ = false, comChips_ = true, comColecoes_ = true;
     juce::Rectangle<int> boundsDaLinha(int indice) const;
     int indiceLinhaNaPosicao(int y) const;
     void abrirMenuContextoColecao(int indiceLinha);

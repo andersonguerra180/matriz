@@ -9,17 +9,26 @@
 #include "FiltrosComponent.h"
 #include "FloatingPreviewWindow.h"
 #include "LegendaAtalhosIntake.h"
+#include "MatrizLookAndFeel.h"
 #include "Moldura.h"
 #include "MosaicoComponent.h"
 #include "ContainerVisual.h"
+#include "EstiloExplorer.h"
 #include "Tokens.h"
+
+#include <AssetsBinaryData.h>
 
 namespace matriz::ui {
 
 namespace {
-constexpr int kLarguraFiltros = 290;
-constexpr int kLarguraFicha = 330;
-constexpr int kAlturaCabecalho = 46;
+// Layout da janela Explorer · Folder Map (padrão do BKR Matriz Mini).
+constexpr int kLarguraLateral = 268;
+constexpr int kLarguraFicha = 400;
+constexpr int kAlturaBarraNav = 56;
+constexpr int kAlturaTituloGrade = 46;
+constexpr int kMargemGrade = 16;
+constexpr int kAlturaLinhaArvore = 28;
+constexpr int kRecuoArvore = 14;
 constexpr int kMenuExtrairDaPasta = 9001;
 constexpr int kMenuMoverParaPasta = 9002;
 
@@ -35,30 +44,92 @@ const ProjetoAberto::NoArvore* acharNo(const ProjetoAberto::NoArvore& no, const 
         if (const auto* achou = acharNo(f, id)) return achou;
     return nullptr;
 }
+
+// Caminho de `raiz` até o nó `id` (inclusive); vazio se não achou.
+bool caminhoAte(const ProjetoAberto::NoArvore& raiz, const std::string& id, std::vector<const ProjetoAberto::NoArvore*>& caminho) {
+    caminho.push_back(&raiz);
+    if (raiz.id == id) return true;
+    for (const auto& f : raiz.filhos)
+        if (caminhoAte(f, id, caminho)) return true;
+    caminho.pop_back();
+    return false;
+}
+
+int contarSubpastas(const ProjetoAberto::NoArvore& no) {
+    int n = static_cast<int>(no.filhos.size());
+    for (const auto& f : no.filhos) n += contarSubpastas(f);
+    return n;
+}
+
+juce::String contagemI18n(const char* chave, int n) {
+    const bool pt = i18n::localeAtivo().startsWith("pt");
+    return i18n::t(juce::String(chave) + (n == 1 ? ".1" : ".n")).replace("{n}", explorer::comMilhares(n, pt));
+}
+
+const juce::String kPonto = juce::String::fromUTF8(" \xc2\xb7 ");
+const juce::String kSeta = juce::String::fromUTF8(" \xe2\x80\xba ");
+
+// A janela inteira em Jost (botões incluídos) e barras de rolagem finas, sem o "knob" redondo do resto do app.
+class LookAndFeelExplorer : public MatrizLookAndFeel {
+public:
+    juce::Font getTextButtonFont(juce::TextButton&, int) override { return explorer::fonte(13.0f, true); }
+    int getDefaultScrollbarWidth() override { return 10; }
+    void drawScrollbar(juce::Graphics& g, juce::ScrollBar&, int x, int y, int width, int height, bool vertical, int inicio, int tamanho,
+                       bool sobre, bool apertado) override {
+        if (tamanho <= 0) return;
+        const auto c = explorer::cores();
+        const float espessura = sobre || apertado ? 6.0f : 4.0f;
+        juce::Rectangle<float> r = vertical ? juce::Rectangle<float>(x + (width - espessura) * 0.5f, static_cast<float>(inicio) + 2.0f,
+                                                                     espessura, static_cast<float>(tamanho) - 4.0f)
+                                            : juce::Rectangle<float>(static_cast<float>(inicio) + 2.0f, y + (height - espessura) * 0.5f,
+                                                                     static_cast<float>(tamanho) - 4.0f, espessura);
+        g.setColour(c.secundario.withAlpha(sobre || apertado ? 0.55f : 0.32f));
+        g.fillRoundedRectangle(r, espessura * 0.5f);
+    }
+};
+
+// Pílula de texto da barra de navegação ("‹ Back", Thumbs | List).
+void desenharPilula(juce::Graphics& g, juce::Rectangle<float> r, bool ativa, const juce::String& texto, bool contorno = true) {
+    const auto c = explorer::cores();
+    g.setColour(ativa ? c.grafite : c.cartao);
+    g.fillRoundedRectangle(r, r.getHeight() * 0.5f);
+    if (contorno && !ativa) {
+        g.setColour(c.borda);
+        g.drawRoundedRectangle(r.reduced(0.5f), r.getHeight() * 0.5f, 1.0f);
+    }
+    g.setColour(ativa ? c.sobreGrafite : c.texto);
+    g.setFont(explorer::fonte(13.5f, ativa));
+    g.drawText(texto, r.toNearestInt(), juce::Justification::centred, false);
+}
 }  // namespace
 
-// Janela da pasta (duplo clique no nó do Folder Map), como no Mini: cabeçalho com o nome (duplo clique renomeia), VOLTAR e
-// busca; coluna esquerda com os filtros (só desta pasta) e a árvore das subpastas; grade com todos os arquivos da pasta e das
-// subpastas; ficha de metadados fixa (coluna sempre presente, vazia até haver arquivo selecionado).
+// Janela da pasta (duplo clique no nó do Folder Map) e do Project Container, no padrão do Mini: cabeçalho da moldura; barra de
+// navegação com "‹ Back", o caminho clicável, Thumbs | List e a busca; lateral com a árvore de pastas e os filtros; grade de
+// cartões com título e resumo; painel da direita com o arquivo selecionado ou o resumo da pasta.
 class JanelaPastaFlutuante::Conteudo : public juce::Component {
+    friend class JanelaPastaFlutuante;
+
 public:
     Conteudo(ProjetoAberto& projeto, const std::string& pastaId, const juce::String& nome, std::function<void()> aoMudouDados,
              std::string nestId, bool selecionarTudo)
-        : projeto_(projeto), pastaId_(pastaId), nome_(nome), aoMudouDados_(std::move(aoMudouDados)), nestId_(std::move(nestId)),
-          semPasta_(pastaId == kPastaSemPasta), selecionarTudo_(selecionarTudo) {
+        : projeto_(projeto), pastaId_(pastaId), nome_(nome), nomeRaiz_(nome), aoMudouDados_(std::move(aoMudouDados)),
+          nestId_(std::move(nestId)), semPasta_(pastaId == kPastaSemPasta), selecionarTudo_(selecionarTudo) {
+        setLookAndFeel(&laf_);
+        raizJanelaId_ = nestId_.empty() ? pastaId_ : nestId_;
+        if (!nestId_.empty()) pastaId_ = nestId_;
+
         mosaico_ = std::make_unique<MosaicoComponent>(projeto_);
+        mosaico_->definirEstiloExplorer(true);
         mosaico_->aoAbrirPreview = [this](const std::string& id) { abrirPreview(id); };
         mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> ids) { abrirMenu(std::move(ids)); };
         mosaico_->aoMudarSelecao = [this] { aoMudarSelecao(); };
-        if (!nestId_.empty()) mosaico_->definirAgruparNests(false);  // container: cada arquivo é uma célula, não a pilha do nest
-        if (!nestId_.empty())  // card de subpasta do container: entra nela
-            mosaico_->aoNavegarParaSubpasta = [this](const SubpastaInfo& sub) { entrarNaPasta(sub.id, sub.nome); };
         mosaico_->aoMudarConteudoVisivel = [this] {
             atualizarContagem();
             if (aguardandoCarga_) {  // a grade terminou de carregar: agora as contagens dos filtros (só desta pasta) são calculáveis
                 aguardandoCarga_ = false;
                 filtros_->recarregar();
             }
+            atualizarPainelSemSelecao();
             // Aberta pelo card NO FOLDER: chega com todos os arquivos selecionados — só depois que o snapshot chegou (o
             // definirFiltroItens de carregarGrade já avisa aqui, com a grade ainda vazia).
             if (selecionarTudo_ && !mosaico_->snapshotPendente() && mosaico_->totalItensCarregados() > 0) {
@@ -66,52 +137,60 @@ public:
                 mosaico_->selecionarTodos();
             }
         };
+        if (!nestId_.empty()) mosaico_->definirAgruparNests(false);  // container: cada arquivo é uma célula, não a pilha do nest
+        // Cartão de pasta: clique simples seleciona (resumo à direita), duplo clique entra.
+        mosaico_->aoNavegarParaSubpasta = [this](const SubpastaInfo& sub) { entrarNaPasta(sub.id, sub.nome); };
+        mosaico_->aoSelecionarSubpastaCard = [this](const SubpastaInfo& sub) {
+            if (const auto* no = acharNo(arvoreDoMapa_, sub.id)) mostrarResumo(*no, sub.nome);
+        };
         viewportGrade_.setViewedComponent(mosaico_.get(), false);
         viewportGrade_.setScrollBarsShown(true, false);
         addAndMakeVisible(viewportGrade_);
 
         filtros_ = std::make_unique<FiltrosComponent>(projeto_, *mosaico_, false);
-        viewportFiltros_.setViewedComponent(filtros_.get(), false);
-        addAndMakeVisible(viewportFiltros_);
+        filtros_->definirEstiloExplorer(true, true);
+        coluna_ = std::make_unique<ColunaLateral>(*this);
+        coluna_->addAndMakeVisible(*filtros_);
+        filtros_->addComponentListener(coluna_.get());
+        viewportLateral_.setViewedComponent(coluna_.get(), false);
+        viewportLateral_.setScrollBarsShown(true, false);
+        addAndMakeVisible(viewportLateral_);
 
-        // Metadados originais do arquivo selecionado, SOMENTE LEITURA (o mesmo painel do INTAKE).
-        // Ficha fixa: a coluna existe desde que a janela abre (vazia até selecionar um arquivo).
+        // Painel da direita: o arquivo selecionado (somente leitura) ou, sem seleção, o resumo da pasta.
         painel_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
         painel_->definirLayoutCompacto(true);
         painel_->mostrarItem({});
         addAndMakeVisible(*painel_);
 
-        // Thumbnails / lista, como na aba METADATA.
-        for (auto* b : { &btnGrade_, &btnLista_ }) {
-            b->setClickingTogglesState(false);
-            addAndMakeVisible(*b);
-        }
-        btnGrade_.setButtonText(i18n::t("janela_pasta.view_grade"));
-        btnLista_.setButtonText(i18n::t("janela_pasta.view_lista"));
-        btnGrade_.setToggleState(true, juce::dontSendNotification);
-        btnGrade_.onClick = [this] { definirVisao(MosaicoComponent::ModoVisao::Grade); };
-        btnLista_.onClick = [this] { definirVisao(MosaicoComponent::ModoVisao::Lista); };
+        trilha_ = std::make_unique<Trilha>(*this);
+        addAndMakeVisible(*trilha_);
+        seletorVisao_ = std::make_unique<SeletorVisao>(*this);
+        addAndMakeVisible(*seletorVisao_);
 
         // `_no folder`: R (no mosaico) marca; REJECT MARKED manda os marcados com R para o _trash do mapa.
         btnRejeitar_.setButtonText(i18n::t("janela_pasta.rejeitar_marcados"));
         btnRejeitar_.setTooltip(i18n::t("janela_pasta.rejeitar_marcados_dica"));
         btnRejeitar_.onClick = [this] { rejeitarMarcados(); };
+        moldura::estilizarBotao(btnRejeitar_, true);
         if (semPasta_) {
             addAndMakeVisible(btnRejeitar_);
             legendaR_ = std::make_unique<LegendaAtalhosIntake>(i18n::t("janela_pasta.rejeitar_marcados_dica"));  // "Shortcuts [R] Reject (?)", como no INTAKE
             addAndMakeVisible(*legendaR_);
         }
 
-        btnVoltar_.setButtonText(i18n::t("janela_pasta.voltar"));
+        btnVoltar_.setButtonText(juce::String::fromUTF8("\xe2\x80\xb9  ") + i18n::t("janela_pasta.voltar_curto"));
         btnVoltar_.onClick = [this] { voltarUmaPasta(); };
+        btnVoltar_.setColour(juce::TextButton::buttonColourId, explorer::cores().cartao);
+        btnVoltar_.setColour(juce::TextButton::textColourOffId, explorer::cores().texto);
         addChildComponent(btnVoltar_);
 
-        lblTitulo_.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
-        lblTitulo_.setColour(juce::Label::textColourId, tema().textoPrimario);
-        // Duplo clique no nome abre a caixinha de renomear a pasta.
-        if (nestId_.empty() && !semPasta_ && !projeto_.somenteLeitura() && !projeto_.mapaSelecionadoNoFolderMap().empty() &&
-            projeto_.mapaSelecionadoNoFolderMap() != ProjetoAberto::kMapaOriginal) {
+        // Renomear a pasta (Folder Map editável): duplo clique no nome atual do caminho abre este editor por cima dele.
+        lblTitulo_.setFont(explorer::fonte(17.0f, true));
+        lblTitulo_.setColour(juce::Label::textColourId, explorer::cores().texto);
+        lblTitulo_.setColour(juce::Label::backgroundWhenEditingColourId, explorer::cores().cartao);
+        if (podeRenomear()) {
             lblTitulo_.setEditable(false, true, true);
+            lblTitulo_.onEditorHide = [this] { lblTitulo_.setVisible(false); };
             lblTitulo_.onTextChange = [this] {
                 const auto novo = lblTitulo_.getText().trim();
                 if (novo.isEmpty() || novo == nome_ || !projeto_.renomearPastaAcervo(pastaId_, novo.toStdString())) {
@@ -119,110 +198,377 @@ public:
                     return;
                 }
                 nome_ = novo;
+                if (pastaId_ == raizJanelaId_) nomeRaiz_ = novo;
                 aoMudarDados();
+                recarregarItens();
             };
         }
-        addAndMakeVisible(lblTitulo_);
+        addChildComponent(lblTitulo_);
 
-        campoBusca_.setTextToShowWhenEmpty(i18n::t("janela_pasta.busca"), tema().textoTerciario);
-        campoBusca_.setIndents(12, 0);
+        campoBusca_.setTextToShowWhenEmpty(i18n::t("janela_pasta.busca"), explorer::cores().secundario);
+        campoBusca_.setIndents(34, 0);
+        campoBusca_.setJustification(juce::Justification::centredLeft);
+        campoBusca_.setFont(explorer::fonte(13.5f));
+        campoBusca_.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+        campoBusca_.setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+        campoBusca_.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+        campoBusca_.setColour(juce::TextEditor::textColourId, explorer::cores().texto);
         campoBusca_.onTextChange = [this] { mosaico_->definirBusca(campoBusca_.getText().trim()); };
         addAndMakeVisible(campoBusca_);
 
-        lblContagem_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
-        lblContagem_.setColour(juce::Label::textColourId, tema().textoSecundario);
-        addAndMakeVisible(lblContagem_);
-
-        arvore_.setRootItemVisible(true);
-        arvore_.setDefaultOpenness(true);
-        arvore_.setIndentSize(14);
-        arvore_.setColour(juce::TreeView::backgroundColourId, tema().painel);
-        addAndMakeVisible(arvore_);
-
-        setSize(1180, 720);
+        // Ocupa a tela sem passar dela (1920 x 1080 e 1440 x 900 sem nada cortado).
+        auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay() != nullptr
+                        ? juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea
+                        : juce::Rectangle<int>(0, 0, 1440, 900);
+        setSize(juce::jlimit(1000, 1680, area.getWidth() - 2 * moldura::kMargemJanelaNativa - 40),
+                juce::jlimit(560, 960, area.getHeight() - 2 * moldura::kMargemJanelaNativa - moldura::kAlturaCabecalho - 40));
         recarregarItens();
     }
 
     ~Conteudo() override {
         ++geracaoSemPasta_;
         poolSemPasta_.removeAllJobs(true, 5000);
-        arvore_.setRootItem(nullptr);
+        filtros_->removeComponentListener(coluna_.get());
+        setLookAndFeel(nullptr);
     }
 
     void paint(juce::Graphics& g) override {
-        g.fillAll(tema().fundo);
-        g.setColour(tema().borda);
-        g.fillRect(kLarguraFiltros, kAlturaCabecalho, 1, getHeight() - kAlturaCabecalho);
-        g.fillRect(0, kAlturaCabecalho - 1, getWidth(), 1);
-        g.setColour(tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
-        g.drawText(i18n::t("janela_pasta.subpastas"), rotuloArvore_, juce::Justification::centredLeft, false);
+        const auto c = explorer::cores();
+        g.fillAll(c.fundo);
+        // barra de navegação
+        g.setColour(c.barra);
+        g.fillRect(0, 0, getWidth(), kAlturaBarraNav);
+        g.setColour(c.borda);
+        g.fillRect(0, kAlturaBarraNav - 1, getWidth(), 1);
+        // lateral e divisórias
+        g.setColour(c.lateral);
+        g.fillRect(0, kAlturaBarraNav, kLarguraLateral, getHeight() - kAlturaBarraNav);
+        g.setColour(c.borda);
+        g.fillRect(kLarguraLateral, kAlturaBarraNav, 1, getHeight() - kAlturaBarraNav);
+        g.fillRect(getWidth() - kLarguraFicha - 1, kAlturaBarraNav, 1, getHeight() - kAlturaBarraNav);
+        // campo de busca: fundo em pílula com a lupa
+        const auto busca = campoBusca_.getBounds().toFloat();
+        g.setColour(c.cartao);
+        g.fillRoundedRectangle(busca, 10.0f);
+        g.setColour(c.borda);
+        g.drawRoundedRectangle(busca.reduced(0.5f), 10.0f, 1.0f);
+        const float lx = busca.getX() + 15.0f, ly = busca.getCentreY() - 1.0f;
+        g.setColour(c.secundario);
+        g.drawEllipse(lx - 5.0f, ly - 5.0f, 10.0f, 10.0f, 1.5f);
+        g.drawLine(lx + 3.6f, ly + 3.6f, lx + 7.0f, ly + 7.0f, 1.6f);
+        // título da grade: nome da pasta em negrito + resumo
+        const auto titulo = areaTituloGrade_;
+        const auto fonteNome = explorer::fonte(16.0f, true);
+        const int wNome = juce::jmin(titulo.getWidth(), explorer::larguraDoTexto(fonteNome, nome_) + 2);
+        g.setColour(c.texto);
+        g.setFont(fonteNome);
+        g.drawFittedText(nome_, titulo.withWidth(wNome), juce::Justification::centredLeft, 1, 0.85f);
+        g.setColour(c.secundario);
+        g.setFont(explorer::fonte(13.0f));
+        g.drawFittedText(resumoGrade_, titulo.withTrimmedLeft(wNome + 12), juce::Justification::centredLeft, 2, 0.85f);
     }
 
     void resized() override {
         auto area = getLocalBounds();
-        auto cab = area.removeFromTop(kAlturaCabecalho).reduced(12, 6);
+        auto nav = area.removeFromTop(kAlturaBarraNav).reduced(18, 10);
         if (btnVoltar_.isVisible()) {
-            btnVoltar_.setBounds(cab.removeFromLeft(86));
-            cab.removeFromLeft(10);
+            btnVoltar_.setBounds(nav.removeFromLeft(86).reduced(0, 1));
+            nav.removeFromLeft(14);
         }
-        campoBusca_.setBounds(cab.removeFromRight(juce::jmin(320, cab.getWidth() / 3)));
-        cab.removeFromRight(12);
-        btnLista_.setBounds(cab.removeFromRight(70));
-        btnGrade_.setBounds(cab.removeFromRight(70));
-        cab.removeFromRight(12);
+        campoBusca_.setBounds(nav.removeFromRight(juce::jmin(320, juce::jmax(200, nav.getWidth() / 4))));
+        nav.removeFromRight(12);
+        seletorVisao_->setBounds(nav.removeFromRight(132).reduced(0, 1));
+        nav.removeFromRight(12);
         if (btnRejeitar_.isVisible()) {
-            btnRejeitar_.setBounds(cab.removeFromRight(200));
-            cab.removeFromRight(12);
+            btnRejeitar_.setBounds(nav.removeFromRight(210).reduced(0, 1));
+            nav.removeFromRight(10);
+            if (legendaR_ != nullptr) {
+                legendaR_->setBounds(nav.removeFromRight(180));
+                nav.removeFromRight(10);
+            }
         }
-        lblTitulo_.setBounds(cab);
+        trilha_->setBounds(nav);
+        if (lblTitulo_.isVisible()) lblTitulo_.setBounds(trilha_->areaDoAtual().translated(trilha_->getX(), trilha_->getY()).expanded(6, 2));
 
-        auto esquerda = area.removeFromLeft(kLarguraFiltros);
+        viewportLateral_.setBounds(area.removeFromLeft(kLarguraLateral));
         area.removeFromLeft(1);
-        const int alturaFiltros = juce::jmin(esquerda.getHeight() * 3 / 5, 520);
-        viewportFiltros_.setBounds(esquerda.removeFromTop(alturaFiltros));
-        filtros_->setSize(viewportFiltros_.getMaximumVisibleWidth(), juce::jmax(filtros_->getHeight(), viewportFiltros_.getHeight()));
-        rotuloArvore_ = esquerda.removeFromTop(22).reduced(10, 0);
-        arvore_.setBounds(esquerda);
-
-        painel_->setBounds(area.removeFromRight(kLarguraFicha));
+        painel_->setBounds(area.removeFromRight(kLarguraFicha).withTrimmedLeft(1));
         area.removeFromRight(1);
-        auto topo = area.removeFromTop(30).reduced(12, 4);
-        if (legendaR_ != nullptr) {
-            legendaR_->setBounds(topo.removeFromRight(180));
-            topo.removeFromRight(8);
-        }
-        lblContagem_.setBounds(topo);
-        if (overlay_ != nullptr) overlay_->setBounds(getLocalBounds());
-        viewportGrade_.setBounds(area);
+        areaTituloGrade_ = area.removeFromTop(kAlturaTituloGrade).reduced(kMargemGrade + 4, 0).withTrimmedTop(6);
+        viewportGrade_.setBounds(area.reduced(kMargemGrade - 4, 0).withTrimmedBottom(8));
         mosaico_->setSize(viewportGrade_.getMaximumVisibleWidth(), juce::jmax(viewportGrade_.getHeight(), mosaico_->getHeight()));
+        coluna_->setSize(viewportLateral_.getMaximumVisibleWidth(), coluna_->alturaNecessaria());
+        if (overlay_ != nullptr) overlay_->setBounds(getLocalBounds());
     }
 
     bool keyPressed(const juce::KeyPress& key) override {
-        if (key == juce::KeyPress::escapeKey && !historico_.empty()) { voltarUmaPasta(); return true; }
+        if (key == juce::KeyPress::escapeKey && !naRaiz()) { voltarUmaPasta(); return true; }
         return false;
     }
+
+private:
+    // ── coluna da esquerda: árvore de pastas (FOLDER / FOLDERS) + filtros no estilo explorer ─────────────────────────
+    class ColunaLateral : public juce::Component, public juce::ComponentListener {
+    public:
+        explicit ColunaLateral(Conteudo& dono) : dono_(dono) {}
+
+        void definirArvore(const ProjetoAberto::NoArvore* no, const std::string& atualId) {
+            raiz_ = no;
+            atualId_ = atualId;
+            linhas_.clear();
+            if (raiz_ != nullptr) achatar(*raiz_, 0);
+            if (auto* p = getParentComponent()) setSize(p->getWidth(), alturaNecessaria());
+            resized();
+            repaint();
+        }
+        int alturaArvore() const { return raiz_ == nullptr ? 0 : 34 + static_cast<int>(linhas_.size()) * kAlturaLinhaArvore + 6; }
+        int alturaNecessaria() const { return alturaArvore() + dono_.filtros_->getHeight() + 12; }
+
+        void resized() override {
+            dono_.filtros_->setBounds(0, alturaArvore(), getWidth(), dono_.filtros_->getHeight());
+            dono_.filtros_->setSize(getWidth(), dono_.filtros_->getHeight());
+        }
+        void componentMovedOrResized(juce::Component&, bool, bool foiRedimensionado) override {
+            if (!foiRedimensionado) return;
+            const int h = alturaNecessaria();
+            if (getHeight() != h) setSize(getWidth(), h);
+        }
+
+        void paint(juce::Graphics& g) override {
+            const auto c = explorer::cores();
+            g.fillAll(c.lateral);
+            if (raiz_ == nullptr) return;
+            const bool pt = i18n::localeAtivo().startsWith("pt");
+            g.setColour(c.secundario);
+            g.setFont(explorer::fonteSecao());
+            g.drawText(moldura::caixaAlta(i18n::t(raiz_->filhos.empty() ? "janela_pasta.secao_pasta" : "janela_pasta.secao_pastas")),
+                       juce::Rectangle<int>(16, 0, getWidth() - 32, 30), juce::Justification::bottomLeft, false);
+            for (size_t i = 0; i < linhas_.size(); ++i) {
+                const auto& l = linhas_[i];
+                auto r = boundsDaLinha(static_cast<int>(i));
+                const bool atual = l.no->id == atualId_;
+                const bool filtrada = !atual && l.no->id == dono_.filtroArvoreId_;
+                if (atual || filtrada) {
+                    g.setColour(atual ? c.grafite : c.grafite.withAlpha(0.14f));
+                    g.fillRoundedRectangle(r.toFloat().reduced(8.0f, 2.0f), 6.0f);
+                }
+                auto miolo = r.withTrimmedLeft(12 + l.profundidade * kRecuoArvore).withTrimmedRight(16);
+                const auto seta = miolo.removeFromLeft(16);
+                if (!l.no->filhos.empty()) {
+                    juce::Path p;
+                    const float cx = static_cast<float>(seta.getCentreX()), cy = static_cast<float>(seta.getCentreY());
+                    if (l.aberto) { p.startNewSubPath(cx - 4.0f, cy - 2.0f); p.lineTo(cx, cy + 2.5f); p.lineTo(cx + 4.0f, cy - 2.0f); }
+                    else { p.startNewSubPath(cx - 2.0f, cy - 4.0f); p.lineTo(cx + 2.5f, cy); p.lineTo(cx - 2.0f, cy + 4.0f); }
+                    g.setColour(atual ? c.sobreGrafite : c.secundario);
+                    g.strokePath(p, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                }
+                miolo.removeFromLeft(2);
+                std::set<std::string> ids;
+                coletarIdsRecursivos(*l.no, ids);
+                const auto contagem = explorer::comMilhares(static_cast<int>(ids.size()), pt);
+                const auto fonteContagem = explorer::fonte(12.5f);
+                const auto areaContagem = miolo.removeFromRight(explorer::larguraDoTexto(fonteContagem, contagem) + 2);
+                miolo.removeFromRight(8);
+                g.setColour(atual ? c.sobreGrafite.withAlpha(0.85f) : c.secundario);
+                g.setFont(fonteContagem);
+                g.drawText(contagem, areaContagem, juce::Justification::centredRight, false);
+                g.setColour(atual ? c.sobreGrafite : c.texto);
+                g.setFont(explorer::fonte(13.5f, atual));
+                g.drawFittedText(l.no->nome, miolo, juce::Justification::centredLeft, 1, 0.75f);
+            }
+        }
+
+        void mouseDown(const juce::MouseEvent& e) override {
+            const int i = indiceNaPosicao(e.y);
+            if (i < 0) return;
+            const auto& l = linhas_[static_cast<size_t>(i)];
+            const int xSeta = 12 + l.profundidade * kRecuoArvore;
+            if (!l.no->filhos.empty() && e.x >= xSeta && e.x < xSeta + 18) {  // seta: abre/fecha
+                (l.aberto ? fechados_ : abertos_).insert(l.no->id);
+                (l.aberto ? abertos_ : fechados_).erase(l.no->id);
+                definirArvore(raiz_, atualId_);
+                return;
+            }
+            const auto id = l.no->id;
+            const auto nome = l.no->nome;
+            // Container: a grade só carrega a pasta atual — clicar numa pasta entra nela (como a barra lateral do Finder).
+            // Pasta do Folder Map: clicar filtra a grade por aquela subpasta (como antes); duplo clique entra.
+            juce::Component::SafePointer<Conteudo> seguro(&dono_);
+            if (!dono_.nestId_.empty()) {
+                if (id != atualId_) juce::MessageManager::callAsync([seguro, id, nome] { if (seguro) seguro->irParaPasta(id, nome); });
+            } else {
+                std::set<std::string> ids;
+                coletarIdsRecursivos(*l.no, ids);
+                dono_.filtrarPelaArvore(id == atualId_ ? std::string() : id, std::move(ids));
+                repaint();
+            }
+        }
+        void mouseDoubleClick(const juce::MouseEvent& e) override {
+            const int i = indiceNaPosicao(e.y);
+            if (i < 0 || !dono_.nestId_.empty()) return;
+            const auto id = linhas_[static_cast<size_t>(i)].no->id;
+            const auto nome = linhas_[static_cast<size_t>(i)].no->nome;
+            juce::Component::SafePointer<Conteudo> seguro(&dono_);
+            if (id != atualId_) juce::MessageManager::callAsync([seguro, id, nome] { if (seguro) seguro->irParaPasta(id, nome); });
+        }
+
+    private:
+        struct Linha { const ProjetoAberto::NoArvore* no; int profundidade; bool aberto; };
+        void achatar(const ProjetoAberto::NoArvore& no, int profundidade) {
+            const bool aberto = !fechados_.count(no.id) && (profundidade < 3 || abertos_.count(no.id) > 0);
+            linhas_.push_back({&no, profundidade, aberto && !no.filhos.empty()});
+            if (aberto)
+                for (const auto& f : no.filhos) achatar(f, profundidade + 1);
+        }
+        juce::Rectangle<int> boundsDaLinha(int i) const { return {0, 34 + i * kAlturaLinhaArvore, getWidth(), kAlturaLinhaArvore}; }
+        int indiceNaPosicao(int y) const {
+            if (y < 34) return -1;
+            const int i = (y - 34) / kAlturaLinhaArvore;
+            return i < static_cast<int>(linhas_.size()) ? i : -1;
+        }
+
+        Conteudo& dono_;
+        const ProjetoAberto::NoArvore* raiz_ = nullptr;
+        std::string atualId_;
+        std::vector<Linha> linhas_;
+        std::set<std::string> abertos_, fechados_;
+    };
+
+    // ── caminho clicável: Acervo › Site › IMAGES › PEDRA DE GUARATIBA ──────────────────────────────────────────────
+    class Trilha : public juce::Component {
+    public:
+        explicit Trilha(Conteudo& dono) : dono_(dono) {}
+        void definir(std::vector<std::pair<std::string, juce::String>> partes) {
+            partes_ = std::move(partes);
+            repaint();
+        }
+        juce::Rectangle<int> areaDoAtual() const { return areaAtual_; }
+
+        void paint(juce::Graphics& g) override {
+            const auto c = explorer::cores();
+            areas_.clear();
+            const auto fonteAnterior = explorer::fonte(14.0f);
+            const auto fonteAtual = explorer::fonte(17.0f, true);
+            const auto fonteSeta = explorer::fonte(14.0f);
+            // Larguras inteiras; se não couber, as pastas anteriores do começo saem do caminho (a atual nunca é cortada).
+            size_t primeira = 0;
+            auto larguraTotal = [&](size_t de) {
+                int w = 0;
+                for (size_t i = de; i < partes_.size(); ++i) {
+                    const bool atual = i + 1 == partes_.size();
+                    w += explorer::larguraDoTexto(atual ? fonteAtual : fonteAnterior, partes_[i].second) + 4;
+                    if (!atual) w += explorer::larguraDoTexto(fonteSeta, kSeta) + 2;
+                }
+                return w;
+            };
+            while (primeira + 1 < partes_.size() && larguraTotal(primeira) > getWidth()) ++primeira;
+            int x = 0;
+            for (size_t i = primeira; i < partes_.size(); ++i) {
+                const bool atual = i + 1 == partes_.size();
+                const auto& f = atual ? fonteAtual : fonteAnterior;
+                const int w = juce::jmin(getWidth() - x, explorer::larguraDoTexto(f, partes_[i].second) + 4);
+                const juce::Rectangle<int> r(x, 0, w, getHeight());
+                g.setColour(atual ? c.texto : c.secundario);
+                g.setFont(f);
+                g.drawFittedText(partes_[i].second, r, juce::Justification::centredLeft, 1, 0.7f);
+                if (atual) areaAtual_ = r;
+                else areas_.push_back({r, i});
+                x += w;
+                if (!atual) {
+                    const int ws = explorer::larguraDoTexto(fonteSeta, kSeta) + 2;
+                    g.setColour(c.secundario.withAlpha(0.7f));
+                    g.setFont(fonteSeta);
+                    g.drawText(kSeta, juce::Rectangle<int>(x, 0, ws, getHeight()), juce::Justification::centred, false);
+                    x += ws;
+                }
+            }
+        }
+        void mouseMove(const juce::MouseEvent& e) override {
+            bool sobre = false;
+            for (const auto& [r, i] : areas_) sobre = sobre || r.contains(e.getPosition());
+            setMouseCursor(sobre ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        }
+        void mouseUp(const juce::MouseEvent& e) override {
+            for (const auto& [r, i] : areas_)
+                if (r.contains(e.getPosition())) {
+                    const auto parte = partes_[i];
+                    juce::Component::SafePointer<Conteudo> seguro(&dono_);
+                    juce::MessageManager::callAsync([seguro, parte] { if (seguro) seguro->irParaPasta(parte.first, parte.second); });
+                    return;
+                }
+        }
+        void mouseDoubleClick(const juce::MouseEvent& e) override {
+            if (areaAtual_.contains(e.getPosition())) dono_.comecarRenomear();
+        }
+
+    private:
+        Conteudo& dono_;
+        std::vector<std::pair<std::string, juce::String>> partes_;
+        std::vector<std::pair<juce::Rectangle<int>, size_t>> areas_;
+        juce::Rectangle<int> areaAtual_;
+    };
+
+    // ── Thumbs | List em pílula (a opção ativa em grafite) ─────────────────────────────────────────────────────────
+    class SeletorVisao : public juce::Component {
+    public:
+        explicit SeletorVisao(Conteudo& dono) : dono_(dono) {}
+        void paint(juce::Graphics& g) override {
+            const auto c = explorer::cores();
+            const auto r = getLocalBounds().toFloat();
+            g.setColour(c.cartao);
+            g.fillRoundedRectangle(r, r.getHeight() * 0.5f);
+            g.setColour(c.borda);
+            g.drawRoundedRectangle(r.reduced(0.5f), r.getHeight() * 0.5f, 1.0f);
+            const bool grade = dono_.mosaico_->modoVisaoAtual() == MosaicoComponent::ModoVisao::Grade;
+            auto metade = r.reduced(3.0f);
+            const auto esquerda = metade.removeFromLeft(metade.getWidth() * 0.5f);
+            desenharPilula(g, esquerda, grade, i18n::t("janela_pasta.view_grade"), false);
+            desenharPilula(g, metade, !grade, i18n::t("janela_pasta.view_lista"), false);
+        }
+        void mouseUp(const juce::MouseEvent& e) override {
+            dono_.definirVisao(e.x < getWidth() / 2 ? MosaicoComponent::ModoVisao::Grade : MosaicoComponent::ModoVisao::Lista);
+            repaint();
+        }
+    private:
+        Conteudo& dono_;
+    };
+
+    bool podeRenomear() const {
+        return nestId_.empty() && !semPasta_ && !projeto_.somenteLeitura() && !projeto_.mapaSelecionadoNoFolderMap().empty() &&
+               projeto_.mapaSelecionadoNoFolderMap() != ProjetoAberto::kMapaOriginal;
+    }
+
+    void comecarRenomear() {
+        if (!podeRenomear()) return;
+        lblTitulo_.setText(nome_, juce::dontSendNotification);
+        lblTitulo_.setVisible(true);
+        resized();
+        lblTitulo_.showEditor();
+    }
+
+    bool naRaiz() const { return semPasta_ || pastaId_ == raizJanelaId_ || caminho_.size() <= 1; }
 
     // Todos os arquivos da pasta e das subpastas — do mapa selecionado no Folder Map (o ORIGINAL é virtual: os ids vêm da
     // árvore dele, não de acervo_item_pasta).
     void recarregarItens() {
         ids_.clear();
-        const ProjetoAberto::NoArvore* noRaiz = nullptr;
+        filtroArvoreId_.clear();
         if (!nestId_.empty()) { recarregarContainer(); return; }
         if (semPasta_) { recarregarSemPasta(); return; }
+        const ProjetoAberto::NoArvore* noRaiz = nullptr;
         try {
             std::string mapa = projeto_.mapaSelecionadoNoFolderMap();
             if (mapa.empty()) mapa = projeto_.mapaAtivoPadrao();
             arvoreDoMapa_ = projeto_.arvoreAcervo(mapa.empty() ? ProjetoAberto::kMapaOriginal : mapa);
             noRaiz = acharNo(arvoreDoMapa_, pastaId_);
         } catch (...) {}
-        ProjetoAberto::NoArvore noCopia;
         if (noRaiz != nullptr) {
-            noCopia = *noRaiz;
             coletarIdsRecursivos(*noRaiz, ids_);
         } else {
-            noCopia.id = pastaId_;
-            noCopia.nome = nome_;
+            ProjetoAberto::NoArvore avulsa;
+            avulsa.id = pastaId_;
+            avulsa.nome = nome_;
+            arvoreDoMapa_ = avulsa;
         }
         if (ids_.empty() && noRaiz == nullptr) {  // pasta fora da árvore (ex.: _trash): consulta direta
             try {
@@ -233,17 +579,19 @@ public:
                 st.bind(1, matriz::db::Value::of(pastaId_));
                 while (st.step()) ids_.insert(st.columnText(0));
             } catch (...) {}
+            arvoreDoMapa_.itemIds = ids_;
         }
-        lblTitulo_.setText(nome_, juce::dontSendNotification);
-        construirArvore(noCopia);
-        carregarGrade();
+        atualizarNavegacao();
+        const auto* atual = acharNo(arvoreDoMapa_, pastaId_);
+        coluna_->definirArvore(atual, pastaId_);
+        filtros_->definirEstiloExplorer(true, naRaiz());
+        mosaico_->definirSubpastas({});
+        carregarGrade(ids_);
     }
 
-private:
     // `_no folder`: os ids (itensSemPasta, a mesma regra do card NO FOLDER) e quantos deles estão no INTAKE ou com CONTENT =
     // Hidden — os dois casos que a grade da aba METADATA não mostra — são lidos fora da message thread.
     void recarregarSemPasta() {
-        lblTitulo_.setText(nome_, juce::dontSendNotification);
         std::string mapa = projeto_.mapaSelecionadoNoFolderMap();
         if (mapa.empty()) mapa = projeto_.mapaAtivoPadrao();
         const int geracao = ++geracaoSemPasta_;
@@ -272,16 +620,18 @@ private:
                 raiz.id = kPastaSemPasta;
                 raiz.nome = seguro->nome_;
                 raiz.itemIds = seguro->ids_;
-                seguro->construirArvore(raiz);
-                seguro->carregarGrade();
+                seguro->arvoreDoMapa_ = std::move(raiz);
+                seguro->atualizarNavegacao();
+                seguro->coluna_->definirArvore(&seguro->arvoreDoMapa_, seguro->pastaId_);
+                seguro->filtros_->definirEstiloExplorer(true, false);
+                seguro->carregarGrade(seguro->ids_);
             });
         });
     }
 
     // CONTAINER: as pastas de origem dos membros, como no Finder — a grade mostra as subpastas (cards) e os arquivos que estão
-    // direto na pasta atual; duplo clique entra, VOLTAR/ESC sobe. A árvore é lida fora da message thread.
+    // direto na pasta atual; duplo clique entra, Back/ESC sobe. A árvore é lida fora da message thread.
     void recarregarContainer() {
-        lblTitulo_.setText(nome_, juce::dontSendNotification);
         const int geracao = ++geracaoSemPasta_;
         juce::Component::SafePointer<Conteudo> seguro(this);
         ProjetoAberto* proj = &projeto_;
@@ -298,31 +648,36 @@ private:
             juce::MessageManager::callAsync([seguro, geracao, noIntake, arvore = std::move(arvore)]() mutable {
                 if (seguro == nullptr || geracao != seguro->geracaoSemPasta_.load()) return;
                 seguro->mosaico_->definirModoQuarentena(noIntake);
-                seguro->mostrarPastaDoContainer(std::move(arvore));
+                seguro->arvoreDoMapa_ = std::move(arvore);
+                seguro->arvoreDoMapa_.nome = seguro->nomeRaiz_;  // a raiz não tem nome no disco: vale o do container
+                seguro->mostrarPastaDoContainer();
             });
         });
     }
 
-    void mostrarPastaDoContainer(ProjetoAberto::NoArvore arvore) {
-        arvoreDoMapa_ = std::move(arvore);
+    void mostrarPastaDoContainer() {
         const auto* atual = acharNo(arvoreDoMapa_, pastaId_);
-        if (atual == nullptr) atual = &arvoreDoMapa_;  // pastaId de quem abriu não é nó do container: a raiz
-        ProjetoAberto::NoArvore no = *atual;
-        no.nome = nome_;  // a raiz não tem nome no disco: vale o do container (nas subpastas, nome_ já é o da pasta)
+        if (atual == nullptr) { pastaId_ = arvoreDoMapa_.id; atual = &arvoreDoMapa_; }
+        nome_ = atual->nome;
         std::vector<SubpastaInfo> subpastas;
-        for (const auto& f : no.filhos) {
+        for (const auto& f : atual->filhos) {
             SubpastaInfo s;
             s.id = f.id;
             s.nome = f.nome;
             coletarIdsRecursivos(f, s.itemIds);
             s.quantidade = static_cast<int>(s.itemIds.size());
+            s.subpastas = static_cast<int>(f.filhos.size());
             subpastas.push_back(std::move(s));
         }
-        // Sem subpastas a grade é a de sempre (todos os membros); com elas, só os arquivos que estão direto nesta pasta.
-        ids_ = no.filhos.empty() ? no.itemIds : no.itemIdsDiretos;
+        // Sem subpastas a grade mostra todos os arquivos dela; com elas, só os que estão direto nesta pasta (as pastas viram cartões).
+        ids_ = atual->filhos.empty() ? atual->itemIds : atual->itemIdsDiretos;
+        atualizarNavegacao();
         mosaico_->definirSubpastas(std::move(subpastas));
-        construirArvore(no);
-        carregarGrade();
+        coluna_->definirArvore(atual, pastaId_);
+        filtros_->definirEstiloExplorer(!ids_.empty(), naRaiz());
+        std::set<std::string> todos;
+        coletarIdsRecursivos(arvoreDoMapa_, todos);
+        carregarGrade(todos);  // o container inteiro fica carregado: navegar entre as pastas não relê o banco
     }
 
     // REJECT MARKED (`_no folder`): os arquivos desta pasta marcados com R vão para o _trash do mapa (de lá, RESTORE os traz de
@@ -356,107 +711,173 @@ private:
     }
 
     // O snapshot da grade roda em background (como no resto do app); os filtros recontam quando ele termina.
-    void carregarGrade() {
+    // `escopo` = o que fica carregado (no container, ele inteiro); a grade mostra ids_.
+    void carregarGrade(const std::set<std::string>& escopo) {
         aguardandoCarga_ = true;
-        mosaico_->definirEscopoCarga(ids_);  // só os arquivos desta janela, não o catálogo inteiro (19 mil itens = ~8 s de grade vazia)
+        const bool reler = !escopoCarregado_.has_value() || *escopoCarregado_ != escopo;
+        if (reler) {
+            escopoCarregado_ = escopo;
+            mosaico_->definirEscopoCarga(escopo);  // só os arquivos desta janela, não o catálogo inteiro (19 mil itens = ~8 s de grade vazia)
+        }
+        mosaico_->limparSelecao();
         mosaico_->definirFiltroItens(ids_);
         filtros_->definirEscopo(ids_);
-        mosaico_->recarregar();
+        if (reler) {
+            mosaico_->recarregar();
+        } else {
+            aguardandoCarga_ = false;
+            filtros_->recarregar();
+        }
+        viewportGrade_.setViewPosition(0, 0);
         atualizarContagem();
+        atualizarPainelSemSelecao();
         resized();
     }
 
-    // ── árvore das subpastas ──────────────────────────────────────────────────────────────────────────────
-    class ItemPasta : public juce::TreeViewItem {
-    public:
-        ItemPasta(Conteudo& dono, ProjetoAberto::NoArvore no, bool raiz) : dono_(dono), no_(std::move(no)), raiz_(raiz) {
-            coletarIdsRecursivos(no_, ids_);
+    // Caminho da raiz da janela até a pasta atual: o caminho clicável e o Back.
+    void atualizarNavegacao() {
+        caminho_.clear();
+        std::vector<const ProjetoAberto::NoArvore*> nos;
+        const auto* raizJanela = acharNo(arvoreDoMapa_, raizJanelaId_);
+        if (raizJanela == nullptr) raizJanela = &arvoreDoMapa_;
+        if (caminhoAte(*raizJanela, pastaId_, nos)) {
+            for (size_t i = 0; i < nos.size(); ++i)
+                caminho_.push_back({nos[i]->id, i == 0 ? nomeRaiz_ : nos[i]->nome});
         }
-        bool mightContainSubItems() override { return !no_.filhos.empty(); }
-        int getItemHeight() const override { return 22; }
-        void itemOpennessChanged(bool aberto) override {
-            if (aberto && getNumSubItems() == 0)
-                for (const auto& f : no_.filhos) addSubItem(new ItemPasta(dono_, f, false));
-        }
-        void paintItem(juce::Graphics& g, int w, int h) override {
-            const auto& tk = tema();
-            if (isSelected()) { g.setColour(tk.acento.withAlpha(0.18f)); g.fillRoundedRectangle(2.0f, 1.0f, static_cast<float>(w - 4), static_cast<float>(h - 2), 4.0f); }
-            g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena + 1.0f, raiz_ ? juce::Font::bold : juce::Font::plain)));
-            g.drawText(no_.nome, 6, 0, w - 52, h, juce::Justification::centredLeft, true);
-            g.setColour(tk.textoTerciario);
-            g.drawText(juce::String(static_cast<int>(ids_.size())), w - 48, 0, 42, h, juce::Justification::centredRight, false);
-        }
-        void itemClicked(const juce::MouseEvent&) override {
-            // No container a grade só carrega a pasta atual: clicar numa subpasta entra nela (como a barra lateral do Finder).
-            if (!raiz_ && !dono_.nestId_.empty()) { dono_.entrarNaPasta(no_.id, no_.nome); return; }
-            dono_.aoSelecionarSubpasta(ids_);
-        }
-        void itemDoubleClicked(const juce::MouseEvent&) override { if (!raiz_) dono_.entrarNaPasta(no_.id, no_.nome); }
-        juce::String getUniqueName() const override { return juce::String(no_.id); }
-
-    private:
-        Conteudo& dono_;
-        ProjetoAberto::NoArvore no_;
-        bool raiz_;
-        std::set<std::string> ids_;
-    };
-
-    void construirArvore(const ProjetoAberto::NoArvore& no) {
-        arvore_.setRootItem(nullptr);
-        raizArvore_ = std::make_unique<ItemPasta>(*this, no, true);
-        arvore_.setRootItem(raizArvore_.get());
-        raizArvore_->setOpen(true);
+        if (caminho_.empty()) caminho_.push_back({pastaId_, nome_});
+        nome_ = caminho_.back().second;
+        trilha_->definir(caminho_);
+        btnVoltar_.setVisible(!naRaiz());
+        resized();
     }
 
-    void aoSelecionarSubpasta(const std::set<std::string>& ids) {
-        mosaico_->definirFiltroItens(ids.empty() ? ids_ : ids);
-        mosaico_->recarregar();
-    }
-
-    void entrarNaPasta(const std::string& id, const juce::String& nome) {
-        if (id.empty() || id == pastaId_) return;  // clique + duplo clique no mesmo nó: entra uma vez só
-        historico_.emplace_back(pastaId_, nome_);
+    void irParaPasta(const std::string& id, const juce::String& nome) {
+        if (id.empty() || id == pastaId_) return;
         pastaId_ = id;
         nome_ = nome;
-        btnVoltar_.setVisible(true);
+        if (!nestId_.empty() && arvoreDoMapa_.id == nestId_) {  // container: a árvore já está carregada, só muda a pasta
+            filtroArvoreId_.clear();
+            mostrarPastaDoContainer();
+            return;
+        }
         recarregarItens();
     }
+
+    void entrarNaPasta(const std::string& id, const juce::String& nome) { irParaPasta(id, nome); }
 
     void voltarUmaPasta() {
-        if (historico_.empty()) return;
-        const auto anterior = historico_.back();
-        historico_.pop_back();
-        pastaId_ = anterior.first;
-        nome_ = anterior.second;
-        btnVoltar_.setVisible(!historico_.empty());
-        recarregarItens();
+        if (caminho_.size() < 2) return;
+        const auto anterior = caminho_[caminho_.size() - 2];
+        irParaPasta(anterior.first, anterior.second);
     }
 
-    // ── ficha lateral ─────────────────────────────────────────────────────────────────────────────────────
+    // Pasta do Folder Map: clicar numa subpasta da lateral filtra a grade por ela (de novo na mesma = tira o filtro).
+    void filtrarPelaArvore(const std::string& id, std::set<std::string> ids) {
+        filtroArvoreId_ = (id == filtroArvoreId_) ? std::string() : id;
+        mosaico_->definirFiltroItens(filtroArvoreId_.empty() ? ids_ : ids);
+        atualizarPainelSemSelecao();
+    }
+
+    // ── painel da direita ───────────────────────────────────────────────────────────────────────────────────────
     void definirVisao(MosaicoComponent::ModoVisao modo) {
         mosaico_->definirModoVisao(modo);
-        btnGrade_.setToggleState(modo == MosaicoComponent::ModoVisao::Grade, juce::dontSendNotification);
-        btnLista_.setToggleState(modo == MosaicoComponent::ModoVisao::Lista, juce::dontSendNotification);
+        seletorVisao_->repaint();
         resized();
     }
 
     void aoMudarSelecao() {
         const auto sel = mosaico_->itensSelecionados();
-        painel_->mostrarItem(sel.empty() ? std::string() : *sel.begin());
+        if (sel.empty()) atualizarPainelSemSelecao();
+        else painel_->mostrarItem(*sel.begin());
         atualizarContagem();
-        resized();
+        repaint(areaTituloGrade_);
+    }
+
+    // Nada selecionado: o resumo da pasta atual (ou do cartão de pasta selecionado na grade).
+    void atualizarPainelSemSelecao() {
+        if (painel_ == nullptr || !mosaico_->itensSelecionados().empty()) return;  // o mosaico já avisa durante a construção
+        if (const auto* sub = mosaico_->subpastaSelecionada())
+            if (const auto* no = acharNo(arvoreDoMapa_, sub->id)) { mostrarResumo(*no, sub->nome); return; }
+        if (const auto* atual = acharNo(arvoreDoMapa_, pastaId_)) mostrarResumo(*atual, nome_);
+        else { ProjetoAberto::NoArvore avulsa; avulsa.id = pastaId_; avulsa.itemIds = ids_; mostrarResumo(avulsa, nome_); }
+    }
+
+    // Arquivos, tamanho, tipos e datas saem da grade já carregada (nada de banco aqui).
+    void mostrarResumo(const ProjetoAberto::NoArvore& no, const juce::String& nome) {
+        PainelMetadadosArquivo::ResumoPasta r;
+        r.nome = nome;
+        std::vector<const ProjetoAberto::NoArvore*> nos;
+        const auto* raizJanela = acharNo(arvoreDoMapa_, raizJanelaId_);
+        if (raizJanela == nullptr) raizJanela = &arvoreDoMapa_;
+        if (caminhoAte(*raizJanela, no.id, nos) && nos.size() > 1) {
+            juce::StringArray partes;
+            for (size_t i = 0; i < nos.size(); ++i) partes.add(i == 0 ? nomeRaiz_ : nos[i]->nome);
+            r.caminho = partes.joinIntoString(kSeta);
+        }
+        std::set<std::string> ids;
+        coletarIdsRecursivos(no, ids);
+        if (ids.empty() && no.id == pastaId_) ids = ids_;
+        r.arquivos = static_cast<int>(ids.size());
+        r.subpastas = contarSubpastas(no);
+        juce::StringArray volumes;
+        for (const auto& item : mosaico_->todosItensEmMemoria()) {
+            if (ids.count(item.id) == 0) continue;
+            r.bytes += item.tamanhoBytes;
+            switch (explorer::tipoDaExtensao(juce::String(item.extensaoArquivo))) {
+                case explorer::Tipo::Video: ++r.video; break;
+                case explorer::Tipo::Audio: ++r.audio; break;
+                case explorer::Tipo::Foto: ++r.foto; break;
+                case explorer::Tipo::Documento: ++r.documento; break;
+            }
+            auto data = juce::String::fromUTF8((item.dataCriacao.empty() ? item.criadoEm : item.dataCriacao).c_str()).substring(0, 10);
+            data = data.replaceCharacter(':', '-');
+            if (data.length() == 10 && data.substring(0, 4).containsOnly("0123456789")) {
+                if (r.maisAntigo.isEmpty() || data < r.maisAntigo) r.maisAntigo = data;
+                if (r.maisRecente.isEmpty() || data > r.maisRecente) r.maisRecente = data;
+            }
+            // Vault: o volume de onde os arquivos vieram (/Volumes/<nome>/... no macOS, a unidade no Windows).
+            const auto origem = juce::String::fromUTF8(item.caminhoAbsolutoOrigem.c_str());
+            juce::String volume;
+            if (origem.startsWith("/Volumes/")) volume = origem.substring(9).upToFirstOccurrenceOf("/", false, false);
+            else if (origem.length() > 2 && origem[1] == ':') volume = origem.substring(0, 2).toUpperCase();
+            if (volume.isNotEmpty()) volumes.addIfNotAlreadyThere(volume);
+        }
+        r.vault = volumes.joinIntoString(", ");
+        painel_->mostrarResumoPasta(r);
     }
 
     void atualizarContagem() {
-        const int n = static_cast<int>(ids_.size());
         const int sel = static_cast<int>(mosaico_->itensSelecionados().size());
-        lblContagem_.setText(nome_ + juce::String::fromUTF8("  \xc2\xb7  ") +
-                                 i18n::t("janela_pasta.contagem").replace("{n}", juce::String(n)) +
-                                 (sel > 0 ? juce::String::fromUTF8("  \xc2\xb7  ") + i18n::t("janela_pasta.selecionados").replace("{n}", juce::String(sel)) : juce::String()) +
-                                 (semPasta_ && semPastaOcultos_ > 0 ? juce::String::fromUTF8("  \xc2\xb7  ") + i18n::t("janela_pasta.sem_pasta_ocultos").replace("{n}", juce::String(semPastaOcultos_)) : juce::String()) +
-                                 (semPasta_ && semPastaNoIntake_ > 0 ? juce::String::fromUTF8("  \xc2\xb7  ") + i18n::t("janela_pasta.sem_pasta_intake").replace("{n}", juce::String(semPastaNoIntake_)) : juce::String()),
-                             juce::dontSendNotification);
+        juce::StringArray partes;
+        const auto* atual = acharNo(arvoreDoMapa_, pastaId_);
+        const int nPastas = (atual != nullptr && !nestId_.empty()) ? static_cast<int>(atual->filhos.size()) : 0;
+        if (nPastas > 0) {
+            std::set<std::string> todos;
+            coletarIdsRecursivos(*atual, todos);
+            partes.add(contagemI18n("janela_pasta.n_pastas", nPastas));
+            partes.add(contagemI18n("janela_pasta.n_arquivos", static_cast<int>(todos.size())));
+        } else {
+            int foto = 0, video = 0, audio = 0, documento = 0;
+            for (const auto& item : mosaico_->todosItensEmMemoria()) {
+                if (ids_.count(item.id) == 0) continue;
+                switch (explorer::tipoDaExtensao(juce::String(item.extensaoArquivo))) {
+                    case explorer::Tipo::Video: ++video; break;
+                    case explorer::Tipo::Audio: ++audio; break;
+                    case explorer::Tipo::Foto: ++foto; break;
+                    case explorer::Tipo::Documento: ++documento; break;
+                }
+            }
+            partes.add(contagemI18n("janela_pasta.n_arquivos", static_cast<int>(ids_.size())));
+            if (foto > 0) partes.add(contagemI18n("janela_pasta.n_fotos", foto));
+            if (video > 0) partes.add(contagemI18n("janela_pasta.n_videos", video));
+            if (audio > 0) partes.add(contagemI18n("janela_pasta.n_audios", audio));
+            if (documento > 0) partes.add(contagemI18n("janela_pasta.n_documentos", documento));
+        }
+        if (sel > 0) partes.add(i18n::t("janela_pasta.selecionados").replace("{n}", juce::String(sel)));
+        if (semPasta_ && semPastaOcultos_ > 0) partes.add(i18n::t("janela_pasta.sem_pasta_ocultos").replace("{n}", juce::String(semPastaOcultos_)));
+        if (semPasta_ && semPastaNoIntake_ > 0) partes.add(i18n::t("janela_pasta.sem_pasta_intake").replace("{n}", juce::String(semPastaNoIntake_)));
+        resumoGrade_ = partes.joinIntoString(kPonto);
+        repaint(areaTituloGrade_);
     }
 
     void aoMudarDados() {
@@ -468,7 +889,12 @@ private:
     acoes::Ganchos ganchos() {
         acoes::Ganchos g;
         juce::Component::SafePointer<Conteudo> seguro(this);
-        g.aoMudarDados = [seguro] { if (seguro) seguro->recarregarItens(); if (seguro && seguro->aoMudouDados_) seguro->aoMudouDados_(); };
+        g.aoMudarDados = [seguro] {
+            if (!seguro) return;
+            seguro->escopoCarregado_.reset();  // relê a grade: algo mudou no banco
+            seguro->recarregarItens();
+            if (seguro->aoMudouDados_) seguro->aoMudouDados_();
+        };
         g.aoAbrirDetalhes = [] {};
         g.aoFiltrarItens = [seguro](std::set<std::string> ids) { if (seguro) seguro->mosaico_->definirFiltroItens(std::move(ids)); };
         g.itemEmMemoria = [seguro](const std::string& id) -> const ItemResumo* { return seguro ? seguro->mosaico_->itemEmMemoria(id) : nullptr; };
@@ -482,7 +908,8 @@ private:
         if (ids.empty()) return;
         auto menu = acoes::construirMenu(projeto_, ids, ganchos().itemEmMemoria, true);
         menu.addSeparator();
-        if (!semPasta_) menu.addItem(kMenuExtrairDaPasta, i18n::t("janela_pasta.extrair"));  // `_no folder`: não há de onde extrair
+        // `_no folder` e container: não há pasta do Folder Map de onde extrair.
+        if (!semPasta_ && nestId_.empty()) menu.addItem(kMenuExtrairDaPasta, i18n::t("janela_pasta.extrair"));
         menu.addItem(kMenuMoverParaPasta, i18n::t("janela_pasta.mover"));
         juce::Component::SafePointer<Conteudo> seguro(this);
         ProjetoAberto* proj = &projeto_;
@@ -497,6 +924,7 @@ private:
                 };
                 if (const auto* raiz = acharNo(seguro->arvoreDoMapa_, seguro->pastaId_)) coleta(*raiz);
                 proj->removerItensDasPastas(std::vector<std::string>(ids.begin(), ids.end()), pastas);  // um passo de Undo
+                seguro->escopoCarregado_.reset();
                 seguro->recarregarItens();
                 if (seguro->aoMudouDados_) seguro->aoMudouDados_();
             } else if (r == kMenuMoverParaPasta) {
@@ -519,6 +947,7 @@ private:
                 if (seguro == nullptr) return;
                 seguro->overlay_.reset();
                 if (aplicou) seguro->aoMudarDados();
+                seguro->escopoCarregado_.reset();
                 seguro->recarregarItens();
             });
         });
@@ -538,19 +967,26 @@ private:
         janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou);
     }
 
+    LookAndFeelExplorer laf_;  // primeiro membro: vive mais que os componentes que o usam
     ProjetoAberto& projeto_;
     std::string pastaId_;
-    juce::String nome_;
+    std::string raizJanelaId_;  // pasta (ou container) que a janela abriu: a raiz do caminho
+    juce::String nome_, nomeRaiz_;
     std::function<void()> aoMudouDados_;
     std::set<std::string> ids_;
+    std::optional<std::set<std::string>> escopoCarregado_;
     ProjetoAberto::NoArvore arvoreDoMapa_;
-    std::vector<std::pair<std::string, juce::String>> historico_;  // (id, nome) das pastas por onde se entrou, para VOLTAR
+    std::vector<std::pair<std::string, juce::String>> caminho_;  // (id, nome) da raiz da janela até a pasta atual
+    std::string filtroArvoreId_;  // pasta do Folder Map: subpasta da lateral que filtra a grade
     std::unique_ptr<MosaicoComponent> mosaico_;
     std::unique_ptr<FiltrosComponent> filtros_;
+    std::unique_ptr<ColunaLateral> coluna_;
     std::unique_ptr<PainelMetadadosArquivo> painel_;
+    std::unique_ptr<Trilha> trilha_;
+    std::unique_ptr<SeletorVisao> seletorVisao_;
     std::unique_ptr<PainelOverlay> overlay_;
-    juce::Viewport viewportGrade_, viewportFiltros_;
-    juce::TextButton btnVoltar_, btnGrade_, btnLista_, btnRejeitar_;
+    juce::Viewport viewportGrade_, viewportLateral_;
+    juce::TextButton btnVoltar_, btnRejeitar_;
     std::unique_ptr<LegendaAtalhosIntake> legendaR_;  // só no `_no folder`
     std::string nestId_;  // não vazio = janela de um CONTAINER (só os membros dele)
     bool semPasta_ = false;        // pasta virtual `_no folder` (pastaId == kPastaSemPasta)
@@ -559,22 +995,23 @@ private:
     std::atomic<int> geracaoSemPasta_{0};
     juce::ThreadPool poolSemPasta_{1};
     bool aguardandoCarga_ = false;
-    juce::Label lblTitulo_, lblContagem_;
+    juce::Label lblTitulo_;
     juce::TextEditor campoBusca_;
-    juce::TreeView arvore_;
-    std::unique_ptr<ItemPasta> raizArvore_;
-    juce::Rectangle<int> rotuloArvore_;
+    juce::Rectangle<int> areaTituloGrade_;
+    juce::String resumoGrade_;
     std::unique_ptr<FloatingPreviewWindow> janelaPreview_;
 };
 
 JanelaPastaFlutuante::JanelaPastaFlutuante(ProjetoAberto& projeto, const std::string& pastaId, const juce::String& nomePasta,
                                            std::function<void()> aoFechar, std::function<void()> aoMudouDados, const std::string& nestId,
                                            bool selecionarTudo)
-    : juce::DocumentWindow("FOLDER: " + nomePasta, moldura::paleta().fundo, juce::DocumentWindow::closeButton),
+    : juce::DocumentWindow("FOLDER: " + nomePasta, juce::Colours::transparentBlack, juce::DocumentWindow::closeButton),
       aoFechar_(std::move(aoFechar)) {
-    // Moldura do sistema de janelas: sem barra nativa; cabeçalho + X redondo (mesma ação do antigo EXIT).
+    // Moldura do sistema de janelas: sem barra nativa; cabeçalho + X redondo (mesma ação do antigo EXIT). Janela transparente e
+    // sem a sombra do sistema: fora dos cantos arredondados não há fundo (nada de retângulo bege ou cantos pretos atrás).
     setUsingNativeTitleBar(false);
     setTitleBarHeight(0);
+    setDropShadowEnabled(false);
     setResizable(true, false);
     auto* conteudo = new Conteudo(projeto, pastaId, nomePasta, std::move(aoMudouDados), nestId, selecionarTudo);
     conteudo_ = conteudo;
@@ -588,13 +1025,25 @@ JanelaPastaFlutuante::JanelaPastaFlutuante(ProjetoAberto& projeto, const std::st
     }
     auto* moldurada = new moldura::JanelaMoldura(conteudo, moldura::Secao::Explorador, "Folder Map", titulo);
     setContentOwned(moldurada, true);
-    setResizeLimits(900, 560, 4000, 3000);
+    setBackgroundColour(juce::Colours::transparentBlack);
+    setResizeLimits(moldura::tamanhoComMargem(1000), moldura::tamanhoComMargem(560 + moldura::kAlturaCabecalho), 5000, 4000);
     centreWithSize(getWidth(), getHeight());
     setVisible(true);
     toFront(true);
 }
 
 JanelaPastaFlutuante::~JanelaPastaFlutuante() { clearContentComponent(); }
+
+void JanelaPastaFlutuante::irParaPastaParaTeste(const std::string& id, const juce::String& nome) {
+    if (conteudo_ != nullptr) conteudo_->irParaPasta(id, nome);
+}
+
+void JanelaPastaFlutuante::mostrarArquivoParaTeste(const std::string& itemId) {
+    if (conteudo_ != nullptr) {
+        conteudo_->mosaico_->definirSelecao({itemId});
+        conteudo_->painel_->mostrarItem(itemId);
+    }
+}
 
 void JanelaPastaFlutuante::closeButtonPressed() {
     juce::Component::SafePointer<JanelaPastaFlutuante> seguro(this);

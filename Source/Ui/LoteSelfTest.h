@@ -12,5 +12,8 @@ namespace matriz::ui {
 int rodarLoteSelfTest();
 // Recorte rápido, com projeto temporário próprio: --selftest-duplicates-results.
 int rodarDuplicatasResultadosSelfTest();
+// Janela Explorer · Folder Map de um Project Container com pastas: PNGs da raiz, de uma pasta e do resumo em ./test-output
+// (--selftest-explorer-visual).
+int rodarExplorerVisualSelfTest();
 
 } // namespace matriz::ui
