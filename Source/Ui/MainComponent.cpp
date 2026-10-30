@@ -60,6 +60,7 @@
 #include "ProjectLoadingModalDialog.h"
 #include "Tokens.h"
 #include "DuplicateResolutionDialog.h"
+#include "TiposContainer.h"
 
 namespace matriz::ui {
 
@@ -4315,17 +4316,24 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         const std::string iconeDoContainer = sobre != nullptr ? sobre->iconeContainer : std::string();
         const std::string questionarioJson = sobre != nullptr ? questionarioParaJson(*sobre) : std::string();  // para editar depois
         const std::string nomeDoContainer = sobre != nullptr ? sobre->nomeContainer : std::string();
+        const std::string tipoDoContainer = sobre != nullptr ? sobre->tipoContainer : std::string();
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
-        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer](const std::vector<std::string>& processados) {
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer, tipoDoContainer](const std::vector<std::string>& processados) {
             if (!seguroContainer || !seguroContainer->projetoAberto_) return;
             std::vector<std::string> doContainer;
             for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
             if (doContainer.size() < 2) return;
             ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
-            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer] {
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem, capaDoContainer, capaFrameDoVideo, iconeDoContainer, questionarioJson, nomeDoContainer, tipoDoContainer] {
                 try {
-                    const std::string nestId = proj->criarContainerImportacao(doContainer, origem);
+                    const std::string nestId = proj->criarContainerImportacao(doContainer, origem, tipoDoContainer);
+                    // PRODUCTION PACKAGE: CONTENT do tipo só nos arquivos da categoria dele; sem nome na ficha, o da pasta importada.
+                    if (const auto* tipo = tipoDeContainer(tipoDoContainer); !nestId.empty() && tipo != nullptr) {
+                        aplicarContentDoTipo(*proj, doContainer, *tipo);
+                        if (nomeDoContainer.empty())
+                            proj->definirNomeDoContainer(nestId, nomePadraoDoContainer(*proj, doContainer, rotuloDoTipoContainer(*tipo)).toStdString());
+                    }
                     if (!nestId.empty() && !iconeDoContainer.empty()) proj->definirIconeDoContainer(nestId, iconeDoContainer);
                     if (!nestId.empty() && !questionarioJson.empty()) proj->definirQuestionarioDoContainer(nestId, questionarioJson);
                     if (!nestId.empty() && !nomeDoContainer.empty()) proj->definirNomeDoContainer(nestId, nomeDoContainer);

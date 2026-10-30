@@ -51,6 +51,10 @@ struct SobreMaterial {
     // viram um NEST — um agrupamento temático, sem origem — e não um container. Não é metadado do arquivo.
     bool agruparComoNest = false;
 
+    // Tipo do "Group as Project Container" (ex.: "podcast.audio") que o container de importação já nasce tendo (cards do
+    // PRODUCTION PACKAGE). Vazio = o container vale pelo que `containerOrigem` diz. Não é metadado do arquivo.
+    std::string tipoContainer;
+
     // Container sem capa escolhida: a miniatura dele é um frame sorteado do meio do vídeo principal (YouTube Production).
     bool capaFrameDoVideo = false;
 

@@ -4540,7 +4540,10 @@ void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id, s
         return;
     }
     const auto contexto = mesclarContextosImportar(contextoDaFolhaImportar(id), std::move(daFicha));
-    auto seletor = std::make_shared<juce::FileChooser>(i18n::t("imp.titulo") + " - " + i18n::t("imp.node." + id));
+    // PRODUCTION PACKAGE: o nome da folha é o do tipo de container.
+    const auto* tipo = id.rfind("production.", 0) == 0 ? tipoDeContainer(id.substr(11)) : nullptr;
+    const juce::String rotulo = tipo != nullptr ? rotuloDoTipoContainer(*tipo) : i18n::t("imp.node." + id);
+    auto seletor = std::make_shared<juce::FileChooser>(i18n::t("imp.titulo") + " - " + rotulo);
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
     seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |
                              juce::FileBrowserComponent::canSelectDirectories | juce::FileBrowserComponent::canSelectMultipleItems,

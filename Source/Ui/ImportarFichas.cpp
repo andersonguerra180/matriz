@@ -3,6 +3,7 @@
 #include "EventBus.h"
 #include "GeoAcoes.h"
 #include "ProjetoAberto.h"
+#include "TiposContainer.h"
 
 #include <cmath>
 #include <map>
@@ -801,6 +802,17 @@ std::shared_ptr<const SobreMaterial> contextoDaFolhaImportar(const std::string& 
         { "other.social.x", "", "", { "Social media", "Twitter / X" } },
         { "other.social.other", "", "", { "Social media" } },
     };
+    // PRODUCTION PACKAGE: "production.<tipo>" importa direto num container daquele tipo (podcast, acervo...). O CONTENT do tipo
+    // é gravado no fim do lote só nos arquivos da categoria certa (aplicarContentDoTipo), não aqui em todos.
+    if (id.rfind("production.", 0) == 0) {
+        if (const auto* tipo = tipoDeContainer(id.substr(11)); tipo != nullptr && !tipo->temPlayer()) {
+            auto sobre = std::make_shared<SobreMaterial>();
+            sobre->folhaId = id;
+            sobre->containerOrigem = kOrigemContainerGenerico;
+            sobre->tipoContainer = tipo->id;
+            return sobre;
+        }
+    }
     for (const auto& l : tabela) {
         if (id != l.id) continue;
         auto sobre = std::make_shared<SobreMaterial>();
@@ -843,6 +855,7 @@ std::shared_ptr<const SobreMaterial> mesclarContextosImportar(std::shared_ptr<co
     if (!extra->sufixoTitulo.empty()) r->sufixoTitulo = extra->sufixoTitulo;
     if (!extra->containerOrigem.empty()) r->containerOrigem = extra->containerOrigem;
     if (extra->agruparComoNest) r->agruparComoNest = true;
+    if (!extra->tipoContainer.empty()) r->tipoContainer = extra->tipoContainer;
     if (extra->capaFrameDoVideo) r->capaFrameDoVideo = true;
     if (!extra->capaContainer.empty()) r->capaContainer = extra->capaContainer;
     if (!extra->iconeContainer.empty()) r->iconeContainer = extra->iconeContainer;

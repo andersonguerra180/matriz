@@ -2,6 +2,8 @@
 #include "FichasEmbutidas.h"
 #include "../Ficha/CatalogoDeFichas.h"
 #include "LoteSelfTest.h"
+#include "ImportarMenu.h"
+#include <algorithm>
 #include "../Diag/Watchdog.h"
 #include "PainelMetadadosArquivo.h"
 
@@ -312,8 +314,20 @@ void rodarTestesArvoreDoContainer(const Checar& checar) {
         const std::string ep1b = comOrigem("ARV-3", origem.getChildFile("Ep 01").getChildFile("Raw").getChildFile("mic2.wav"));
         const std::string ep2 = comOrigem("ARV-4", origem.getChildFile("Ep 02").getChildFile("mix.wav"));
         const std::string semCaminho = inserirItem(reg, projetoId, "ARV-5", false, ".wav");
-        const std::string nest = pa.criarContainerImportacao({capa, ep1, ep1b, ep2, semCaminho}, "projeto");
+        const std::string nest = pa.criarContainerImportacao({capa, ep1, ep1b, ep2, semCaminho}, "projeto", "podcast.audio");
         checar(!nest.empty(), "container with 5 files exists");
+        checar(pa.tipoDoContainer(nest) == "podcast.audio", "PRODUCTION PACKAGE: the import container is born with its type");
+        checar(pa.expandirCapasDeNest({capa}).size() == 5, "acting on the container's master (cover) reaches all 5 files");
+        checar(pa.expandirCapasDeNest({ep1}).size() == 1, "a member chosen on its own stays on its own");
+        {
+            const auto folhas = idsDasFolhasDoMenuImportar();
+            const auto tem = [&](const char* id) { return std::find(folhas.begin(), folhas.end(), id) != folhas.end(); };
+            checar(tem("production.podcast.audio") && tem("production.archive.museum") && tem("documents.native"),
+                   "IMPORT menu: PRODUCTION PACKAGE leaves exist and DOCUMENTS leaves are kept (now under OTHER)");
+            const auto ctx = contextoDaFolhaImportar("production.archive.museum");
+            checar(ctx != nullptr && ctx->tipoContainer == "archive.museum" && ctx->containerOrigem == "projeto",
+                   "IMPORT menu: a PRODUCTION PACKAGE leaf imports straight into a container of that type");
+        }
         const auto arvore = pa.arvoreDoContainer(nest);
         checar(arvore.id == nest && arvore.itemIds.size() == 5, "root is the container and holds all 5 files");
         checar(arvore.itemIdsDiretos == std::set<std::string>{capa, semCaminho},

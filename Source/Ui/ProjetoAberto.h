@@ -1022,7 +1022,8 @@ public:
     std::string criarNest(const std::vector<std::string>& itemIds);
     // CONTAINER de importação (Intake): agrupa os itens recém-ingeridos de uma importação (galeria do celular, Drive,
     // Bridge, Lightroom) num nest com `origem`. Sem Undo (é estado de triagem, não edição). Itens já em nest ficam de fora.
-    std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem);
+    // `tipo` (opcional) = nest.tipo_container: cards do PRODUCTION PACKAGE, que importam direto num tipo do "Group as Project Container".
+    std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem, const std::string& tipo = {});
     // "Group as Project Container": container criado DEPOIS da importação, por arquivos já no projeto. `tipo` = nest.tipo_container,
     // `origem` = origem do player do tipo (youtube, ddp...) ou a genérica; `nome` vazio = sem nome próprio. Devolve "" se há menos de
     // 2 itens ou algum já está em nest/container. Capa = o 1º por data. Fora da message thread; sem eventos (quem chama dispara).

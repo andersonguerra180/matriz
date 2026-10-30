@@ -9,6 +9,7 @@
 #include "GoogleDriveContas.h"
 #include "Moldura.h"
 #include "Tablet.h"
+#include "TiposContainer.h"
 #include "Tokens.h"
 
 namespace matriz::ui {
@@ -145,16 +146,41 @@ std::vector<No> montarArvore() {
     colorir(audio, tk.tipoAudio);
     raiz.push_back(std::move(audio));
 
+    // PRODUCTION PACKAGE: conjuntos de vários formatos que entram direto como CONTAINER de um tipo do "Group as Project
+    // Container" (folha "production.<tipo>"; o nome vem da tabela de tipos). Podcast, acervo multimídia e os projetos do mesmo
+    // feitio (filme, identidade visual, marketing, documentação).
+    auto doTipo = [](const char* tipoId) {
+        const auto* tipo = tipoDeContainer(tipoId);
+        No n = folha(std::string("production.") + tipoId, IconeUi::Multimedia, tipo != nullptr ? tipo->icone : "");
+        if (tipo != nullptr) n.rotuloLiteral = rotuloDoTipoContainer(*tipo);
+        return n;
+    };
+    auto daCategoria = [&doTipo](CategoriaContainer cat) {
+        std::vector<No> filhos;
+        for (const auto& tc : tiposDeContainer())
+            if (tc.categoria == cat && !tc.temPlayer()) filhos.push_back(doTipo(tc.id));
+        return filhos;
+    };
+    auto producao = grupo("production", IconeUi::Multimedia, "ci_aud_music_production_png",
+        { grupo("production.podcast", IconeUi::Sound, "ci_aud_voice_over_png", daCategoria(CategoriaContainer::Podcast)),
+          grupo("production.archive", IconeUi::Documents, "ci_doc_scanned_png", daCategoria(CategoriaContainer::Acervo)),
+          grupo("production.projects", IconeUi::Multimedia, "ci_vid_film_16_mm_8_mm_png",
+                { doTipo("video.film_project"), doTipo("other.branding"), doTipo("other.marketing"),
+                  doTipo("doc.project_documentation") }) });
+    colorir(producao, juce::Colour(0xffb45309));
+    raiz.push_back(std::move(producao));
+
+    // DOCUMENTS fica dentro de OTHER (os ids das folhas não mudam).
     auto documents = grupo("documents", IconeUi::Documents, "ci_doc_digital_native_png",
                            { folha("documents.native", IconeUi::Documents, "ci_doc_digital_native_png"),
                              folha("documents.scanned", IconeUi::Documents, "ci_doc_scanned_png"),
                              folha("documents.web", IconeUi::Web) });
     colorir(documents, tk.tipoDocumento);
-    raiz.push_back(std::move(documents));
 
-    // OTHER fica por último: Web, Multimedia, Social Media e Custom.
+    // OTHER fica por último: Documents, Web, Multimedia, Social Media e Custom.
     auto outros = grupo("other", IconeUi::Other, "",
-        { folha("other.web", IconeUi::Web, "", true),
+        { std::move(documents),
+          folha("other.web", IconeUi::Web, "", true),
           grupo("other.multimedia", IconeUi::Multimedia, "",
                 { folha("other.multimedia.cdrom", IconeUi::CdRom, "", true),
                   folha("other.multimedia.apps", IconeUi::Multimedia),
@@ -167,7 +193,9 @@ std::vector<No> montarArvore() {
                   folha("other.social.other", IconeUi::SocialMedia) }),
           folha("other.design", IconeUi::Multimedia, "3d_jpg"),
           folha("other.custom", IconeUi::Other, "ci_doc_other_png") });
-    colorir(outros, tk.tipoOutros);
+    for (auto& f : outros.filhos)
+        if (f.id != "documents") colorir(f, tk.tipoOutros);  // Documents mantém a cor dele
+    outros.cor = tk.tipoOutros;
     raiz.push_back(std::move(outros));
 
     for (auto& n : raiz) n.comSub = true;

@@ -5714,7 +5714,7 @@ std::map<int, juce::String> ProjetoAberto::mensagensApagadasDaConversa(const std
     return out;
 }
 
-std::string ProjetoAberto::criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem) {
+std::string ProjetoAberto::criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem, const std::string& tipo) {
     if (somenteLeitura_ || !projeto_ || itemIds.size() < 2 || origem.empty()) return {};
     auto& db = projeto_->registro();
     const std::set<std::string> jaEmNest = [&] {
@@ -5729,9 +5729,10 @@ std::string ProjetoAberto::criarContainerImportacao(const std::vector<std::strin
     const std::string agora = matriz::model::agoraIso8601();
     db.run("BEGIN TRANSACTION", {});
     try {
-        db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem) VALUES (?, ?, ?, ?, ?)",
+        db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem, tipo_container) VALUES (?, ?, ?, ?, ?, ?)",
                {matriz::db::Value::of(nestId), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(livres.front()),
-                matriz::db::Value::of(agora), matriz::db::Value::of(origem)});
+                matriz::db::Value::of(agora), matriz::db::Value::of(origem),
+                tipo.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipo)});
         for (const auto& id : livres)
             db.run("INSERT INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
                    {matriz::db::Value::of(id), matriz::db::Value::of(nestId), matriz::db::Value::of(agora)});
