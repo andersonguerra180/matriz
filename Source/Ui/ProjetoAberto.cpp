@@ -6484,6 +6484,27 @@ std::vector<std::string> ProjetoAberto::expandirMembrosDeNest(const std::vector<
     return out;
 }
 
+std::vector<std::string> ProjetoAberto::expandirCapasDeNest(const std::vector<std::string>& itemIds) const {
+    if (!projeto_ || itemIds.empty()) return itemIds;
+    std::vector<std::string> out = itemIds;
+    std::set<std::string> ja(itemIds.begin(), itemIds.end());
+    auto st = leitura().prepare("SELECT id FROM nest WHERE capa_item_id = ?");
+    auto sm = leitura().prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
+    for (const auto& id : itemIds) {
+        st.reset();
+        st.bind(1, matriz::db::Value::of(id));
+        while (st.step()) {
+            sm.reset();
+            sm.bind(1, matriz::db::Value::of(st.columnText(0)));
+            while (sm.step()) {
+                const std::string m = sm.columnText(0);
+                if (ja.insert(m).second) out.push_back(m);
+            }
+        }
+    }
+    return out;
+}
+
 std::set<std::string> ProjetoAberto::idsMarcadosR() const {
     std::lock_guard<std::mutex> lock(marcacoesMutex_);
     return marcadosR_;

@@ -464,6 +464,7 @@ private:
         g.aoFiltrarItens = [seguro](std::set<std::string> ids) { if (seguro) seguro->mosaico_->definirFiltroItens(std::move(ids)); };
         g.itemEmMemoria = [seguro](const std::string& id) -> const ItemResumo* { return seguro ? seguro->mosaico_->itemEmMemoria(id) : nullptr; };
         g.aoEditarQuestionario = [seguro](const std::string& nestId, const std::string& origem) { if (seguro) seguro->editarProjeto(nestId, origem); };
+        g.membrosIndividuais = !nestId_.empty();  // janela do container: cada arquivo é ele mesmo
         return g;
     }
 

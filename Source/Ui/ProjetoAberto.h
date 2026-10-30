@@ -1094,6 +1094,8 @@ public:
     std::optional<std::vector<std::string>> idsDoCatalogoSemNaoCapas() const;
     // `itemIds` + os demais membros dos nests a que eles pertencem (mover para pasta / remover valem p/ o nest inteiro).
     std::vector<std::string> expandirMembrosDeNest(const std::vector<std::string>& itemIds) const;
+    // Só os ids que são a CAPA (master) de um NEST/CONTAINER trazem os demais membros; um membro escolhido sozinho fica sozinho.
+    std::vector<std::string> expandirCapasDeNest(const std::vector<std::string>& itemIds) const;
 
     // INTAKE — R (Reject). Marcas R persistidas no projeto (intake_marca_r) e lista de rejeitados por
     // SHA-256 (intake_rejeitados). Só itens em quarentena contam. Nada aqui toca em arquivo algum.

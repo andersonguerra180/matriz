@@ -605,6 +605,12 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
 
 void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> itemIds, Ganchos ganchos) {
     if (resultado <= 0 || itemIds.empty()) return;
+    // A grade mostra só a capa de um NEST/CONTAINER: o que se faz nela vale para todos os arquivos dele (Remove from Backup e
+    // os movimentos do Folder Map já expandem lá dentro). Rename, capa, arquivo, caminho e EXIF continuam sendo do arquivo clicado.
+    if (!ganchos.membrosIndividuais &&
+        (resultado == kRemoverDaLista || resultado == kLimparMetadados || resultado == kRenomearEmLote || resultado == kCategorizar)) {
+        try { itemIds = projeto.expandirCapasDeNest(itemIds); } catch (...) {}
+    }
 
     int quantidade = static_cast<int>(itemIds.size());
 

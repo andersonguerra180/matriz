@@ -41,6 +41,9 @@ struct Ganchos {
     ResolvedorItemEmMemoria itemEmMemoria;
     // Opcional, por ÚLTIMO: abre "Editar questionário inicial" de um container (nestId, origem). Sem ele o item de menu não aparece.
     std::function<void(const std::string& nestId, const std::string& origem)> aoEditarQuestionario;
+    // Opcional, por ÚLTIMO: true = cada arquivo é ele mesmo (janela do container, que mostra os membros soltos). Fora dela,
+    // apagar / limpar metadados / renomear em lote / categorizar a CAPA de um NEST ou CONTAINER vale para todos os arquivos dele.
+    bool membrosIndividuais = false;
 };
 
 // Monta o menu de contexto pra `itemIds` (nunca vazio). Os rótulos mudam de
