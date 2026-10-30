@@ -7512,6 +7512,17 @@ int rodarExplorerVisualSelfTest() {
                 janela->mostrarArquivoParaTeste(*pedra->itemIdsDiretos.begin());
                 girar(2500);
                 salvar(*janela, "explorer_arquivo");
+                {
+                    // Preview aberto de dentro do container: cartão arredondado sem retângulo atrás (fundo transparente).
+                    FloatingPreviewWindow preview(pa, *pedra->itemIdsDiretos.begin(), [] {});
+                    girar(1500);
+                    salvar(preview, "explorer_preview");
+                    const juce::Image img = preview.createComponentSnapshot(preview.getLocalBounds());
+                    const bool cantoTransparente = img.isValid() && img.getPixelAt(4, 4).getAlpha() == 0 &&
+                                                   img.getPixelAt(img.getWidth() - 5, img.getHeight() - 5).getAlpha() == 0;
+                    std::cout << (cantoTransparente ? "  OK   " : "  FAIL ") << "preview window has no rectangle behind the card\n";
+                    if (!cantoTransparente) ++falhas;
+                }
                 janela->irParaPastaParaTeste(nest, "Acervo Djalma Correa");
                 girar(1500);
                 salvar(*janela, "explorer_raiz_volta");

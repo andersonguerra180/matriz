@@ -7,6 +7,7 @@
 #include "OverlayComponent.h"
 #include "PainelMetadadosArquivo.h"
 #include "FiltrosComponent.h"
+#include "FichaPanelComponent.h"
 #include "FloatingPreviewWindow.h"
 #include "LegendaAtalhosIntake.h"
 #include "MatrizLookAndFeel.h"
@@ -23,7 +24,7 @@ namespace matriz::ui {
 namespace {
 // Layout da janela Explorer · Folder Map (padrão do BKR Matriz Mini).
 constexpr int kLarguraLateral = 268;
-constexpr int kLarguraFicha = 400;
+constexpr int kLarguraFicha = 540;  // a mesma largura da ficha do GRID (aba METADATA): campos nas mesmas posições
 constexpr int kAlturaBarraNav = 56;
 constexpr int kAlturaTituloGrade = 46;
 constexpr int kMargemGrade = 16;
@@ -114,6 +115,7 @@ public:
              std::string nestId, bool selecionarTudo)
         : projeto_(projeto), pastaId_(pastaId), nome_(nome), nomeRaiz_(nome), aoMudouDados_(std::move(aoMudouDados)),
           nestId_(std::move(nestId)), semPasta_(pastaId == kPastaSemPasta), selecionarTudo_(selecionarTudo) {
+        configurarLookAndFeel(laf_);  // as mesmas cores do resto do app (a ficha do GRID depende delas)
         setLookAndFeel(&laf_);
         raizJanelaId_ = nestId_.empty() ? pastaId_ : nestId_;
         if (!nestId_.empty()) pastaId_ = nestId_;
@@ -161,6 +163,20 @@ public:
         painel_->definirLayoutCompacto(true);
         painel_->mostrarItem({});
         addAndMakeVisible(*painel_);
+
+        // Arquivo(s) selecionado(s): a MESMA ficha editável do GRID (aba METADATA) — mesmos campos, mesmas posições, mesmo
+        // funcionamento (lote, presets, tags, GET EXIF, geo...). Pastas continuam só com o resumo (painel_).
+        ficha_ = std::make_unique<FichaPanelComponent>(projeto_);
+        ficha_->aoAplicarSucesso = [this](const std::string& itemId) { mosaico_->atualizarItemEmMemoria(itemId); };
+        ficha_->aoAplicarEmLote = [this] { filtros_->recarregar(); };
+        ficha_->aoAplicarGeoEmLote = [this] { filtros_->recarregar(); };
+        ficha_->aoIniciarLoteAtualizacao = [this] { mosaico_->iniciarLoteAtualizacao(); };
+        ficha_->aoFinalizarLoteAtualizacao = [this] { mosaico_->finalizarLoteAtualizacao(); };
+        ficha_->aoPedirFocoGrade = [this] {
+            juce::Component::SafePointer<MosaicoComponent> seguro(mosaico_.get());
+            juce::MessageManager::callAsync([seguro] { if (seguro != nullptr) seguro->grabKeyboardFocus(); });
+        };
+        addChildComponent(*ficha_);
 
         trilha_ = std::make_unique<Trilha>(*this);
         addAndMakeVisible(*trilha_);
@@ -226,6 +242,7 @@ public:
     }
 
     ~Conteudo() override {
+        if (ficha_ != nullptr) ficha_->salvarPendencias();  // texto digitado e ainda não confirmado não se perde ao fechar
         ++geracaoSemPasta_;
         poolSemPasta_.removeAllJobs(true, 5000);
         filtros_->removeComponentListener(coluna_.get());
@@ -292,7 +309,9 @@ public:
 
         viewportLateral_.setBounds(area.removeFromLeft(kLarguraLateral));
         area.removeFromLeft(1);
-        painel_->setBounds(area.removeFromRight(kLarguraFicha).withTrimmedLeft(1));
+        const auto areaDireita = area.removeFromRight(kLarguraFicha).withTrimmedLeft(1);
+        painel_->setBounds(areaDireita);
+        ficha_->setBounds(areaDireita);
         area.removeFromRight(1);
         areaTituloGrade_ = area.removeFromTop(kAlturaTituloGrade).reduced(kMargemGrade + 4, 0).withTrimmedTop(6);
         viewportGrade_.setBounds(area.reduced(kMargemGrade - 4, 0).withTrimmedBottom(8));
@@ -787,8 +806,20 @@ private:
 
     void aoMudarSelecao() {
         const auto sel = mosaico_->itensSelecionados();
-        if (sel.empty()) atualizarPainelSemSelecao();
-        else painel_->mostrarItem(*sel.begin());
+        if (sel.empty()) {
+            if (ficha_->isVisible()) ficha_->salvarPendencias();
+            ficha_->setVisible(false);
+            painel_->setVisible(true);
+            atualizarPainelSemSelecao();
+        } else {
+            // Pasta do Folder Map: a grade mostra só a capa de um NEST/CONTAINER — editar vale para todos os arquivos dele (como
+            // no GRID). Na janela do container cada arquivo é ele mesmo.
+            std::vector<std::string> alvo(sel.begin(), sel.end());
+            if (nestId_.empty()) alvo = projeto_.expandirMembrosDeNest(alvo);
+            ficha_->mostrarSelecao(alvo);
+            painel_->setVisible(false);
+            ficha_->setVisible(true);
+        }
         atualizarContagem();
         repaint(areaTituloGrade_);
     }
@@ -981,7 +1012,8 @@ private:
     std::unique_ptr<MosaicoComponent> mosaico_;
     std::unique_ptr<FiltrosComponent> filtros_;
     std::unique_ptr<ColunaLateral> coluna_;
-    std::unique_ptr<PainelMetadadosArquivo> painel_;
+    std::unique_ptr<PainelMetadadosArquivo> painel_;  // resumo da pasta (nada selecionado / cartão de pasta)
+    std::unique_ptr<FichaPanelComponent> ficha_;       // arquivo(s) selecionado(s): a ficha editável do GRID
     std::unique_ptr<Trilha> trilha_;
     std::unique_ptr<SeletorVisao> seletorVisao_;
     std::unique_ptr<PainelOverlay> overlay_;
@@ -1011,7 +1043,7 @@ JanelaPastaFlutuante::JanelaPastaFlutuante(ProjetoAberto& projeto, const std::st
     // sem a sombra do sistema: fora dos cantos arredondados não há fundo (nada de retângulo bege ou cantos pretos atrás).
     setUsingNativeTitleBar(false);
     setTitleBarHeight(0);
-    setDropShadowEnabled(false);
+    moldura::deixarJanelaTransparente(*this);
     setResizable(true, false);
     auto* conteudo = new Conteudo(projeto, pastaId, nomePasta, std::move(aoMudouDados), nestId, selecionarTudo);
     conteudo_ = conteudo;
@@ -1025,7 +1057,6 @@ JanelaPastaFlutuante::JanelaPastaFlutuante(ProjetoAberto& projeto, const std::st
     }
     auto* moldurada = new moldura::JanelaMoldura(conteudo, moldura::Secao::Explorador, "Folder Map", titulo);
     setContentOwned(moldurada, true);
-    setBackgroundColour(juce::Colours::transparentBlack);
     setResizeLimits(moldura::tamanhoComMargem(1000), moldura::tamanhoComMargem(560 + moldura::kAlturaCabecalho), 5000, 4000);
     centreWithSize(getWidth(), getHeight());
     setVisible(true);
@@ -1041,7 +1072,7 @@ void JanelaPastaFlutuante::irParaPastaParaTeste(const std::string& id, const juc
 void JanelaPastaFlutuante::mostrarArquivoParaTeste(const std::string& itemId) {
     if (conteudo_ != nullptr) {
         conteudo_->mosaico_->definirSelecao({itemId});
-        conteudo_->painel_->mostrarItem(itemId);
+        conteudo_->aoMudarSelecao();
     }
 }
 
