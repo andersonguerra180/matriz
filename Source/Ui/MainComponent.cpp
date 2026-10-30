@@ -2039,10 +2039,11 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
             treeWorkspace_->aoMudarSemPasta = [this] { if (cartoesAnalytics_) cartoesAnalytics_->recarregar(); };
             treeWorkspace_->aoAbrirProject = [this](const std::string& nestId, const std::string& origem) { abrirProjectDoContainer(nestId, origem); };
             treeWorkspace_->aoAbrirContainerJanela = [this](const std::string& nestId, const juce::String& nome) {
-                // Container: abre direto o preview do arquivo-capa (o mesmo do Open Project); a janela de
-                // grade só serve de reserva quando o container está vazio.
-                if (projetoAberto_ && !nestId.empty() && !projetoAberto_->membrosDoNest(nestId).empty())
-                    abrirProjectDoContainer(nestId, projetoAberto_->origemDoContainer(nestId));
+                // PROJECT (menos o DDP): a janela do container, com as pastas de origem. Os outros containers (galeria,
+                // Drive...) abrem o preview do arquivo-capa (o mesmo do Open Project); vazio, a janela de grade.
+                const std::string origem = projetoAberto_ && !nestId.empty() ? projetoAberto_->origemDoContainer(nestId) : std::string();
+                if (!abreNaJanelaDoContainer(juce::String(origem)) && projetoAberto_ && !projetoAberto_->membrosDoNest(nestId).empty())
+                    abrirProjectDoContainer(nestId, origem);
                 else
                     abrirJanelaDoContainer(nestId, nome);
             };

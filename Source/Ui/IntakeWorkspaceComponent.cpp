@@ -3538,8 +3538,8 @@ void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
 
 void IntakeWorkspaceComponent::abrirPreviewDoItem(const std::string& itemId) {
     if (itemId.empty()) return;
-    for (const auto& it : todosItens_)  // container sem player: a janela dele, com as pastas de origem
-        if (it.id == itemId && itemEhContainer(it) && it.containerOrigem == kOrigemContainerGenerico && aoAbrirJanelaDoContainer) {
+    for (const auto& it : todosItens_)  // PROJECT (menos o DDP): a janela do container, com as pastas de origem
+        if (it.id == itemId && itemEhContainer(it) && abreNaJanelaDoContainer(it.containerOrigem) && aoAbrirJanelaDoContainer) {
             aoAbrirJanelaDoContainer(it.containerNestId, it.containerNome.isNotEmpty() ? it.containerNome : it.nomeArquivo);
             return;
         }

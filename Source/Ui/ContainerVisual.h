@@ -27,6 +27,8 @@ bool ehOrigemProject(const juce::String& origem);
 // PROJECT com player e/ou questionário do IMPORT (Edit Project Info): ddp, vinil, fita, produção, YouTube. Os containers de tipo sem player
 // ("projeto") são PROJECT mas não têm ficha.
 bool ehOrigemComFicha(const juce::String& origem);
+// PROJECT que abre na janela do container (pastas de origem navegáveis): todos menos o DDP, que tem o player de CD.
+bool abreNaJanelaDoContainer(const juce::String& origem);
 // Tipo do PROJECT em destaque (DDP MASTER, VINYL TRANSCRIPTION, TAPE TRANSCRIPTION, PRODUCTION PACKAGE, YOUTUBE PRODUCTION); "" se não é PROJECT.
 juce::String rotuloDoProject(const juce::String& origem);
 

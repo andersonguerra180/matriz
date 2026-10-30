@@ -37,6 +37,8 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     return vazio;
 }
 
+bool abreNaJanelaDoContainer(const juce::String& origem) { return ehOrigemProject(origem) && origem != "ddp"; }
+
 bool ehOrigemComFicha(const juce::String& origem) {
     return origem == "ddp" || origem == "vinyl" || origem == "tape" || origem == "production" || origem == "youtube";
 }
