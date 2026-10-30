@@ -2886,12 +2886,12 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             // NEST: duas linhas "empilhadas" saindo do cartão (direita/baixo) e o selo com o número de arquivos.
             // (Container não: o ícone/capa dele já é o desenho de "vários arquivos juntos".)
             if (item.nestTotal > 1 && !containerGrafico) {
-                g.setColour(tk.borda.withAlpha(0.9f));
+                g.setColour(juce::Colour(0xffe11d48).withAlpha(0.85f));
                 for (int off : {3, 6}) {
                     g.drawLine((float) bounds.getRight() + off, (float) bounds.getY() + off + 2,
-                               (float) bounds.getRight() + off, (float) bounds.getBottom() + off - 2, 1.5f);
+                               (float) bounds.getRight() + off, (float) bounds.getBottom() + off - 2, 2.0f);
                     g.drawLine((float) bounds.getX() + off + 2, (float) bounds.getBottom() + off,
-                               (float) bounds.getRight() + off - 2, (float) bounds.getBottom() + off, 1.5f);
+                               (float) bounds.getRight() + off - 2, (float) bounds.getBottom() + off, 2.0f);
                 }
                 // (o selo "N" vermelho no canto inferior direito é desenhado junto dos demais selos, mais abaixo)
             }
@@ -2992,6 +2992,21 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colours::white);
                 g.setFont(font9Bold);
                 g.drawText("N", stampN, juce::Justification::centred);
+            }
+
+            // Container x NEST x arquivo avulso: contorno + rótulo próprios (container = cor de destaque, NEST = rosa).
+            if (item.nestTotal > 1) {
+                const auto corGrupo = containerGrafico ? tk.acento : juce::Colour(0xffe11d48);
+                g.setColour(corGrupo);
+                g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), kRaioCardGrade, 2.5f);
+                if (!containerGrafico && !modoQuarentena_) {
+                    const juce::Rectangle<int> tagNest(areaImagem.getX() + 4, areaImagem.getBottom() - 4 - 16, 38, 16);
+                    g.setColour(corGrupo);
+                    g.fillRoundedRectangle(tagNest.toFloat(), 8.0f);
+                    g.setColour(juce::Colours::white);
+                    g.setFont(font9Bold);
+                    g.drawText("NEST", tagNest, juce::Justification::centred);
+                }
             }
 
             // Corner stamps H / K / P (top-right of areaImagem)
