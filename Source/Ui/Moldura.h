@@ -82,6 +82,55 @@ inline Geometria geometria(juce::Rectangle<int> janela, bool comRodape) {
     return g;
 }
 
+constexpr int kMargemJanelaNativa = 64;  // espaço transparente ao redor do cartão para a sombra (ver desenharSombra)
+
+inline juce::Colour corBordaJanela() { return juce::Colour(0xff1b1917).withAlpha(0.10f); }
+
+// Reflexo: linha de 1 px branca a 75% logo abaixo da borda superior, por dentro, seguindo os cantos.
+inline void desenharReflexo(juce::Graphics& g, juce::Rectangle<float> janela) {
+    g.saveState();
+    g.reduceClipRegion(janela.getSmallestIntegerContainer().withHeight(static_cast<int>(kRaio) + 1));
+    g.setColour(juce::Colours::white.withAlpha(0.75f));
+    g.drawRoundedRectangle(janela.reduced(1.5f), kRaio - 1.0f, 1.0f);
+    g.restoreState();
+}
+
+// Sombra de 4 camadas com desfoque gaussiano real (luz de cima: cai para baixo). Renderizada UMA vez por tamanho e escala
+// numa imagem em pixels físicos (nítida em HiDPI); o paint só a desenha. Não usar sombra nativa nem DropShadower.
+inline void desenharSombra(juce::Graphics& g, juce::Rectangle<int> janela) {
+    struct Camada { float alfa; int desfoque; int descer; int encolhe; };
+    static constexpr Camada camadas[] = { { 0.05f, 2, 1, 0 }, { 0.07f, 6, 3, 1 }, { 0.09f, 20, 10, 4 }, { 0.18f, 56, 28, 12 } };
+    struct Entrada { int w, h; float escala; juce::Image img; };
+    static std::vector<Entrada> cache;
+
+    const float escala = juce::jmax(1.0f, static_cast<float>(g.getInternalContext().getPhysicalPixelScaleFactor()));
+    const Entrada* achada = nullptr;
+    for (const auto& e : cache)
+        if (e.w == janela.getWidth() && e.h == janela.getHeight() && e.escala == escala) { achada = &e; break; }
+    if (achada == nullptr) {
+        const int m = kMargemJanelaNativa;
+        juce::Image img(juce::Image::ARGB, juce::roundToInt((janela.getWidth() + 2 * m) * escala),
+                        juce::roundToInt((janela.getHeight() + 2 * m) * escala), true);
+        {
+            juce::Graphics ig(img);
+            ig.addTransform(juce::AffineTransform::scale(escala));
+            const auto cartao = juce::Rectangle<float>(static_cast<float>(m), static_cast<float>(m),
+                                                       static_cast<float>(janela.getWidth()), static_cast<float>(janela.getHeight()));
+            for (const auto& c : camadas) {
+                juce::Path caminho;
+                caminho.addRoundedRectangle(cartao.reduced(static_cast<float>(c.encolhe)), kRaio);
+                juce::DropShadow(juce::Colour(0xff1b1917).withAlpha(c.alfa), c.desfoque, { 0, c.descer }).drawForPath(ig, caminho);
+            }
+        }
+        if (cache.size() >= 8) cache.erase(cache.begin());
+        cache.push_back({ janela.getWidth(), janela.getHeight(), escala, img });
+        achada = &cache.back();
+    }
+    g.drawImage(achada->img, janela.getX() - kMargemJanelaNativa, janela.getY() - kMargemJanelaNativa,
+                janela.getWidth() + 2 * kMargemJanelaNativa, janela.getHeight() + 2 * kMargemJanelaNativa,
+                0, 0, achada->img.getWidth(), achada->img.getHeight());
+}
+
 // Pinta sombra, papel, cabeçalho (ícone da seção, trilha, título, contador, X, linha de progresso) e a faixa do rodapé.
 // `progresso` < 0 = sem linha de progresso; `contador` ex.: "01 / 05".
 // `etiqueta` (opcional): tag grande e colorida no cabeçalho, à esquerda do X — ex.: o tipo do PROJECT ("VINYL TRANSCRIPTION").
@@ -90,11 +139,7 @@ inline void desenhar(juce::Graphics& g, const Geometria& geo, Secao secao, const
                      const juce::String& etiqueta = {}) {
     const auto p = paleta();
     const auto janela = geo.janela.toFloat();
-    // sombra suave (camadas, sem blur)
-    for (int i = 5; i >= 1; --i) {
-        g.setColour(juce::Colours::black.withAlpha(0.035f));
-        g.fillRoundedRectangle(janela.expanded(static_cast<float>(i) * 3.0f).translated(0.0f, static_cast<float>(i) * 2.0f), kRaio + static_cast<float>(i) * 3.0f);
-    }
+    desenharSombra(g, geo.janela);
     g.setColour(p.janela);
     g.fillRoundedRectangle(janela, kRaio);
     if (comRodape) {
@@ -108,8 +153,9 @@ inline void desenhar(juce::Graphics& g, const Geometria& geo, Secao secao, const
         g.fillRect(geo.rodape.withHeight(1));
         g.restoreState();
     }
-    g.setColour(p.linha);
+    g.setColour(corBordaJanela());
     g.drawRoundedRectangle(janela.reduced(0.5f), kRaio, 1.0f);
+    desenharReflexo(g, janela);
 
     // cabeçalho
     const auto cab = geo.cabecalho;
@@ -170,7 +216,6 @@ inline void desenhar(juce::Graphics& g, const Geometria& geo, Secao secao, const
 }
 
 // Janelas nativas (DialogWindow) sem barra de título: o cartão ocupa a janela com uma margem para a sombra, sobre o fundo.
-constexpr int kMargemJanelaNativa = 18;
 inline juce::Rectangle<int> areaDoCartaoNativo(juce::Rectangle<int> total) { return total.reduced(kMargemJanelaNativa); }
 inline int tamanhoComMargem(int tamanho) { return tamanho + 2 * kMargemJanelaNativa; }
 
@@ -234,9 +279,11 @@ public:
         g.reduceClipRegion(fora);
         g.setColour(juce::Colours::transparentBlack);
         g.getInternalContext().fillRect(cartao.toNearestInt().expanded(1), true);
+        desenharSombra(g, cartao.toNearestInt());  // devolve a sombra que o retângulo do conteúdo cobriu nos cantos
         g.restoreState();
-        g.setColour(paleta().linha);
+        g.setColour(corBordaJanela());
         g.drawRoundedRectangle(cartao.reduced(0.5f), kRaio, 1.0f);
+        desenharReflexo(g, cartao);
     }
     void resized() override { conteudo_->setBounds(geometria(areaDoCartaoNativo(getLocalBounds()), false).corpo); }
 
