@@ -356,27 +356,67 @@ private:
     std::string escolhido_;
 };
 
+// Na grade um CONTAINER (nest com origem) aparece pela capa dele: a capa que vale ali é a do container
+// (nest.capa_imagem, a mesma do LOAD COVER da ficha), não a capa_frente do arquivo que o representa.
+// Tira de `itemIds` os ids que representam containers e devolve os nests deles.
+std::set<std::string> separarContainers(ProjetoAberto& projeto, std::vector<std::string>& itemIds) {
+    std::set<std::string> nests;
+    std::map<std::string, ProjetoAberto::NestInfo> mapa;
+    try { mapa = ProjetoAberto::mapaDeNests(projeto.projeto().registroLeitura()); } catch (...) { return nests; }
+    std::vector<std::string> soltos;
+    for (const auto& id : itemIds) {
+        const auto it = mapa.find(id);
+        if (it != mapa.end() && !it->second.origem.empty()) nests.insert(it->second.nestId);
+        else soltos.push_back(id);
+    }
+    itemIds = std::move(soltos);
+    return nests;
+}
+
+// Mesmo caminho do LOAD COVER (CapaProjetoComponent::trocarCapa): imagem reduzida fora da message thread,
+// resposta "capa" do questionário atualizada (Edit Project Info abre com a capa nova) e recarga das telas.
+void aplicarCapaNosContainers(ProjetoAberto* p, const std::set<std::string>& nests, const juce::File& imagem,
+                              std::function<void()> aoMudar) {
+    juce::Thread::launch([p, nests, imagem, aoMudar] {
+        std::vector<std::string> trocados;
+        for (const auto& n : nests) if (p->definirCapaDoContainer(n, imagem)) trocados.push_back(n);
+        juce::MessageManager::callAsync([p, trocados, imagem, aoMudar] {
+            for (const auto& n : trocados) {
+                p->definirRespostaDoQuestionario(n, "capa", imagem.getFullPathName().toStdString());
+                esquecerImagemDaCapa(p->projeto().pasta().getChildFile(".miniaturas/capa_container_" + juce::String(n) + ".jpg").getFullPathName());
+            }
+            if (!trocados.empty()) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+            if (aoMudar) aoMudar();
+        });
+    });
+}
+
 } // namespace
 
 void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
     if (itemIds.empty()) return;
     ProjetoAberto* p = &projeto;
     auto ids = itemIds;
+    const auto nests = ganchos.membrosIndividuais ? std::set<std::string>() : separarContainers(projeto, ids);
+    auto aplicar = [p, ids, nests, ganchos](const juce::File& imagem) {
+        if (!ids.empty()) p->definirCapa(ids, imagem);
+        if (!nests.empty()) aplicarCapaNosContainers(p, nests, imagem, ganchos.aoMudarDados);
+        else if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+    };
 
     // Duas origens: uma imagem que já está no catálogo (busca no banco) ou um arquivo no disco/locações externas.
-    auto doDisco = [p, ids, ganchos] {
+    auto doDisco = [aplicar] {
         auto seletor = std::make_shared<juce::FileChooser>(matriz::i18n::t("acoes.definir_capa"), juce::File(),
                                                             "*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp");
         seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                              [seletor, p, ids, ganchos](const juce::FileChooser& fc) {
+                              [seletor, aplicar](const juce::FileChooser& fc) {
                                   juce::File imagem = fc.getResult();
                                   if (imagem == juce::File()) return;
-                                  p->definirCapa(ids, imagem);
-                                  if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+                                  aplicar(imagem);
                               });
     };
-    auto doCatalogo = [p, ids, ganchos] {
-        SeletorImagemCatalogo::exibir(*p, [p, ids, ganchos](std::string itemEscolhido) {
+    auto doCatalogo = [p, aplicar] {
+        SeletorImagemCatalogo::exibir(*p, [p, aplicar](std::string itemEscolhido) {
             // O master do item escolhido; se está offline, cai na miniatura (melhor que nada).
             juce::File origem;
             if (auto info = p->arquivoPrincipal(itemEscolhido)) origem = juce::File(info->caminhoAbsoluto);
@@ -386,8 +426,7 @@ void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds
                 avisarErroArquivo(matriz::i18n::t("acoes.capa_sem_arquivo"));
                 return;
             }
-            p->definirCapa(ids, origem);
-            if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+            aplicar(origem);
         });
     };
 
@@ -584,7 +623,17 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kDefinirCapa, matriz::i18n::t("acoes.definir_capa"));
     // Só oferece remover se ALGUM dos selecionados tem capa — item sem capa
     // com "Remover capa" habilitado é uma ação que não faz nada.
-    const bool algumComCapa = projeto.algumTemCapa(itemIds);
+    bool algumComCapa = projeto.algumTemCapa(itemIds);
+    if (!algumComCapa) {  // capa do CONTAINER (LOAD COVER / Use image as cover na capa dele)
+        try {
+            const auto mapa = ProjetoAberto::mapaDeNests(projeto.projeto().registroLeitura());
+            for (const auto& id : itemIds)
+                if (const auto it = mapa.find(id); it != mapa.end() && !it->second.origem.empty() && !it->second.capaImagem.empty()) {
+                    algumComCapa = true;
+                    break;
+                }
+        } catch (...) {}
+    }
     menu.addItem(kRemoverCapa, matriz::i18n::t("acoes.remover_capa"), algumComCapa);
 
     menu.addSeparator();
@@ -675,10 +724,18 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             definirCapa(projeto, itemIds, ganchos);
             break;
 
-        case kRemoverCapa:
-            projeto.removerCapa(itemIds);
+        case kRemoverCapa: {
+            const auto nests = ganchos.membrosIndividuais ? std::set<std::string>() : separarContainers(projeto, itemIds);
+            if (!itemIds.empty()) projeto.removerCapa(itemIds);
+            bool algumContainer = false;
+            for (const auto& n : nests) {
+                const auto capa = projeto.projeto().pasta().getChildFile(".miniaturas/capa_container_" + juce::String(n) + ".jpg").getFullPathName();
+                if (projeto.removerCapaDoContainer(n)) { esquecerImagemDaCapa(capa); algumContainer = true; }
+            }
+            if (algumContainer) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
+        }
 
         case kRemoverDoBackup:
             removerDoBackup(projeto, itemIds, ganchos);
