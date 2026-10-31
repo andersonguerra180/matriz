@@ -374,10 +374,15 @@ void fluxoComPlayer(ProjetoAberto& projeto, std::vector<std::string> ids, std::s
     ProjetoAberto* proj = &projeto;
     const auto vivo = projeto.tokenVida();
     const std::string tipoId = tipo.id;
+    // Lendo os arquivos (vídeo principal, imagem, roteiro, pasta DDP) antes da ficha: só a barra (a ficha abre no overlay).
+    ProgressoGlobal::obterInstancia().iniciarTarefa(kTarefaContainer, matriz::i18n::t("tipoc.progresso.lendo"), 0, nullptr,
+                                                    matriz::i18n::t("tipoc.progresso.arquivos").replace("{n}", juce::String(static_cast<int>(ids.size()))),
+                                                    false, true);
     juce::Thread::launch([proj, vivo, ids, nestExistente, tipoId, nome, overlay, h] {
         if (vivo.expired()) return;
         const auto analise = analisarMembros(*proj, ids);
         juce::MessageManager::callAsync([proj, vivo, ids, nestExistente, tipoId, nome, overlay, h, analise] {
+            ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer);
             if (vivo.expired()) return;
             const TipoContainer* t = tipoDeContainer(tipoId);
             if (t == nullptr || overlay == nullptr) { aoTerminarFluxo(h, false); return; }
@@ -437,19 +442,12 @@ void agruparComoProjectContainer(ProjetoAberto& projeto, std::vector<std::string
     });
 }
 
-void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, HospedeOverlay h) {
-    if (nestId.empty() || projeto.somenteLeitura() || !h.abrir) return;
-    PainelOverlay* overlay = h.abrir();
-    if (overlay == nullptr) return;
-    const auto membros = projeto.membrosDoNest(nestId);
-    const TipoContainer* atual = tipoDeContainerDaOrigem(projeto.tipoDoContainer(nestId), projeto.origemDoContainer(nestId));
-    juce::String nomeAtual;
-    if (!membros.empty())
-        if (const auto info = projeto.nestDoItem(membros.front())) nomeAtual = juce::String::fromUTF8(info->nome.c_str());
+// Change Container Type: o painel de tipos, já com os membros e o tipo/nome atuais lidos.
+static void mostrarEscolherTipoParaTrocar(ProjetoAberto& projeto, std::weak_ptr<bool> vivo, const std::string& nestId, HospedeOverlay h,
+                                          PainelOverlay& overlay, std::vector<std::string> membros, const TipoContainer* atual, juce::String nomeAtual) {
     ProjetoAberto* proj = &projeto;
-    const auto vivo = projeto.tokenVida();
-    const juce::Component::SafePointer<PainelOverlay> ov(overlay);
-    mostrarEscolherTipo(*overlay, atual != nullptr ? atual->categoria : CategoriaContainer::Outro, static_cast<int>(membros.size()), nomeAtual, atual, true,
+    const juce::Component::SafePointer<PainelOverlay> ov(&overlay);
+    mostrarEscolherTipo(overlay, atual != nullptr ? atual->categoria : CategoriaContainer::Outro, static_cast<int>(membros.size()), nomeAtual, atual, true,
         [proj, vivo, nestId, membros, h, ov, nomeAtual](const TipoContainer* tipo, juce::String nomeDigitado) {
             const juce::String nomeNovo = nomeDigitado == nomeAtual ? juce::String() : nomeDigitado;  // so renomeia se mudou
             juce::MessageManager::callAsync([proj, vivo, nestId, membros, h, tipo, ov, nomeNovo] {
@@ -458,6 +456,8 @@ void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, Hos
                 if (tipo->temPlayer()) { fluxoComPlayer(*proj, membros, nestId, *tipo, nomeNovo, ov, h); return; }
                 if (h.fechar) h.fechar();
                 const std::string tipoId = tipo->id;
+                ProgressoGlobal::obterInstancia().iniciarTarefa(kTarefaContainer, matriz::i18n::t("tipoc.progresso.trocando"), 0, nullptr,
+                                                                matriz::i18n::t("tipoc.progresso.arquivos").replace("{n}", juce::String(static_cast<int>(membros.size()))));
                 juce::Thread::launch([proj, vivo, nestId, membros, h, tipoId, nomeNovo] {
                     if (vivo.expired()) return;
                     const TipoContainer* t = tipoDeContainer(tipoId);
@@ -469,6 +469,7 @@ void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, Hos
                         ok = true;
                     }
                     juce::MessageManager::callAsync([vivo, h, ok] {
+                        ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer);
                         if (vivo.expired()) return;
                         if (ok) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
                         aoTerminarFluxo(h, ok);
@@ -478,10 +479,35 @@ void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, Hos
         });
 }
 
+void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, HospedeOverlay h) {
+    if (nestId.empty() || projeto.somenteLeitura() || !h.abrir) return;
+    ProjetoAberto* proj = &projeto;
+    const auto vivo = projeto.tokenVida();
+    // Membros (ordenados por data: uma consulta por arquivo), tipo e nome atuais saem do banco fora da message thread.
+    ProgressoGlobal::obterInstancia().iniciarTarefa(kTarefaContainer, matriz::i18n::t("tipoc.progresso.lendo"), 0, nullptr, {}, false, true);
+    juce::Thread::launch([proj, vivo, nestId, h] {
+        if (vivo.expired()) return;
+        const auto membros = proj->membrosDoNest(nestId);
+        const auto tipoAtual = proj->tipoDoContainer(nestId);
+        const auto origemAtual = proj->origemDoContainer(nestId);
+        juce::String nomeAtual;
+        if (!membros.empty())
+            if (const auto info = proj->nestDoItem(membros.front())) nomeAtual = juce::String::fromUTF8(info->nome.c_str());
+        juce::MessageManager::callAsync([proj, vivo, nestId, h, membros, tipoAtual, origemAtual, nomeAtual] {
+            ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer);
+            if (vivo.expired()) return;
+            PainelOverlay* overlay = h.abrir();
+            if (overlay == nullptr) return;
+            mostrarEscolherTipoParaTrocar(*proj, vivo, nestId, h, *overlay, membros, tipoDeContainerDaOrigem(tipoAtual, origemAtual), nomeAtual);
+        });
+    });
+}
+
 void desagruparContainer(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay h) {
     std::vector<std::string> deContainer;
+    const auto nests = nestsDoProjeto(projeto);
     for (const auto& id : itemIds)
-        if (const auto n = projeto.nestDoItem(id); n && !n->origem.empty()) deContainer.push_back(id);
+        if (const auto n = nests.find(id); n != nests.end() && !n->second.origem.empty()) deContainer.push_back(id);
     if (deContainer.empty()) return;
     projeto.desfazerNest(deContainer);
     if (h.aoMudarDados) h.aoMudarDados();

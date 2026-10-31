@@ -1,6 +1,7 @@
 #include "JanelaPlayerDdp.h"
 
 #include <cstdio>
+#include <set>
 
 #include "../I18n/Strings.h"
 #include "Moldura.h"
@@ -17,11 +18,15 @@ juce::String tempoCd(int64_t quadros) { return bkr::DdpParser::formatCdTime(quad
 }  // namespace
 
 juce::File JanelaPlayerDdp::acharPastaDdp(const std::vector<juce::File>& arquivos) {
+    // Cada pasta é listada uma vez só: centenas de arquivos na mesma pasta relistavam ela (e as 2 de cima) para cada arquivo e
+    // cada nome — o Change Container Type ficava segundos sem resposta antes de abrir a ficha.
+    std::set<juce::String> vistas;
     for (const auto& f : arquivos) {
         auto dir = f.isDirectory() ? f : f.getParentDirectory();
         for (int nivel = 0; nivel < 3 && dir != juce::File(); ++nivel, dir = dir.getParentDirectory()) {
-            for (const char* nome : kNomesDdp)
-                for (const auto& c : dir.findChildFiles(juce::File::findFiles, false))
+            if (!vistas.insert(dir.getFullPathName()).second) continue;  // já listada (e sem DDP, senão teria voltado)
+            for (const auto& c : dir.findChildFiles(juce::File::findFiles, false))
+                for (const char* nome : kNomesDdp)
                     if (c.getFileName().equalsIgnoreCase(nome)) return dir;
         }
     }
