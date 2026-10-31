@@ -4,6 +4,15 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Foco da ficha, Include in Container, Locate em lote, capa do container — 2026-10-31
+
+- Branch: `fix/auditoria-2026-10-27`. Commits `3f58ffa`, `909a4fe`, `07c046c`, `f3092f4`, `8f42da1` (um por item).
+- Foco: Enter (e escolha em dropdown) na ficha de 1 arquivo devolve o foco ao grid, como no lote. O "mouse sobre o grid devolve o foco" do lote ficou (decisão do usuário).
+- Capa: no grid, "Use image as cover..." / "Remove cover" num container gravam `nest.capa_imagem` (mesmo caminho do LOAD COVER + resposta "capa" do questionário). Antes gravavam a `capa_frente` do arquivo-capa e nada mudava. O seletor do catálogo virou grade de miniaturas ("IN THIS CONTAINER" primeiro), carregada fora da message thread.
+- Include in Container...: `ProjetoAberto::incluirNoContainer` (uma transação, UM Undo com nest/nest_item + item/item_campo/item_tag/asset_geolocation). Herda PROJECT INFO (sem campos do vídeo principal) e CONTENT do tipo só onde vazio; sai do container antigo (desfaz com <2). Seletor = `PastaPickerWindow` com `Textos{soFolhas}`. Self-test #29 em `--selftest-lote` passa.
+- Locate Offline Files...: `AssetRelinkEngine::relinkarEmLotePorPasta` — nome (nomes::chave) + tamanho + SHA-256, hashes sem lock, gravação numa transação; conteúdo diferente nunca é trocado no lote. Trecho de conteúdo igual extraído em `relinkarConteudoIdentico` (usado também pelo relink individual).
+- `--selftest-lote` (Debug, 2026-10-31): 13 FAIL pré-existentes, as mesmas com e sem estes commits (pHash/duplicatas, EXPORT dropdown, unificar nomes, consolidação SOURCE/sem pasta, tela de conflitos, e às vezes os 2 do "H Undo de outra thread", que oscilam). Sem teste de UI em runtime dos seletores/relink em lote; Release, ASan/TSan e CI macOS/Windows/interop pendentes.
+
 ## Duplicates e miniaturas MOV — 2026-10-28
 
 - Branch: `fix/auditoria-2026-10-27`.
