@@ -6,6 +6,7 @@
 #include "EventBus.h"
 #include "ImportarMenu.h"
 #include "JanelaPlayerDdp.h"
+#include "ProgressoGlobal.h"
 #include "ProjetoAberto.h"
 
 #include <map>
@@ -176,6 +177,19 @@ namespace {
 constexpr int kBotaoCancelar = 0;
 constexpr int kBotaoConfirmar = 1;
 
+// Barra de progresso (indeterminada) enquanto o container é gravado: com centenas de arquivos leva segundos.
+constexpr const char* kTarefaContainer = "project_container";
+
+// item -> nest numa leitura só. nestDoItem por arquivo relia todos os nests a cada chamada: com centenas de arquivos
+// selecionados o menu e o "Group as Project Container" travavam a tela antes de qualquer coisa aparecer.
+std::map<std::string, ProjetoAberto::NestInfo> nestsDoProjeto(ProjetoAberto& projeto) {
+    try {
+        return ProjetoAberto::mapaDeNests(projeto.projeto().registroLeitura());
+    } catch (...) {
+        return {};
+    }
+}
+
 // Ordem das categorias no dialogo: a dominante na selecao primeiro, as outras logo abaixo.
 std::vector<CategoriaContainer> ordemDasCategorias(CategoriaContainer dominante) {
     std::vector<CategoriaContainer> ordem{ dominante };
@@ -270,10 +284,15 @@ void criarEGravar(ProjetoAberto& projeto, std::vector<std::string> ids, const Ti
     ProjetoAberto* proj = &projeto;
     const auto vivo = projeto.tokenVida();
     const std::string tipoId = tipo.id;
+    ProgressoGlobal::obterInstancia().iniciarTarefa(kTarefaContainer, matriz::i18n::t("tipoc.progresso.agrupando"), 0, nullptr,
+                                                    matriz::i18n::t("tipoc.progresso.arquivos").replace("{n}", juce::String(static_cast<int>(ids.size()))));
     juce::Thread::launch([proj, vivo, ids, tipoId, nome, h] {
         if (vivo.expired()) return;
         const TipoContainer* t = tipoDeContainer(tipoId);
-        if (t == nullptr) return;
+        if (t == nullptr) {
+            juce::MessageManager::callAsync([] { ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer); });
+            return;
+        }
         const juce::String nomeFinal = nome.isNotEmpty() ? nome : nomePadraoDoContainer(*proj, ids, rotuloDoTipoContainer(*t));
         const std::string nestId = proj->criarContainerDeTipo(ids, t->id, origemDoTipoContainer(*t), nomeFinal.toStdString());
         if (!nestId.empty()) {
@@ -281,6 +300,7 @@ void criarEGravar(ProjetoAberto& projeto, std::vector<std::string> ids, const Ti
             aplicarContentDoTipo(*proj, ids, *t);
         }
         juce::MessageManager::callAsync([vivo, h, nestId] {
+            ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer);
             if (vivo.expired()) return;
             if (!nestId.empty()) EventBus::obterInstancia().dispararItemAlterado("", "nest");
             aoTerminarFluxo(h, !nestId.empty());
@@ -295,10 +315,16 @@ void gravarComPlayer(ProjetoAberto& projeto, std::vector<std::string> ids, std::
     ProjetoAberto* proj = &projeto;
     const auto vivo = projeto.tokenVida();
     const std::string tipoId = tipo.id;
+    ProgressoGlobal::obterInstancia().iniciarTarefa(
+        kTarefaContainer, matriz::i18n::t(nestExistente.empty() ? "tipoc.progresso.agrupando" : "tipoc.progresso.trocando"), 0, nullptr,
+        matriz::i18n::t("tipoc.progresso.arquivos").replace("{n}", juce::String(static_cast<int>(ids.size()))));
     juce::Thread::launch([proj, vivo, ids, nestExistente, tipoId, nomeDigitado, contexto, analise, h] {
         if (vivo.expired()) return;
         const TipoContainer* t = tipoDeContainer(tipoId);
-        if (t == nullptr) return;
+        if (t == nullptr) {
+            juce::MessageManager::callAsync([] { ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer); });
+            return;
+        }
         const matriz::ingest::SobreMaterial ctx = contexto != nullptr ? *contexto : matriz::ingest::SobreMaterial{};
         std::string nestId;
         if (nestExistente.empty()) {
@@ -334,6 +360,7 @@ void gravarComPlayer(ProjetoAberto& projeto, std::vector<std::string> ids, std::
         }
         const bool ok = !nestId.empty();
         juce::MessageManager::callAsync([vivo, h, ok] {
+            ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer);
             if (vivo.expired()) return;
             if (ok) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
             aoTerminarFluxo(h, ok);
@@ -377,16 +404,22 @@ void fluxoComPlayer(ProjetoAberto& projeto, std::vector<std::string> ids, std::s
 
 void agruparComoProjectContainer(ProjetoAberto& projeto, std::vector<std::string> itemIds, HospedeOverlay h) {
     if (itemIds.size() < 2 || projeto.somenteLeitura() || !h.abrir) return;
-    for (const auto& id : itemIds)
-        if (projeto.nestDoItem(id).has_value()) return;  // o menu ja avisa; defesa
     ProjetoAberto* proj = &projeto;
     const auto vivo = projeto.tokenVida();
+    // Lendo os arquivos (tipo dominante, pasta em comum) antes do painel de tipos: só a barra, sem modal por cima do painel.
+    ProgressoGlobal::obterInstancia().iniciarTarefa(kTarefaContainer, matriz::i18n::t("tipoc.progresso.lendo"), 0, nullptr,
+                                                    matriz::i18n::t("tipoc.progresso.arquivos").replace("{n}", juce::String(static_cast<int>(itemIds.size()))),
+                                                    false, true);
     juce::Thread::launch([proj, vivo, itemIds, h] {
         if (vivo.expired()) return;
-        const auto dominante = categoriaDominanteDosItens(*proj, itemIds);
-        const auto pasta = nomeDaPastaEmComum(*proj, itemIds);
-        juce::MessageManager::callAsync([proj, vivo, itemIds, h, dominante, pasta] {
-            if (vivo.expired()) return;
+        const auto nests = nestsDoProjeto(*proj);
+        bool algumEmGrupo = false;
+        for (const auto& id : itemIds) algumEmGrupo = algumEmGrupo || nests.count(id) > 0;  // o menu ja avisa; defesa
+        const auto dominante = algumEmGrupo ? CategoriaContainer::Outro : categoriaDominanteDosItens(*proj, itemIds);
+        const auto pasta = algumEmGrupo ? juce::String() : nomeDaPastaEmComum(*proj, itemIds);
+        juce::MessageManager::callAsync([proj, vivo, itemIds, h, dominante, pasta, algumEmGrupo] {
+            ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer);
+            if (vivo.expired() || algumEmGrupo) return;
             PainelOverlay* overlay = h.abrir();
             if (overlay == nullptr) return;
             const juce::Component::SafePointer<PainelOverlay> ov(overlay);
@@ -457,9 +490,11 @@ void desagruparContainer(ProjetoAberto& projeto, const std::vector<std::string>&
 void adicionarMenuProjectContainer(juce::PopupMenu& menu, ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay h) {
     bool algumEmGrupo = false, algumContainer = false, todosNoMesmoContainer = true;
     std::string nestDoContainer;
+    const auto nests = nestsDoProjeto(projeto);
     for (const auto& id : itemIds) {
-        const auto n = projeto.nestDoItem(id);
-        if (!n) { todosNoMesmoContainer = false; continue; }
+        const auto it = nests.find(id);
+        const ProjetoAberto::NestInfo* n = it != nests.end() ? &it->second : nullptr;
+        if (n == nullptr) { todosNoMesmoContainer = false; continue; }
         algumEmGrupo = true;
         if (n->origem.empty()) { todosNoMesmoContainer = false; continue; }
         if (!algumContainer) { algumContainer = true; nestDoContainer = n->nestId; }
