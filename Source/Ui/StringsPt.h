@@ -23,6 +23,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"acoes.capa_buscar_dica", "Buscar por código, título ou nome do arquivo"},
         {"acoes.capa_contagem", "{n} imagem(ns) no catálogo"},
         {"acoes.capa_usar", "USAR COMO CAPA"},
+        {"acoes.capa_secao_container", "NESTE CONTAINER"},
+        {"acoes.capa_secao_catalogo", "CATÁLOGO"},
         {"acoes.capa_sem_arquivo", "A imagem escolhida não tem arquivo legível (origem offline e sem miniatura)."},
         {"acoes.enviar_para_pasta", "Enviar para pasta"},
         {"acoes.mostrar_na_origem", "Mostrar na origem"},

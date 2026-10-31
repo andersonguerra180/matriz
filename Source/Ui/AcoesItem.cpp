@@ -229,18 +229,135 @@ void renomear(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, G
 
 namespace {
 
-// Seletor de capa a partir do PRÓPRIO catálogo: busca por código/título/nome do arquivo, lista e prévia da miniatura.
-class SeletorImagemCatalogo : public juce::Component, private juce::ListBoxModel, private juce::Timer {
+// Grade de miniaturas do seletor de capa: ver a imagem é o que acha o arquivo (o nome nem sempre diz o que é).
+// Duas seções: as imagens do próprio container (quando há) e as do catálogo.
+class GradeImagensCapa : public juce::Component {
 public:
-    SeletorImagemCatalogo(ProjetoAberto& projeto, std::function<void(std::string)> aoEscolher)
-        : projeto_(projeto), aoEscolher_(std::move(aoEscolher)) {
+    struct Celula {
+        std::string id;
+        juce::String titulo;
+        bool doContainer = false;
+        juce::Image imagem;
+    };
+    std::function<void(int)> aoSelecionar;  // índice da célula (-1 = nenhuma)
+    std::function<void(int)> aoConfirmar;   // duplo clique
+
+    void definir(std::vector<Celula> celulas) {
+        celulas_ = std::move(celulas);
+        selecionada_ = -1;
+        relayout(getWidth());
+    }
+    const std::vector<Celula>& celulas() const { return celulas_; }
+
+    void definirImagem(const std::string& id, const juce::Image& img) {
+        for (size_t i = 0; i < celulas_.size(); ++i)
+            if (celulas_[i].id == id) {
+                celulas_[i].imagem = img;
+                if (i < rects_.size()) repaint(rects_[i]);
+            }
+    }
+
+    void relayout(int largura) {
+        rects_.clear();
+        cabecalhos_.clear();
+        const int colunas = juce::jmax(1, (largura - kMargem) / (kLado + kMargem));
+        int y = kMargem, col = 0;
+        bool secaoContainer = false, primeira = true;
+        for (const auto& c : celulas_) {
+            if (primeira || c.doContainer != secaoContainer) {
+                if (!primeira && col > 0) y += kLado + kAlturaTexto + kMargem;
+                col = 0;
+                secaoContainer = c.doContainer;
+                cabecalhos_.push_back({juce::Rectangle<int>(kMargem, y, largura - 2 * kMargem, kAlturaCabecalho),
+                                       matriz::i18n::t(c.doContainer ? "acoes.capa_secao_container" : "acoes.capa_secao_catalogo")});
+                y += kAlturaCabecalho;
+                primeira = false;
+            }
+            rects_.push_back({kMargem + col * (kLado + kMargem), y, kLado, kLado + kAlturaTexto});
+            if (++col == colunas) { col = 0; y += kLado + kAlturaTexto + kMargem; }
+        }
+        if (col > 0) y += kLado + kAlturaTexto + kMargem;
+        setSize(juce::jmax(1, largura), juce::jmax(1, y));
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        const auto clip = g.getClipBounds();
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro, juce::Font::bold)));
+        for (const auto& [r, texto] : cabecalhos_) {
+            if (!r.intersects(clip)) continue;
+            g.setColour(tk.textoTerciario);
+            g.drawText(texto, r, juce::Justification::centredLeft, true);
+        }
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro)));
+        for (size_t i = 0; i < rects_.size() && i < celulas_.size(); ++i) {
+            const auto r = rects_[i];
+            if (!r.intersects(clip)) continue;
+            const auto& c = celulas_[i];
+            const auto quadro = r.withHeight(kLado);
+            g.setColour(tk.painelAlt.withAlpha(0.6f));
+            g.fillRoundedRectangle(quadro.toFloat(), 4.0f);
+            if (c.imagem.isValid())
+                g.drawImageWithin(c.imagem, quadro.getX() + 4, quadro.getY() + 4, quadro.getWidth() - 8, quadro.getHeight() - 8,
+                                  juce::RectanglePlacement::centred, false);
+            const bool sel = static_cast<int>(i) == selecionada_;
+            g.setColour(sel ? tk.acento : tk.borda);
+            g.drawRoundedRectangle(quadro.toFloat().reduced(sel ? 1.0f : 0.5f), 4.0f, sel ? 2.5f : 1.0f);
+            g.setColour(sel ? tk.textoPrimario : tk.textoSecundario);
+            g.drawText(c.titulo, r.getX(), quadro.getBottom() + 2, r.getWidth(), kAlturaTexto - 2, juce::Justification::centredTop, true);
+        }
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        selecionar(indiceEm(e.getPosition()));
+    }
+    void mouseDoubleClick(const juce::MouseEvent& e) override {
+        const int i = indiceEm(e.getPosition());
+        if (i >= 0 && aoConfirmar) aoConfirmar(i);
+    }
+
+    // Área da célula `i` (vazia se não existe).
+    juce::Rectangle<int> areaDaCelula(int i) const { return i >= 0 && i < static_cast<int>(rects_.size()) ? rects_[static_cast<size_t>(i)] : juce::Rectangle<int>(); }
+
+private:
+    static constexpr int kLado = 132, kAlturaTexto = 20, kMargem = 10, kAlturaCabecalho = 22;
+
+    int indiceEm(juce::Point<int> p) const {
+        for (size_t i = 0; i < rects_.size(); ++i)
+            if (rects_[i].contains(p)) return static_cast<int>(i);
+        return -1;
+    }
+    void selecionar(int i) {
+        if (i == selecionada_) return;
+        const auto antes = areaDaCelula(selecionada_);
+        selecionada_ = i;
+        repaint(antes);
+        repaint(areaDaCelula(i));
+        if (aoSelecionar) aoSelecionar(i);
+    }
+
+    std::vector<Celula> celulas_;
+    std::vector<juce::Rectangle<int>> rects_;
+    std::vector<std::pair<juce::Rectangle<int>, juce::String>> cabecalhos_;
+    int selecionada_ = -1;
+};
+
+// Seletor de capa a partir do PRÓPRIO catálogo: busca por código/título/nome do arquivo e grade de miniaturas
+// (as imagens do container primeiro); prévia maior da escolhida.
+class SeletorImagemCatalogo : public juce::Component, private juce::Timer {
+public:
+    SeletorImagemCatalogo(ProjetoAberto& projeto, std::vector<std::string> doContainer, std::function<void(std::string)> aoEscolher)
+        : projeto_(projeto), doContainer_(std::move(doContainer)), aoEscolher_(std::move(aoEscolher)) {
         const auto& tk = tema();
         busca_.setTextToShowWhenEmpty(matriz::i18n::t("acoes.capa_buscar_dica"), tk.textoTerciario);
         busca_.onTextChange = [this] { startTimer(250); };  // debounce: não consulta a cada tecla
         addAndMakeVisible(busca_);
-        lista_.setModel(this);
-        lista_.setRowHeight(22);
-        addAndMakeVisible(lista_);
+        grade_.aoSelecionar = [this](int i) { selecionar(i); };
+        grade_.aoConfirmar = [this](int i) { selecionar(i); if (!escolhido_.empty()) escolher(true); };
+        visor_.setViewedComponent(&grade_, false);
+        visor_.setScrollBarsShown(true, false);
+        addAndMakeVisible(visor_);
         lblContagem_.setColour(juce::Label::textColourId, tk.textoTerciario);
         lblContagem_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         addAndMakeVisible(lblContagem_);
@@ -253,14 +370,16 @@ public:
         btnCancelar_.setButtonText(matriz::i18n::t("comum.cancelar"));
         btnCancelar_.onClick = [this] { escolher(false); };
         addAndMakeVisible(btnCancelar_);
-        setSize(640, 420);
+        setSize(900, 620);
         consultar();
     }
 
-    static void exibir(ProjetoAberto& projeto, std::function<void(std::string)> aoEscolher) {
+    ~SeletorImagemCatalogo() override { cancelarCarga(); }
+
+    static void exibir(ProjetoAberto& projeto, std::vector<std::string> doContainer, std::function<void(std::string)> aoEscolher) {
         juce::DialogWindow::LaunchOptions opt;
         opt.dialogTitle = matriz::i18n::t("acoes.capa_do_catalogo");
-        opt.content.setOwned(new SeletorImagemCatalogo(projeto, std::move(aoEscolher)));
+        opt.content.setOwned(new SeletorImagemCatalogo(projeto, std::move(doContainer), std::move(aoEscolher)));
         opt.dialogBackgroundColour = tema().fundo;
         opt.escapeKeyTriggersCloseButton = true;
         opt.useNativeTitleBar = true;
@@ -292,52 +411,90 @@ public:
         area.removeFromBottom(8);
         areaPrevia_ = area.removeFromRight(230);
         area.removeFromRight(10);
-        lista_.setBounds(area);
+        visor_.setBounds(area);
+        grade_.relayout(area.getWidth() - visor_.getScrollBarThickness());
     }
 
 private:
-    int getNumRows() override { return static_cast<int>(resultados_.size()); }
-
-    void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selecionada) override {
-        if (row < 0 || row >= static_cast<int>(resultados_.size())) return;
-        const auto& tk = tema();
-        if (selecionada) g.fillAll(tk.acento.withAlpha(0.35f));
-        const auto& r = resultados_[static_cast<size_t>(row)];
-        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-        g.setColour(tk.textoTerciario);
-        g.drawText(juce::String::fromUTF8(r.codigo.c_str()), 6, 0, 78, h, juce::Justification::centredLeft, true);
-        g.setColour(tk.textoPrimario);
-        g.drawText(juce::String::fromUTF8(r.titulo.c_str()), 88, 0, w - 94, h, juce::Justification::centredLeft, true);
-    }
-
-    void selectedRowsChanged(int linha) override {
+    void selecionar(int i) {
         escolhido_.clear();
         previa_ = {};
-        if (linha >= 0 && linha < static_cast<int>(resultados_.size())) {
-            escolhido_ = resultados_[static_cast<size_t>(linha)].id;
-            if (auto caminho = projeto_.caminhoMiniaturaPrincipal(escolhido_)) {
-                juce::File f(*caminho);
-                if (f.existsAsFile()) previa_ = juce::ImageFileFormat::loadFrom(f);
-            }
+        const auto& cs = grade_.celulas();
+        if (i >= 0 && i < static_cast<int>(cs.size())) {
+            escolhido_ = cs[static_cast<size_t>(i)].id;
+            previa_ = cs[static_cast<size_t>(i)].imagem;  // a miniatura já carregada (a prévia é só maior)
         }
         btnUsar_.setEnabled(!escolhido_.empty());
-        repaint();
-    }
-
-    void listBoxItemDoubleClicked(int linha, const juce::MouseEvent&) override {
-        lista_.selectRow(linha);
-        if (!escolhido_.empty()) escolher(true);
+        repaint(areaPrevia_);
     }
 
     void timerCallback() override { stopTimer(); consultar(); }
 
     void consultar() {
-        resultados_ = projeto_.buscarImagensDoCatalogo(busca_.getText().trim().toStdString());
-        lista_.updateContent();
-        lista_.deselectAllRows();
-        selectedRowsChanged(-1);
-        lblContagem_.setText(matriz::i18n::t("acoes.capa_contagem").replace("{n}", juce::String(static_cast<int>(resultados_.size()))),
+        const std::string termo = busca_.getText().trim().toStdString();
+        std::vector<GradeImagensCapa::Celula> celulas;
+        std::set<std::string> vistos;
+        auto juntar = [&](const std::vector<ProjetoAberto::ImagemCatalogo>& lista, bool doContainer) {
+            for (const auto& r : lista) {
+                if (!vistos.insert(r.id).second) continue;
+                GradeImagensCapa::Celula c;
+                c.id = r.id;
+                c.titulo = juce::String::fromUTF8(r.titulo.c_str()).fromLastOccurrenceOf("/", false, false);
+                c.doContainer = doContainer;
+                celulas.push_back(std::move(c));
+            }
+        };
+        if (!doContainer_.empty()) juntar(projeto_.buscarImagensDoCatalogo(termo, 500, doContainer_), true);
+        juntar(projeto_.buscarImagensDoCatalogo(termo), false);
+        grade_.definir(std::move(celulas));
+        visor_.setViewPosition(0, 0);
+        selecionar(-1);
+        lblContagem_.setText(matriz::i18n::t("acoes.capa_contagem").replace("{n}", juce::String(static_cast<int>(grade_.celulas().size()))),
                              juce::dontSendNotification);
+        carregarMiniaturas();
+    }
+
+    // Miniaturas (as de .miniaturas, pequenas) lidas e decodificadas fora da message thread, na ordem da grade; cada
+    // bloco volta por callAsync. Uma busca nova cancela a carga anterior.
+    void cancelarCarga() { if (cancelarCarga_) cancelarCarga_->store(true); }
+    void carregarMiniaturas() {
+        cancelarCarga();
+        cancelarCarga_ = std::make_shared<std::atomic<bool>>(false);
+        std::vector<std::string> ids;
+        for (const auto& c : grade_.celulas()) ids.push_back(c.id);
+        if (ids.empty()) return;
+        ProjetoAberto* p = &projeto_;
+        const auto vivo = projeto_.tokenVida();
+        auto cancelar = cancelarCarga_;
+        juce::Component::SafePointer<SeletorImagemCatalogo> seguro(this);
+        juce::Thread::launch([p, vivo, ids, cancelar, seguro] {
+            std::vector<std::pair<std::string, juce::Image>> bloco;
+            auto enviar = [&] {
+                if (bloco.empty()) return;
+                juce::MessageManager::callAsync([seguro, cancelar, b = std::move(bloco)] {
+                    if (seguro == nullptr || cancelar->load()) return;
+                    for (const auto& [id, img] : b) seguro->receberMiniatura(id, img);
+                });
+                bloco.clear();
+            };
+            for (const auto& id : ids) {
+                if (cancelar->load() || vivo.expired()) return;
+                juce::Image img;
+                try {
+                    if (const auto caminho = p->caminhoMiniaturaPrincipal(id)) {
+                        const juce::File f(*caminho);
+                        if (f.existsAsFile()) img = juce::ImageFileFormat::loadFrom(f);
+                    }
+                } catch (...) {}
+                if (img.isValid()) bloco.emplace_back(id, img);
+                if (bloco.size() >= 12) enviar();
+            }
+            enviar();
+        });
+    }
+    void receberMiniatura(const std::string& id, const juce::Image& img) {
+        grade_.definirImagem(id, img);
+        if (id == escolhido_) { previa_ = img; repaint(areaPrevia_); }
     }
 
     void escolher(bool usar) {
@@ -348,15 +505,17 @@ private:
     }
 
     ProjetoAberto& projeto_;
+    std::vector<std::string> doContainer_;
     std::function<void(std::string)> aoEscolher_;
     juce::TextEditor busca_;
-    juce::ListBox lista_;
+    GradeImagensCapa grade_;
+    juce::Viewport visor_;
     juce::Label lblContagem_;
     juce::TextButton btnUsar_, btnCancelar_;
     juce::Rectangle<int> areaPrevia_;
     juce::Image previa_;
-    std::vector<ProjetoAberto::ImagemCatalogo> resultados_;
     std::string escolhido_;
+    std::shared_ptr<std::atomic<bool>> cancelarCarga_;
 };
 
 // Na grade um CONTAINER (nest com origem) aparece pela capa dele: a capa que vale ali é a do container
@@ -418,8 +577,14 @@ void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds
                                   aplicar(imagem);
                               });
     };
-    auto doCatalogo = [p, aplicar] {
-        SeletorImagemCatalogo::exibir(*p, [p, aplicar](std::string itemEscolhido) {
+    // Capa de container: as imagens dele aparecem primeiro no seletor.
+    std::vector<std::string> doContainer;
+    for (const auto& n : nests) {
+        const auto membros = projeto.membrosDoNest(n);
+        doContainer.insert(doContainer.end(), membros.begin(), membros.end());
+    }
+    auto doCatalogo = [p, aplicar, doContainer] {
+        SeletorImagemCatalogo::exibir(*p, doContainer, [p, aplicar](std::string itemEscolhido) {
             // O master do item escolhido; se está offline, cai na miniatura (melhor que nada).
             juce::File origem;
             if (auto info = p->arquivoPrincipal(itemEscolhido)) origem = juce::File(info->caminhoAbsoluto);

@@ -496,7 +496,9 @@ public:
     // Imagens do próprio catálogo (arquivo master com extensão de imagem) cujo código, título ou nome do arquivo contém
     // `termo` (vazio = as mais recentes). Alimenta o seletor "capa a partir do catálogo".
     struct ImagemCatalogo { std::string id, codigo, titulo; };
-    std::vector<ImagemCatalogo> buscarImagensDoCatalogo(const std::string& termo, int limite = 200) const;
+    // `soEstes` (não vazio): só entre esses itens (as imagens do container, que o seletor mostra primeiro).
+    std::vector<ImagemCatalogo> buscarImagensDoCatalogo(const std::string& termo, int limite = 200,
+                                                        const std::vector<std::string>& soEstes = {}) const;
 
     void gerarMiniaturasFaltantes();
 

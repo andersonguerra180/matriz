@@ -3010,7 +3010,8 @@ std::optional<juce::String> ProjetoAberto::caminhoMiniaturaPrincipal(const std::
     return projeto_->pasta().getChildFile(relativo).getFullPathName();
 }
 
-std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalogo(const std::string& termo, int limite) const {
+std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalogo(const std::string& termo, int limite,
+                                                                                   const std::vector<std::string>& soEstes) const {
     std::vector<ImagemCatalogo> out;
     if (!projeto_) return out;
     try {
@@ -3024,12 +3025,15 @@ std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalog
             "     LOWER(a.caminho_relativo) LIKE '%.bmp' OR LOWER(a.caminho_relativo) LIKE '%.webp' OR "
             "     LOWER(a.caminho_relativo) LIKE '%.tif' OR LOWER(a.caminho_relativo) LIKE '%.tiff') "
             "AND (? = '' OR i.titulo LIKE ? OR i.codigo_acervo LIKE ? OR a.caminho_relativo LIKE ?) "
+            "AND (? = 0 OR i.id IN (SELECT value FROM json_each(?))) "
             "ORDER BY i.criado_em DESC LIMIT ?");
         stmt.bind(1, matriz::db::Value::of(termo));
         stmt.bind(2, matriz::db::Value::of(padrao));
         stmt.bind(3, matriz::db::Value::of(padrao));
         stmt.bind(4, matriz::db::Value::of(padrao));
-        stmt.bind(5, matriz::db::Value::of(static_cast<long long>(limite)));
+        stmt.bind(5, matriz::db::Value::of(static_cast<long long>(soEstes.empty() ? 0 : 1)));
+        stmt.bind(6, matriz::db::Value::of(idsEmJson(soEstes)));
+        stmt.bind(7, matriz::db::Value::of(static_cast<long long>(limite)));
         while (stmt.step()) out.push_back({stmt.columnText(0), stmt.columnText(1), stmt.columnText(2)});
     } catch (const std::exception&) {}
     return out;

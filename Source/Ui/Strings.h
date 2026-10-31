@@ -23,6 +23,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"acoes.capa_buscar_dica", "Search by code, title or file name"},
         {"acoes.capa_contagem", "{n} image(s) in the catalog"},
         {"acoes.capa_usar", "USE AS COVER"},
+        {"acoes.capa_secao_container", "IN THIS CONTAINER"},
+        {"acoes.capa_secao_catalogo", "CATALOG"},
         {"acoes.capa_sem_arquivo", "The chosen image has no readable file (source offline and no thumbnail)."},
         {"acoes.recarregar_arquivo", "Reload File"},
         {"acoes.substituir_arquivo", "Replace File..."},
