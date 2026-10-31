@@ -341,6 +341,18 @@ void rodarTestesArvoreDoContainer(const Checar& checar) {
                        e1.filhos[0].nome == "Raw" && e1.filhos[0].itemIdsDiretos == std::set<std::string>{ep1b},
                    "nested subfolders keep the original hierarchy");
         }
+        // Pasta arrastada (ingest_pasta_raiz): a navegação do container começa nela, não no caminho completo.
+        pa.registrarPastasIngeridas({origem.getFullPathName().toStdString()});
+        const auto arrastada = pa.arvoreDoContainer(nest);
+        checar(arrastada.itemIdsDiretos == std::set<std::string>{semCaminho} && arrastada.filhos.size() == 1 &&
+                   arrastada.filhos[0].nome == "Podcast",
+               "dragged folder: the container root shows the dragged folder (Podcast), not the full path");
+        if (arrastada.filhos.size() == 1) {
+            const auto& pod = arrastada.filhos[0];
+            checar(pod.itemIdsDiretos == std::set<std::string>{capa} && pod.filhos.size() == 2 && pod.filhos[0].nome == "Ep 01" &&
+                       pod.filhos[0].filhos.size() == 1 && pod.filhos[0].filhos[0].nome == "Raw",
+                   "dragged folder: its files and subfolders keep the original hierarchy from there on");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("container tree selftest: ") + e.what());
     }

@@ -6378,8 +6378,17 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreDoContainer(const std::string& nest
     vazia.id = nestId;
     if (!projeto_ || nestId.empty()) return vazia;
     struct Par { std::string itemId; juce::StringArray segmentos; };
-    std::vector<Par> comCaminho;
+    std::vector<Par> comCaminho, daPastaArrastada;
     std::set<std::string> semCaminho;
+    // Pastas que o usuário arrastou para o projeto (ingest_pasta_raiz): dentro do container a navegação começa nelas — o caminho
+    // completo (Volumes › user › Desktop...) continua no Get Info, nos metadados e no Folder Map.
+    std::vector<juce::File> pastasArrastadas;
+    try {
+        auto sr = leitura().prepare("SELECT DISTINCT caminho FROM ingest_pasta_raiz WHERE projeto_id = ?");
+        sr.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        while (sr.step())
+            if (!sr.columnIsNull(0) && !sr.columnText(0).empty()) pastasArrastadas.emplace_back(juce::String::fromUTF8(sr.columnText(0).c_str()));
+    } catch (...) {}
     auto st = leitura().prepare(
         "SELECT ni.item_id, (SELECT a.caminho_absoluto_origem FROM arquivo a WHERE a.item_id = ni.item_id "
         "ORDER BY a.eh_master DESC, a.id LIMIT 1) FROM nest_item ni WHERE ni.nest_id = ?");
@@ -6389,7 +6398,21 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreDoContainer(const std::string& nest
         if (caminho.isEmpty()) { semCaminho.insert(st.columnText(0)); continue; }
         Par p;
         p.itemId = st.columnText(0);
-        p.segmentos.addTokens(juce::File(caminho).getParentDirectory().getFullPathName(), juce::File::getSeparatorString(), "");
+        const juce::File pasta = juce::File(caminho).getParentDirectory();
+        // A pasta arrastada mais funda que contém o arquivo: os segmentos começam no nome dela (music › anderson).
+        const juce::File* raiz = nullptr;
+        for (const auto& r : pastasArrastadas)
+            if ((pasta == r || pasta.isAChildOf(r)) && (raiz == nullptr || r.isAChildOf(*raiz))) raiz = &r;
+        if (raiz != nullptr) {
+            p.segmentos.add(raiz->getFileName());
+            if (pasta != *raiz) {
+                p.segmentos.addTokens(pasta.getRelativePathFrom(*raiz), juce::File::getSeparatorString(), "");
+                p.segmentos.removeEmptyStrings();
+            }
+            daPastaArrastada.push_back(std::move(p));
+            continue;
+        }
+        p.segmentos.addTokens(pasta.getFullPathName(), juce::File::getSeparatorString(), "");
         p.segmentos.removeEmptyStrings();
         comCaminho.push_back(std::move(p));
     }
@@ -6404,10 +6427,13 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreDoContainer(const std::string& nest
     NoBuilder raiz;
     raiz.id = nestId;
     raiz.itemIdsDiretos = semCaminho;
+    // Arquivos fora de qualquer pasta arrastada (arrastados soltos, IMPORT antigo) seguem a regra da pasta em comum.
+    for (auto& p : comCaminho) p.segmentos.removeRange(0, prefixoComum);
+    for (auto& p : daPastaArrastada) comCaminho.push_back(std::move(p));
     for (const auto& p : comCaminho) {
         NoBuilder* atual = &raiz;
         juce::String caminhoAcumulado;
-        for (int s = prefixoComum; s < p.segmentos.size(); ++s) {
+        for (int s = 0; s < p.segmentos.size(); ++s) {
             caminhoAcumulado += (caminhoAcumulado.isEmpty() ? "" : "/") + p.segmentos[s];
             NoBuilder* filho = obterOuCriarFilhoPorNome(*atual, p.segmentos[s]);
             if (filho->id.empty()) {
