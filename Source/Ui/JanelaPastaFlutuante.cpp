@@ -1013,7 +1013,19 @@ private:
             return seguro->mosaico_->itemAdjacente(atual, dir);
         };
         auto aoItemMudou = [seguro](const std::string& novo) { if (seguro) seguro->mosaico_->selecionarItem(novo); };
-        janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou);
+        // Container: a coluna da esquerda do preview lista só os arquivos da mesma pasta do arquivo aberto.
+        std::optional<std::set<std::string>> mesmaPasta;
+        if (!nestId_.empty()) {
+            std::function<const ProjetoAberto::NoArvore*(const ProjetoAberto::NoArvore&)> pastaDe =
+                [&](const ProjetoAberto::NoArvore& no) -> const ProjetoAberto::NoArvore* {
+                if (no.itemIdsDiretos.count(itemId) > 0) return &no;
+                for (const auto& f : no.filhos)
+                    if (const auto* achou = pastaDe(f)) return achou;
+                return nullptr;
+            };
+            if (const auto* pasta = pastaDe(arvoreDoMapa_)) mesmaPasta = pasta->itemIdsDiretos;
+        }
+        janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou, false, std::move(mesmaPasta));
     }
 
     LookAndFeelExplorer laf_;  // primeiro membro: vive mais que os componentes que o usam

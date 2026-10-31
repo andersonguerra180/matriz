@@ -69,7 +69,9 @@ public:
                           std::function<void()> aoFecharCallback,
                           CallbackNavegar aoNavegarCallback = nullptr,
                           CallbackItemMudou aoItemMudouCallback = nullptr,
-                          bool somenteLeitura = false)  // INTAKE: lateral = metadados embutidos, só leitura
+                          bool somenteLeitura = false,  // INTAKE: lateral = metadados embutidos, só leitura
+                          // Janela do PROJECT CONTAINER: a coluna da esquerda lista só estes membros (os da pasta do arquivo aberto).
+                          std::optional<std::set<std::string>> idsDaColunaDoGrupo = std::nullopt)
         : juce::DocumentWindow({}, tema().fundo, juce::DocumentWindow::allButtons),
           projeto_(projeto),
           aoFecharCallback_(std::move(aoFecharCallback)),
@@ -98,7 +100,8 @@ public:
         contentComp_ = new ContentComponent(projeto_, itemId,
             [this](int dir) { navegarItem(dir); },
             [this] { closeButtonPressed(); },
-            somenteLeitura
+            somenteLeitura,
+            std::move(idsDaColunaDoGrupo)
         );
         moldura_ = new moldura::JanelaMoldura(contentComp_, moldura::Secao::Explorador, "Preview", {});
         setContentOwned(moldura_, false);
@@ -305,12 +308,14 @@ private:
                          const std::string& itemId,
                          std::function<void(int)> aoNavegar,
                          std::function<void()> aoFechar,
-                         bool somenteLeitura = false)
+                         bool somenteLeitura = false,
+                         std::optional<std::set<std::string>> idsDaColunaDoGrupo = std::nullopt)
             : projeto_(projeto),
               itemId_(itemId),
               aoNavegar_(std::move(aoNavegar)),
               aoFechar_(std::move(aoFechar)),
-              somenteLeitura_(somenteLeitura)
+              somenteLeitura_(somenteLeitura),
+              idsDaColunaDoGrupo_(std::move(idsDaColunaDoGrupo))
         {
             setWantsKeyboardFocus(true);
             // Marcas feitas no grid (E/H/K/P/W) também aparecem aqui.
@@ -522,9 +527,12 @@ private:
         void atualizarColunaNest() {
             std::vector<NestColuna::Linha> linhas;
             nestId_.clear();
+            int membros = 0;
             if (auto nest = projeto_.nestDoItem(itemId_)) {
                 nestId_ = nest->nestId;
                 for (const auto& id : projeto_.membrosDoNest(nestId_)) {
+                    ++membros;
+                    if (idsDaColunaDoGrupo_ && id != itemId_ && idsDaColunaDoGrupo_->count(id) == 0) continue;  // outra pasta do container
                     NestColuna::Linha l;
                     l.id = id;
                     std::string tit, tipo, cod;
@@ -543,7 +551,7 @@ private:
                 nestColuna_->definir(std::move(linhas));
             }
             if (nestViewport_) nestViewport_->setVisible(mostrar);
-            if (!mostrar) nestId_.clear();
+            if (membros < 2) nestId_.clear();  // pasta do container com 1 arquivo: sem coluna, mas continua no container (capa do projeto)
             atualizarCapaDoProjeto();
         }
 
@@ -847,6 +855,7 @@ private:
         std::unique_ptr<CapaProjetoComponent> capaProjeto_;
         std::unique_ptr<PainelMetadadosArquivo> painelLeitura_;  // só no preview do INTAKE
         bool somenteLeitura_ = false;
+        std::optional<std::set<std::string>> idsDaColunaDoGrupo_;  // vazio = todos os membros do nest
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ContentComponent)
     };
