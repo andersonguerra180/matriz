@@ -73,5 +73,8 @@ void agruparComoProjectContainer(ProjetoAberto& projeto, std::vector<std::string
 void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, HospedeOverlay hospede);
 // Desfaz os CONTAINERS a que os itens pertencem (os arquivos voltam soltos; metadados intactos). Nests comuns ficam.
 void desagruparContainer(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay hospede);
+// Include in Container: a janela do Move to Folder com os containers do projeto (por categoria do tipo); os arquivos
+// escolhidos passam a ser membros do container e recebem o PROJECT INFO e o CONTENT dele, como os outros. Com Undo.
+void incluirEmContainer(ProjetoAberto& projeto, std::vector<std::string> itemIds, HospedeOverlay hospede);
 
 } // namespace matriz::ui

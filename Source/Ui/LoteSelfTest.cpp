@@ -19,6 +19,7 @@
 #include <optional>
 #include <iostream>
 
+#include "../Ingest/SobreMaterial.h"
 #include "../Model/Project.h"
 #include "../App/Preferencias.h"
 #include "../I18n/Strings.h"
@@ -726,6 +727,36 @@ void rodarTestesUndoAuditoriaMedios(const Checar& checar) {
             pa.desvincularColecao("lk1");
             pa.desfazer();
             checar(contar("SELECT COUNT(*) FROM catalog_colecao_link WHERE id = 'lk1'", {}) == 1, "#28 Undo of Unlink Collection brings the link back");
+        }
+
+        // #29 Include in Container: entra no container, sai do outro (que se desfaz), recebe PROJECT INFO e CONTENT; um Undo
+        {
+            const auto a = novo();
+            const auto b = novo();
+            const auto c = novo();
+            const auto d = novo();
+            const auto e = novo();
+            const auto album = pa.criarContainerDeTipo({a, b}, "audio.album", "project_audio", "Album");
+            const auto galeria = pa.criarContainerImportacao({c, d}, "gallery");
+            matriz::ingest::SobreMaterial info;
+            info.tags = {"from-container"};
+            const auto incluidos = pa.incluirNoContainer({c, e, a}, album, &info, "Album", {c, e});
+            checar(incluidos.size() == 2, "#29 Include in Container skips the file that is already a member");
+            checar(pa.nestDoItem(c) && pa.nestDoItem(c)->nestId == album && pa.nestDoItem(e) && pa.nestDoItem(e)->nestId == album &&
+                       pa.membrosDoNest(album).size() == 4,
+                   "#29 the included files become members of the chosen container");
+            checar(!pa.nestDoItem(d) && !pa.membrosDoNest(galeria).size(), "#29 the container left with one file is dissolved");
+            checar(colunaDoItem(reg, "collection_type", e) == "Album" &&
+                       contar("SELECT COUNT(*) FROM item_tag WHERE item_id = ?", {Value::of(e)}) > 0,
+                   "#29 the included files get the container CONTENT and PROJECT INFO");
+            checar(pa.descricaoUndoAtual() == "Include 2 Items in Container", "#29 Include in Container is ONE Undo step");
+            pa.desfazer();
+            checar(pa.nestDoItem(c) && pa.nestDoItem(c)->nestId == galeria && pa.nestDoItem(d) && !pa.nestDoItem(e) &&
+                       pa.membrosDoNest(album).size() == 2,
+                   "#29 Undo of Include in Container brings both containers back as they were");
+            checar(colunaDoItem(reg, "collection_type", e).empty() &&
+                       contar("SELECT COUNT(*) FROM item_tag WHERE item_id = ?", {Value::of(e)}) == 0,
+                   "#29 Undo of Include in Container removes the CONTENT and PROJECT INFO it wrote");
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("undo audit (medium) selftest: ") + e.what());

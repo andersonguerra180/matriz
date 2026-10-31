@@ -49,9 +49,10 @@ public:
     std::function<void(const std::string&)> aoConfirmar;
     std::function<void()> aoCancelar;
 
-    explicit Conteudo(const ProjetoAberto::NoArvore& raiz) : raiz_(converter(raiz)) {
+    Conteudo(const ProjetoAberto::NoArvore& raiz, const PastaPickerWindow::Textos& textos)
+        : raiz_(converter(raiz)), soFolhas_(textos.soFolhas) {
         const auto& tk = tema();
-        busca_.setTextToShowWhenEmpty(matriz::i18n::t("pasta_picker.buscar"), tk.textoTerciario);
+        busca_.setTextToShowWhenEmpty(textos.buscar.isNotEmpty() ? textos.buscar : matriz::i18n::t("pasta_picker.buscar"), tk.textoTerciario);
         busca_.setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
         busca_.setColour(juce::TextEditor::textColourId, tk.textoPrimario);
         busca_.setColour(juce::TextEditor::outlineColourId, tk.borda);
@@ -69,12 +70,13 @@ public:
         arvore_.setColour(juce::TreeView::selectedItemBackgroundColourId, tk.acento.withAlpha(0.45f));
         addAndMakeVisible(arvore_);
 
-        vazio_.setText(matriz::i18n::t("pasta_picker.sem_resultados"), juce::dontSendNotification);
+        vazio_.setText(textos.semResultados.isNotEmpty() ? textos.semResultados : matriz::i18n::t("pasta_picker.sem_resultados"),
+                       juce::dontSendNotification);
         vazio_.setJustificationType(juce::Justification::centred);
         vazio_.setColour(juce::Label::textColourId, tk.textoSecundario);
         addChildComponent(vazio_);
 
-        btnOk_.setButtonText(matriz::i18n::t("pasta_picker.mover"));
+        btnOk_.setButtonText(textos.botao.isNotEmpty() ? textos.botao : matriz::i18n::t("pasta_picker.mover"));
         btnOk_.setColour(juce::TextButton::buttonColourId, tk.acento);
         btnOk_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
         btnOk_.onClick = [this] { confirmar(); };
@@ -110,9 +112,9 @@ public:
 
     void focarBusca() { busca_.grabKeyboardFocus(); }
 
-    void selecionar(const std::string& id) {
-        selecionadoId_ = id;
-        btnOk_.setEnabled(!id.empty());
+    void selecionar(const std::string& id, bool agrupador = false) {
+        selecionadoId_ = (soFolhas_ && agrupador) ? std::string() : id;
+        btnOk_.setEnabled(!selecionadoId_.empty());
     }
 
     void confirmar() {
@@ -145,11 +147,12 @@ private:
         }
 
         void itemSelectionChanged(bool selecionado) override {
-            if (selecionado) dono_.selecionar(no_.id);
+            if (selecionado) dono_.selecionar(no_.id, !no_.filhos.empty());
         }
-        void itemClicked(const juce::MouseEvent&) override { dono_.selecionar(no_.id); }
+        void itemClicked(const juce::MouseEvent&) override { dono_.selecionar(no_.id, !no_.filhos.empty()); }
         void itemDoubleClicked(const juce::MouseEvent&) override {
-            dono_.selecionar(no_.id);
+            dono_.selecionar(no_.id, !no_.filhos.empty());
+            if (dono_.soFolhas_ && !no_.filhos.empty()) { setOpen(!isOpen()); return; }  // agrupador: abre/fecha
             dono_.confirmar();
         }
 
@@ -184,6 +187,7 @@ private:
         arvore_.setVisible(!visiveis_.filhos.empty());
     }
 
+    bool soFolhas_ = false;
     No raiz_;      // árvore completa
     No visiveis_;  // árvore após o filtro (os Items guardam cópia própria, mas a raiz precisa viver)
     juce::TextEditor busca_;
@@ -204,10 +208,10 @@ juce::Component::SafePointer<PastaPickerWindow>& janelaAberta() {
 }  // namespace
 
 PastaPickerWindow::PastaPickerWindow(const juce::String& titulo, const ProjetoAberto::NoArvore& raiz,
-                                     AoEscolher aoEscolher)
+                                     AoEscolher aoEscolher, const Textos& textos)
     : juce::DocumentWindow(titulo, tema().fundo, juce::DocumentWindow::closeButton) {
     setUsingNativeTitleBar(true);
-    auto* c = new Conteudo(raiz);
+    auto* c = new Conteudo(raiz, textos);
     juce::WeakReference<PastaPickerWindow> weak(this);
     c->aoCancelar = [weak] { if (auto* w = weak.get()) w->fecharAssincrono(); };
     c->aoConfirmar = [weak, escolher = std::move(aoEscolher)](const std::string& id) {
@@ -241,8 +245,13 @@ void PastaPickerWindow::fecharAssincrono() {
 }
 
 void PastaPickerWindow::abrir(const juce::String& titulo, const ProjetoAberto::NoArvore& raiz, AoEscolher aoEscolher) {
+    abrir(titulo, raiz, std::move(aoEscolher), Textos{});
+}
+
+void PastaPickerWindow::abrir(const juce::String& titulo, const ProjetoAberto::NoArvore& raiz, AoEscolher aoEscolher,
+                              const Textos& textos) {
     if (auto* velha = janelaAberta().getComponent()) velha->fecharAssincrono();
-    auto* w = new PastaPickerWindow(titulo, raiz, std::move(aoEscolher));
+    auto* w = new PastaPickerWindow(titulo, raiz, std::move(aoEscolher), textos);
     janelaAberta() = w;
     w->setVisible(true);
     w->toFront(true);

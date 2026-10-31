@@ -1070,6 +1070,15 @@ public:
     // Tira os itens do container (continuam no Intake como itens comuns, sem aprovação). Um container que fica com
     // 1 membro (ou nenhum) é dissolvido.
     void removerDoContainer(const std::vector<std::string>& itemIds);
+    // Include in Container: os itens passam a ser membros de `nestId` e saem do nest/container em que estavam (um que fica
+    // com menos de 2 arquivos se desfaz; o que perde a capa ganha o próximo). Os que já são membros ficam de fora. Uma
+    // transação e um Undo (containers envolvidos + o que foi gravado nos itens). `contexto` (opcional): o PROJECT INFO do
+    // container aplicado aos incluídos como nos outros membros (sem campos do vídeo principal nem CONTENT); `content`:
+    // o CONTENT do tipo, só nos `idsDoContent` e só onde está vazio. Pode rodar fora da message thread; sem eventos
+    // (quem chama dispara). Devolve os itens incluídos.
+    std::vector<std::string> incluirNoContainer(const std::vector<std::string>& itemIds, const std::string& nestId,
+                                                const matriz::ingest::SobreMaterial* contexto = nullptr, const std::string& content = {},
+                                                const std::set<std::string>& idsDoContent = {});
     // Un-nest: desfaz os nests que os itens integram (todos os arquivos voltam ao grid como itens normais).
     void desfazerNest(const std::vector<std::string>& itemIds);
     // Linha no log do projeto (log.md), escrita em background na fila serial (nada de disco na message thread).

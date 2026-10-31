@@ -5826,6 +5826,22 @@ int ProjetoAberto::aplicarContextoDeImportacao(const std::vector<std::string>& i
     return tocados;
 }
 
+// CONTENT só onde o item não tem (nem no campo nem na coluna): o que o usuário preencheu nunca é sobrescrito.
+static bool gravarContentSeVazio(matriz::db::Database& db, const std::string& id, const std::string& valor, const std::string& agora) {
+    auto st = db.prepare("SELECT COALESCE(TRIM(collection_type), ''), "
+                         "COALESCE((SELECT TRIM(valor) FROM item_campo WHERE item_id = ?1 AND campo_id = 'collection_type' LIMIT 1), '') "
+                         "FROM item WHERE id = ?1");
+    st.bind(1, matriz::db::Value::of(id));
+    if (!st.step() || !st.columnText(0).empty() || !st.columnText(1).empty()) return false;
+    db.run("UPDATE item SET collection_type = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+           {matriz::db::Value::of(valor), matriz::db::Value::of(agora), matriz::db::Value::of(id)});
+    db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+           "VALUES (?, ?, 'raiz', 0, 'collection_type', ?, 'humano', ?) "
+           "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
+           {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id), matriz::db::Value::of(valor), matriz::db::Value::of(agora)});
+    return true;
+}
+
 int ProjetoAberto::definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor) {
     if (somenteLeitura_ || !projeto_ || itemIds.empty() || valor.empty()) return 0;
     registrarUndoDeRetrato("Set Content", retratar({{"item", "id", true}, {"item_campo", "item_id", false}}, itemIds), itemIds);
@@ -5835,20 +5851,8 @@ int ProjetoAberto::definirContentSeVazio(const std::vector<std::string>& itemIds
     std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
     try {
         db.exec("BEGIN IMMEDIATE");
-        for (const auto& id : itemIds) {
-            auto st = db.prepare("SELECT COALESCE(TRIM(collection_type), ''), "
-                                 "COALESCE((SELECT TRIM(valor) FROM item_campo WHERE item_id = ?1 AND campo_id = 'collection_type' LIMIT 1), '') "
-                                 "FROM item WHERE id = ?1");
-            st.bind(1, matriz::db::Value::of(id));
-            if (!st.step() || !st.columnText(0).empty() || !st.columnText(1).empty()) continue;  // o que o usuario preencheu nunca e sobrescrito
-            db.run("UPDATE item SET collection_type = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
-                   {matriz::db::Value::of(valor), matriz::db::Value::of(agora), matriz::db::Value::of(id)});
-            db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-                   "VALUES (?, ?, 'raiz', 0, 'collection_type', ?, 'humano', ?) "
-                   "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
-                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id), matriz::db::Value::of(valor), matriz::db::Value::of(agora)});
-            gravados.push_back(id);
-        }
+        for (const auto& id : itemIds)
+            if (gravarContentSeVazio(db, id, valor, agora)) gravados.push_back(id);
         db.exec("COMMIT");
     } catch (const std::exception& e) {
         try { db.exec("ROLLBACK"); } catch (...) {}
@@ -6119,6 +6123,109 @@ void ProjetoAberto::removerDoContainer(const std::vector<std::string>& itemIds) 
         throw;
     }
     EventBus::obterInstancia().dispararItemAlterado("", "nest");
+}
+
+std::vector<std::string> ProjetoAberto::incluirNoContainer(const std::vector<std::string>& itemIds, const std::string& nestId,
+                                                          const matriz::ingest::SobreMaterial* contexto, const std::string& content,
+                                                          const std::set<std::string>& idsDoContent) {
+    std::vector<std::string> incluidos;
+    if (somenteLeitura_ || !projeto_ || nestId.empty() || itemIds.empty()) return incluidos;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    std::set<std::string> envolvidos{nestId};  // o destino e os nests de onde os itens saem
+    try {
+        auto alvo = db.prepare("SELECT 1 FROM nest WHERE id = ?");
+        alvo.bind(1, matriz::db::Value::of(nestId));
+        if (!alvo.step()) return incluidos;
+        std::set<std::string> vistos;
+        for (const auto& id : itemIds) {
+            if (id.empty() || !vistos.insert(id).second) continue;
+            auto st = db.prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
+            st.bind(1, matriz::db::Value::of(id));
+            if (st.step()) {
+                const std::string atual = st.columnText(0);
+                if (atual == nestId) continue;  // já é membro
+                envolvidos.insert(atual);
+            }
+            incluidos.push_back(id);
+        }
+    } catch (...) { return {}; }
+    if (incluidos.empty()) return incluidos;
+
+    // Undo num passo só: os containers envolvidos (linha do nest antes dos membros: o nest se apaga com cascata) e o que
+    // o PROJECT INFO / CONTENT gravam nos itens incluídos.
+    const std::string nestsJson = idsEmJson(std::vector<std::string>(envolvidos.begin(), envolvidos.end()));
+    const std::string itensJson = idsEmJson(incluidos);
+    std::vector<ParteUndo> partes;
+    auto parteLinhas = [&](const std::string& tabela, const std::string& chave, const std::string& json) {
+        ParteUndo p;
+        p.tabela = tabela;
+        p.onde = "\"" + chave + "\" IN (SELECT value FROM json_each(?))";
+        p.params = {matriz::db::Value::of(json)};
+        partes.push_back(std::move(p));
+    };
+    parteLinhas("nest", "id", nestsJson);
+    parteLinhas("nest_item", "nest_id", nestsJson);
+    if (contexto != nullptr || !content.empty()) {
+        ParteUndo item;  // tabela-mãe: só as colunas, linha a linha (apagar a linha levaria tudo em cascata)
+        item.tipo = ParteUndo::Tipo::Colunas;
+        item.tabela = "item";
+        item.chave = "id";
+        item.onde = "\"id\" IN (SELECT value FROM json_each(?))";
+        item.params = {matriz::db::Value::of(itensJson)};
+        try {
+            auto st = db.prepare("SELECT name FROM pragma_table_info('item')");
+            while (st.step()) item.colunas.push_back(st.columnText(0));
+        } catch (...) {}
+        partes.push_back(std::move(item));
+        parteLinhas("item_campo", "item_id", itensJson);
+        parteLinhas("item_tag", "item_id", itensJson);
+        parteLinhas("asset_geolocation", "asset_id", itensJson);
+    }
+    registrarUndoPersistente(incluidos.size() == 1 ? "Include in Container" : "Include " + std::to_string(incluidos.size()) + " Items in Container",
+                             partes, {""}, "recarregar_tudo");
+    const std::string agora = matriz::model::agoraIso8601();
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const auto& id : incluidos) {
+            db.run("DELETE FROM nest_item WHERE item_id = ?", {matriz::db::Value::of(id)});
+            db.run("INSERT INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(id), matriz::db::Value::of(nestId), matriz::db::Value::of(agora)});
+        }
+        // De onde os itens saíram: mesma regra do Remove from Container.
+        for (const auto& nid : envolvidos) {
+            if (nid == nestId) continue;
+            auto st = db.prepare("SELECT item_id FROM nest_item WHERE nest_id = ? ORDER BY adicionado_em, item_id");
+            st.bind(1, matriz::db::Value::of(nid));
+            std::vector<std::string> restantes;
+            while (st.step()) restantes.push_back(st.columnText(0));
+            if (restantes.size() < 2) {
+                db.run("DELETE FROM nest_item WHERE nest_id = ?", {matriz::db::Value::of(nid)});
+                db.run("DELETE FROM nest WHERE id = ?", {matriz::db::Value::of(nid)});
+            } else {
+                db.run("UPDATE nest SET capa_item_id = ? WHERE id = ? AND capa_item_id NOT IN (SELECT item_id FROM nest_item WHERE nest_id = ?)",
+                       {matriz::db::Value::of(restantes.front()), matriz::db::Value::of(nid), matriz::db::Value::of(nid)});
+            }
+        }
+        if (contexto != nullptr) {
+            // Como os outros membros: as respostas do questionário, sem os campos do vídeo principal e sem o CONTENT
+            // (que segue a regra própria, abaixo) — mesmo recorte de aplicarContextoDeImportacao.
+            matriz::ingest::SobreMaterial sobre = *contexto;
+            sobre.collectionType.clear();
+            sobre.camposDoVideo.clear();
+            matriz::ingest::AplicadorSobreMaterial aplicador(db, sobre);
+            for (const auto& id : incluidos) aplicador.aplicar(id);
+        }
+        if (!content.empty())
+            for (const auto& id : incluidos)
+                if (idsDoContent.count(id) != 0) gravarContentSeVazio(db, id, content, agora);
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("incluirNoContainer: " + juce::String(e.what()));
+        return {};
+    }
+    return incluidos;
 }
 
 std::string ProjetoAberto::criarNest(const std::vector<std::string>& itemIdsPedidos) {

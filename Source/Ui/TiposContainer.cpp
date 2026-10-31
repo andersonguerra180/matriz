@@ -4,11 +4,14 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "../Ingest/SobreMaterial.h"
 #include "EventBus.h"
+#include "ContainerVisual.h"
 #include "ImportarMenu.h"
 #include "JanelaPlayerDdp.h"
+#include "PastaPickerWindow.h"
 #include "ProgressoGlobal.h"
 #include "ProjetoAberto.h"
 
+#include <algorithm>
 #include <map>
 
 namespace matriz::ui {
@@ -154,9 +157,9 @@ juce::String nomePadraoDoContainer(ProjetoAberto& projeto, const std::vector<std
     return matriz::i18n::t("tipoc.nome_padrao").replace("{tipo}", rotuloDoTipo).replace("{data}", juce::Time::getCurrentTime().formatted("%Y-%m-%d"));
 }
 
-int aplicarContentDoTipo(ProjetoAberto& projeto, const std::vector<std::string>& membros, const TipoContainer& tipo, const std::string& contentDaFicha) {
-    const std::string valor = contentDaFicha.empty() ? std::string(tipo.content) : contentDaFicha;
-    if (valor.empty()) return 0;
+// Quem recebe o CONTENT do tipo (aplicarContentDoTipo e Include in Container).
+static std::vector<std::string> aceitosDoContent(ProjetoAberto& projeto, const std::vector<std::string>& membros, const TipoContainer& tipo,
+                                                 const std::string& contentDaFicha) {
     std::vector<std::string> aceitos;
     if (contentDaFicha.empty() && tipo.categoriaConteudo != CategoriaConteudo::Nenhuma) {
         for (const auto& id : membros) {
@@ -168,7 +171,13 @@ int aplicarContentDoTipo(ProjetoAberto& projeto, const std::vector<std::string>&
         // categoria), entao todos os membros — o IMPORT tambem gravava em todos.
         aceitos = membros;
     }
-    return projeto.definirContentSeVazio(aceitos, valor);
+    return aceitos;
+}
+
+int aplicarContentDoTipo(ProjetoAberto& projeto, const std::vector<std::string>& membros, const TipoContainer& tipo, const std::string& contentDaFicha) {
+    const std::string valor = contentDaFicha.empty() ? std::string(tipo.content) : contentDaFicha;
+    if (valor.empty()) return 0;
+    return projeto.definirContentSeVazio(aceitosDoContent(projeto, membros, tipo, contentDaFicha), valor);
 }
 
 
@@ -513,6 +522,83 @@ void desagruparContainer(ProjetoAberto& projeto, const std::vector<std::string>&
     if (h.aoMudarDados) h.aoMudarDados();
 }
 
+void incluirEmContainer(ProjetoAberto& projeto, std::vector<std::string> itemIds, HospedeOverlay h) {
+    if (itemIds.empty() || projeto.somenteLeitura()) return;
+    // Na grade um container/nest aparece pela capa: incluir a capa leva o grupo inteiro (como Move to Folder).
+    try { itemIds = projeto.expandirMembrosDeNest(itemIds); } catch (...) {}
+    const auto nests = nestsDoProjeto(projeto);
+    std::map<std::string, ProjetoAberto::NestInfo> containers;  // nestId -> info (o mapa vem por item)
+    for (const auto& par : nests)
+        if (!par.second.origem.empty()) containers.emplace(par.second.nestId, par.second);
+    if (containers.empty()) return;
+
+    // Árvore do seletor: um grupo por categoria do tipo (os containers do IMPORT antigo/Intake sem tipo em IMPORTS).
+    std::map<juce::String, ProjetoAberto::NoArvore> grupos;
+    for (const auto& [nestId, n] : containers) {
+        const TipoContainer* tp = tipoDeContainerDaOrigem(n.tipo, n.origem);
+        const juce::String grupo = tp != nullptr ? rotuloDaCategoriaContainer(tp->categoria) : matriz::i18n::t("tipoc.incluir.importacoes");
+        const juce::String rotuloTipo = tp != nullptr ? rotuloDoTipoContainer(*tp) : matriz::i18n::t("intake.container_" + juce::String(n.origem));
+        juce::String nome = juce::String::fromUTF8(n.nome.c_str());
+        nome = nome.isEmpty() ? rotuloTipo : nome + "  -  " + rotuloTipo;
+        ProjetoAberto::NoArvore folha;
+        folha.id = nestId;
+        folha.nome = nome + "  (" + matriz::i18n::t("intake.container_arquivos").replace("{n}", juce::String(n.total)) + ")";
+        auto& g = grupos[grupo];
+        if (g.id.empty()) { g.id = "grupo:" + grupo.toStdString(); g.nome = grupo; }
+        g.filhos.push_back(std::move(folha));
+    }
+    ProjetoAberto::NoArvore raiz;
+    raiz.id = "containers";
+    for (auto& [rotulo, g] : grupos) {
+        juce::ignoreUnused(rotulo);
+        std::sort(g.filhos.begin(), g.filhos.end(),
+                  [](const ProjetoAberto::NoArvore& a, const ProjetoAberto::NoArvore& b) { return a.nome.compareNatural(b.nome) < 0; });
+        raiz.filhos.push_back(std::move(g));
+    }
+
+    PastaPickerWindow::Textos textos;
+    textos.buscar = matriz::i18n::t("tipoc.incluir.buscar");
+    textos.botao = matriz::i18n::t("tipoc.incluir.botao");
+    textos.semResultados = matriz::i18n::t("tipoc.incluir.vazio");
+    textos.soFolhas = true;
+    ProjetoAberto* proj = &projeto;
+    const auto vivo = projeto.tokenVida();
+    PastaPickerWindow::abrir(matriz::i18n::t("tipoc.incluir.titulo"), raiz, [proj, vivo, itemIds, h](const std::string& nestId) {
+        if (vivo.expired() || nestId.empty() || nestId.rfind("grupo:", 0) == 0) return;
+        ProgressoGlobal::obterInstancia().iniciarTarefa(kTarefaContainer, matriz::i18n::t("tipoc.progresso.incluindo"), 0, nullptr,
+                                                        matriz::i18n::t("tipoc.progresso.arquivos").replace("{n}", juce::String(static_cast<int>(itemIds.size()))));
+        juce::Thread::launch([proj, vivo, itemIds, nestId, h] {
+            if (vivo.expired()) return;
+            std::vector<std::string> incluidos;
+            try {
+                // Como os outros membros: o PROJECT INFO guardado no container e o CONTENT do tipo.
+                std::shared_ptr<const matriz::ingest::SobreMaterial> contexto;
+                std::string folha;
+                std::map<std::string, std::string> respostas;
+                const std::string json = proj->questionarioDoContainer(nestId);
+                if (!json.empty() && questionarioDeJson(json, folha, respostas)) contexto = contextoDeRespostasImportar(folha, respostas);
+                const TipoContainer* tp = tipoDeContainerDaOrigem(proj->tipoDoContainer(nestId), proj->origemDoContainer(nestId));
+                const std::string contentDaFicha = contexto != nullptr ? contexto->collectionType : std::string();
+                std::string content;
+                std::set<std::string> idsDoContent;
+                if (tp != nullptr) {
+                    content = contentDaFicha.empty() ? std::string(tp->content) : contentDaFicha;
+                    if (!content.empty())
+                        for (const auto& id : aceitosDoContent(*proj, itemIds, *tp, contentDaFicha)) idsDoContent.insert(id);
+                }
+                incluidos = proj->incluirNoContainer(itemIds, nestId, contexto.get(), content, idsDoContent);
+            } catch (...) {}
+            juce::MessageManager::callAsync([vivo, h, incluidos] {
+                ProgressoGlobal::obterInstancia().concluirTarefa(kTarefaContainer);
+                if (vivo.expired() || incluidos.empty()) return;
+                EventBus::obterInstancia().dispararItensAlterados(incluidos, "metadado");
+                EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");  // grade, METADATA, Folder Map, janela do container
+                if (h.aoMudarDados) h.aoMudarDados();
+            });
+        });
+    }, textos);
+}
+
 void adicionarMenuProjectContainer(juce::PopupMenu& menu, ProjetoAberto& projeto, const std::vector<std::string>& itemIds, HospedeOverlay h) {
     bool algumEmGrupo = false, algumContainer = false, todosNoMesmoContainer = true;
     std::string nestDoContainer;
@@ -535,6 +621,9 @@ void adicionarMenuProjectContainer(juce::PopupMenu& menu, ProjetoAberto& projeto
         menu.addItem(matriz::i18n::t("tipoc.menu.trocar"), todosNoMesmoContainer, false, [proj, nestDoContainer, h] { mudarTipoDoContainer(*proj, nestDoContainer, h); });
         menu.addItem(matriz::i18n::t("tipoc.menu.desagrupar"), true, false, [proj, itemIds, h] { desagruparContainer(*proj, itemIds, h); });
     }
+    // Include in Container: habilitado quando o projeto tem algum container (o seletor lista todos).
+    const bool haContainer = std::any_of(nests.begin(), nests.end(), [](const auto& par) { return !par.second.origem.empty(); });
+    menu.addItem(matriz::i18n::t("tipoc.menu.incluir"), haContainer, false, [proj, itemIds, h] { incluirEmContainer(*proj, itemIds, h); });
 }
 
 } // namespace matriz::ui
