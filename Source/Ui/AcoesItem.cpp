@@ -2,6 +2,8 @@
 #include "AcoesItem.h"
 #include "ContainerVisual.h"
 #include "PastaPickerWindow.h"
+#include "InitialRelinkDialog.h"
+#include "../Vault/AssetRelinkEngine.h"
 #include "../Diag/Watchdog.h"
 
 #include "../Consolidacao/Mascara.h"
@@ -34,6 +36,7 @@ enum Comando {
     kVerDuplicatas,
     kDefinirCapa,
     kRemoverCapa,
+    kLocalizarOffline,
     kLimparMetadados,
     kRecarregarArquivo,
     kSubstituirArquivo,
@@ -439,6 +442,65 @@ void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds
     });
 }
 
+void localizarOfflineEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
+    if (itemIds.empty()) return;
+    if (projeto.somenteLeitura()) { projeto.avisarSomenteLeitura(); return; }
+    juce::File inicial;
+    if (const auto origem = projeto.caminhoDeOrigem(itemIds.front()); origem && origem->isNotEmpty())
+        inicial = InitialRelinkDialog::pastaInicialParaLocalizar(*origem);
+    auto seletor = std::make_shared<juce::FileChooser>(matriz::i18n::t("acoes.localizar_offline_titulo"), inicial);
+    ProjetoAberto* p = &projeto;
+    const auto vivo = projeto.tokenVida();
+    const auto ids = itemIds;
+    seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                         [seletor, p, vivo, ids, ganchos](const juce::FileChooser& fc) {
+        const juce::File pasta = fc.getResult();
+        if (!pasta.isDirectory() || vivo.expired()) return;
+        // Varredura e SHA-256 em segundo plano (vídeo leva tempo): a barra avança e o Cancelar responde.
+        const int n = static_cast<int>(ids.size());
+        auto cancelar = std::make_shared<std::atomic<bool>>(false);
+        ProgressoGlobal::obterInstancia().iniciarTarefa("batch_locate_offline", matriz::i18n::t("acoes.localizar_offline_progresso"), n,
+                                                        [cancelar] { cancelar->store(true); },
+                                                        matriz::i18n::t("acoes.localizar_offline_procurando").replace("{pasta}", pasta.getFileName()));
+        juce::Thread::launch([p, vivo, ids, pasta, cancelar, ganchos] {
+            if (vivo.expired()) return;
+            auto res = matriz::vault::AssetRelinkEngine::relinkarEmLotePorPasta(
+                p->projeto().registro(), p->projeto().writeMutex(), p->projeto().pasta(), ids, pasta,
+                [cancelar] { return cancelar->load(); },
+                [](int feitos, int total) {
+                    ProgressoGlobal::obterInstancia().atualizarProgresso(
+                        "batch_locate_offline", feitos,
+                        matriz::i18n::t("acoes.localizar_offline_conferindo").replace("{a}", juce::String(feitos)).replace("{n}", juce::String(total)));
+                });
+            juce::MessageManager::callAsync([vivo, res, ganchos] {
+                ProgressoGlobal::obterInstancia().concluirTarefa("batch_locate_offline");
+                if (vivo.expired()) return;
+                if (!res.relinkados.empty()) {
+                    EventBus::obterInstancia().dispararItensAlterados(res.relinkados, "miniatura");
+                    EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");  // status offline e miniaturas
+                    if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+                }
+                if (res.cancelado) return;
+                auto contagem = [](const std::vector<std::string>& v) { return juce::String(static_cast<int>(v.size())); };
+                juce::String msg = matriz::i18n::t("acoes.localizar_offline_resumo")
+                                       .replace("{ok}", contagem(res.relinkados))
+                                       .replace("{nao}", contagem(res.naoAchados))
+                                       .replace("{dif}", contagem(res.conteudoDiferente))
+                                       .replace("{on}", contagem(res.jaOnline));
+                if (!res.conteudoDiferente.empty()) msg << "\n\n" << matriz::i18n::t("acoes.localizar_offline_dica_diferente");
+                if (res.erro.isNotEmpty()) msg << "\n\n" << res.erro;
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                                 .withIconType(res.erro.isNotEmpty() ? juce::MessageBoxIconType::WarningIcon
+                                                                                     : juce::MessageBoxIconType::InfoIcon)
+                                                 .withTitle(matriz::i18n::t("acoes.localizar_offline_titulo"))
+                                                 .withMessage(msg)
+                                                 .withButton(matriz::i18n::t("comum.ok")),
+                                             static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+            });
+        });
+    });
+}
+
 void recarregarArquivo(ProjetoAberto& projeto, const std::string& itemId, Ganchos ganchos) {
     if (itemId.empty()) return;
     auto info = projeto.arquivoPrincipal(itemId);
@@ -591,6 +653,13 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kObterExif, matriz::i18n::t("acoes.obter_exif"));
     menu.addItem(kRecarregarArquivo, matriz::i18n::t("acoes.recarregar_arquivo"), umSo);
     menu.addItem(kSubstituirArquivo, matriz::i18n::t("acoes.substituir_arquivo"), umSo);
+    // Locate Offline Files: vários de uma vez, apontando a pasta onde estão. Sem os dados da grade, fica habilitado
+    // (o lote pula sozinho o que já está online).
+    const bool algumOffline = !emMemoria || std::any_of(itemIds.begin(), itemIds.end(), [&](const std::string& id) {
+        const auto* r = emMemoria(id);
+        return r == nullptr || r->offline;
+    });
+    menu.addItem(kLocalizarOffline, matriz::i18n::t("acoes.localizar_offline"), algumOffline);
 
     // Estados da seleção numa passada só (antes: uma volta por rótulo, e um
     // obterItemResumo — banco + stat do arquivo — por item pra "tem foto").
@@ -657,7 +726,8 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
     // A grade mostra só a capa de um NEST/CONTAINER: o que se faz nela vale para todos os arquivos dele (Remove from Backup e
     // os movimentos do Folder Map já expandem lá dentro). Rename, capa, arquivo, caminho e EXIF continuam sendo do arquivo clicado.
     if (!ganchos.membrosIndividuais &&
-        (resultado == kRemoverDaLista || resultado == kLimparMetadados || resultado == kRenomearEmLote || resultado == kCategorizar)) {
+        (resultado == kRemoverDaLista || resultado == kLimparMetadados || resultado == kRenomearEmLote || resultado == kCategorizar ||
+         resultado == kLocalizarOffline)) {
         try { itemIds = projeto.expandirCapasDeNest(itemIds); } catch (...) {}
     }
 
@@ -692,6 +762,10 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kSubstituirArquivo:
             substituirArquivo(projeto, itemIds.front(), ganchos);
+            break;
+
+        case kLocalizarOffline:
+            localizarOfflineEmLote(projeto, itemIds, ganchos);
             break;
 
         case kAlternarPublicacao:

@@ -69,6 +69,9 @@ void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, 
 void removerDoBackup(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 // Item 9 — escolhe uma imagem e a torna a miniatura do(s) item(ns).
 void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
+// Locate Offline Files: escolhe uma pasta e reconecta, de uma vez, os arquivos offline da seleção que estão nela ou
+// nas subpastas (mesmo nome, tamanho e SHA-256; mesmo Asset ID). Conteúdo diferente fica para o relink individual.
+void localizarOfflineEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 // Item D.9 — relê o arquivo do item a partir do caminho atual (master
 // preservado, entra como derivada — ver ProjetoAberto::recarregarOuSubstituirArquivo).
 // Só faz sentido pra um item por vez.

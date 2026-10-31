@@ -3,11 +3,55 @@
 #include "../Preservation/Preservation.h"
 #include "../Model/ProjectLog.h"
 #include "../Model/Project.h"
+#include "../Model/NomesCanonicos.h"
 #include <algorithm>
+#include <set>
 
 namespace matriz::vault {
 
 namespace {
+
+// Relink com conteúdo igual (SHA-256 já conferido): troca o caminho do master no lugar, mantendo o Asset ID; PREMIS e
+// Project Log. Sem transação própria — o lote junta vários numa só.
+bool relinkarConteudoIdentico(matriz::db::Database& db, const juce::File& pastaProjeto, const std::string& itemId,
+                              const std::string& masterArqId, const std::string& camAbsOld, const std::string& newAbsPath,
+                              const std::string& sha, juce::String& outError) {
+    const juce::String agoraIso = juce::Time::getCurrentTime().formatted("%Y-%m-%dT%H:%M:%SZ");
+    try {
+        auto stmtUp = db.prepare("UPDATE arquivo SET caminho_absoluto_origem = ?, atualizado_em = ? WHERE id = ?");
+        stmtUp.bind(1, matriz::db::Value::of(newAbsPath));
+        stmtUp.bind(2, matriz::db::Value::of(agoraIso.toStdString()));
+        stmtUp.bind(3, matriz::db::Value::of(masterArqId));
+        stmtUp.step();
+
+        auto stmtLoc = db.prepare("INSERT OR IGNORE INTO localizacao_conhecida (id, arquivo_id, caminho_absoluto, criado_em) VALUES (?, ?, ?, ?)");
+        stmtLoc.bind(1, matriz::db::Value::of(matriz::model::novoUuid()));
+        stmtLoc.bind(2, matriz::db::Value::of(masterArqId));
+        stmtLoc.bind(3, matriz::db::Value::of(newAbsPath));
+        stmtLoc.bind(4, matriz::db::Value::of(agoraIso.toStdString()));
+        stmtLoc.step();
+
+        // PREMIS event
+        matriz::preservation::registrarEvento(db, itemId, masterArqId,
+                                              "RELINKED",
+                                              "Asset relocated with matching checksum",
+                                              matriz::preservation::Outcome::Success,
+                                              newAbsPath, "Operator");
+
+        // Project Log
+        matriz::model::ProjectLog pLog(pastaProjeto);
+        juce::StringArray details;
+        details.add("Asset ID: " + juce::String(itemId));
+        details.add("Previous Path: " + juce::String(camAbsOld));
+        details.add("New Path: " + juce::String(newAbsPath));
+        details.add("Checksum: " + juce::String(sha) + " (MATCH)");
+        pLog.appendEntry("Asset Relinked (Relocated)", details);
+        return true;
+    } catch (const std::exception& e) {
+        outError = "Database error during relink: " + juce::String(e.what());
+        return false;
+    }
+}
 
 juce::String normalizarSeparadores(const juce::String& p) {
     return p.replaceCharacter('\\', '/');
@@ -22,6 +66,109 @@ juce::StringArray dividirCaminho(const juce::String& p) {
 }
 
 } // namespace
+
+ResultadoRelinkLote AssetRelinkEngine::relinkarEmLotePorPasta(matriz::db::Database& db,
+                                                              std::recursive_mutex& escrita,
+                                                              const juce::File& pastaProjeto,
+                                                              const std::vector<std::string>& itemIds,
+                                                              const juce::File& pasta,
+                                                              std::function<bool()> cancelado,
+                                                              std::function<void(int, int)> progresso) {
+    ResultadoRelinkLote res;
+    auto parar = [&] { return cancelado && cancelado(); };
+    struct Pedido {
+        std::string itemId, arquivoId, camAbsOld, sha;
+        juce::int64 tamanho = 0;
+        std::string chaveNome;
+    };
+    std::vector<Pedido> pedidos;
+    std::set<std::string> nomesProcurados;
+    try {
+        std::unique_lock<std::recursive_mutex> leitura(escrita);  // só as consultas (curtas); a varredura e os hashes vêm sem lock
+        for (const auto& id : itemIds) {
+            auto st = db.prepare(
+                "SELECT a.id, a.caminho_relativo, COALESCE(a.caminho_absoluto_origem, ''), COALESCE(a.checksum_sha256, ''), "
+                "COALESCE(a.tamanho_bytes, 0), COALESCE(v.localizacao, '') "
+                "FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+            st.bind(1, matriz::db::Value::of(id));
+            if (!st.step()) { res.naoAchados.push_back(id); continue; }
+            Pedido p;
+            p.itemId = id;
+            p.arquivoId = st.columnText(0);
+            const std::string camRel = st.columnText(1);
+            p.camAbsOld = st.columnText(2);
+            p.sha = st.columnText(3);
+            p.tamanho = static_cast<juce::int64>(st.columnInt(4));
+            const juce::File esperado = caminhoEsperado(pastaProjeto, st.columnText(5), camRel, p.camAbsOld);
+            if (esperado != juce::File() && esperado.existsAsFile()) { res.jaOnline.push_back(id); continue; }
+            const juce::String nome = esperado != juce::File()
+                                          ? esperado.getFileName()
+                                          : juce::String::fromUTF8((p.camAbsOld.empty() ? camRel : p.camAbsOld).c_str())
+                                                .replaceCharacter('\\', '/').fromLastOccurrenceOf("/", false, false);
+            p.chaveNome = matriz::model::nomes::chave(nome.toStdString());
+            if (p.chaveNome.empty()) { res.naoAchados.push_back(id); continue; }
+            nomesProcurados.insert(p.chaveNome);
+            pedidos.push_back(std::move(p));
+        }
+    } catch (const std::exception& e) {
+        res.erro = e.what();
+        return res;
+    }
+    if (pedidos.empty()) return res;
+
+    // Uma varredura da pasta escolhida (e subpastas), guardando só os nomes procurados.
+    std::map<std::string, std::vector<juce::File>> porNome;
+    for (const auto& entrada : juce::RangedDirectoryIterator(pasta, true, "*", juce::File::findFiles)) {
+        if (parar()) { res.cancelado = true; return res; }
+        const auto chaveNome = matriz::model::nomes::chave(entrada.getFile().getFileName().toStdString());
+        if (nomesProcurados.count(chaveNome) != 0) porNome[chaveNome].push_back(entrada.getFile());
+    }
+
+    // Conferência (tamanho, depois SHA-256) sem o lock de escrita: hash de vídeo leva tempo.
+    struct Achado { const Pedido* pedido; juce::File arquivo; };
+    std::vector<Achado> achados;
+    std::set<std::string> arquivosUsados;  // dois itens nunca apontam para o mesmo arquivo
+    const int total = static_cast<int>(pedidos.size());
+    int feitos = 0;
+    for (const auto& p : pedidos) {
+        if (parar()) { res.cancelado = true; return res; }
+        const auto it = porNome.find(p.chaveNome);
+        bool achou = false, algumCandidato = false;
+        if (it != porNome.end()) {
+            for (const auto& f : it->second) {
+                if (arquivosUsados.count(f.getFullPathName().toStdString()) != 0) continue;
+                algumCandidato = true;
+                if (p.tamanho > 0 && f.getSize() != p.tamanho) continue;
+                if (p.sha.empty() || !calcularSha256(f).equalsIgnoreCase(juce::String(p.sha))) continue;
+                achados.push_back({&p, f});
+                arquivosUsados.insert(f.getFullPathName().toStdString());
+                achou = true;
+                break;
+            }
+        }
+        if (!achou) (algumCandidato ? res.conteudoDiferente : res.naoAchados).push_back(p.itemId);
+        if (progresso) progresso(++feitos, total);
+    }
+    if (achados.empty()) return res;
+
+    std::unique_lock<std::recursive_mutex> lock(escrita);
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const auto& a : achados) {
+            juce::String erro;
+            if (!relinkarConteudoIdentico(db, pastaProjeto, a.pedido->itemId, a.pedido->arquivoId, a.pedido->camAbsOld,
+                                          a.arquivo.getFullPathName().toStdString(), a.pedido->sha, erro))
+                throw std::runtime_error(erro.toStdString());
+            res.relinkados.push_back(a.pedido->itemId);
+        }
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        res.relinkados.clear();
+        res.erro = e.what();
+    }
+    return res;
+}
 
 juce::String AssetRelinkEngine::calcularSha256(const juce::File& file) {
     if (!file.existsAsFile()) return {};
@@ -329,42 +476,10 @@ bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
 
     if (val.isIdenticalContent) {
         // Relocation of identical asset -> PRESERVES existing Asset ID
-        try {
-            auto stmtUp = db.prepare("UPDATE arquivo SET caminho_absoluto_origem = ?, atualizado_em = ? WHERE id = ?");
-            stmtUp.bind(1, matriz::db::Value::of(newAbsPath));
-            stmtUp.bind(2, matriz::db::Value::of(agoraIso.toStdString()));
-            stmtUp.bind(3, matriz::db::Value::of(masterArqId));
-            stmtUp.step();
-
-            auto stmtLoc = db.prepare("INSERT OR IGNORE INTO localizacao_conhecida (id, arquivo_id, caminho_absoluto, criado_em) VALUES (?, ?, ?, ?)");
-            stmtLoc.bind(1, matriz::db::Value::of(matriz::model::novoUuid()));
-            stmtLoc.bind(2, matriz::db::Value::of(masterArqId));
-            stmtLoc.bind(3, matriz::db::Value::of(newAbsPath));
-            stmtLoc.bind(4, matriz::db::Value::of(agoraIso.toStdString()));
-            stmtLoc.step();
-
-            // PREMIS event
-            matriz::preservation::registrarEvento(db, oldItemId, masterArqId,
-                                                  "RELINKED",
-                                                  "Asset relocated with matching checksum",
-                                                  matriz::preservation::Outcome::Success,
-                                                  newAbsPath, "Operator");
-
-            // Project Log
-            matriz::model::ProjectLog pLog(pastaProjeto);
-            juce::StringArray details;
-            details.add("Asset ID: " + juce::String(oldItemId));
-            details.add("Previous Path: " + juce::String(camAbsOld));
-            details.add("New Path: " + juce::String(newAbsPath));
-            details.add("Checksum: " + juce::String(val.actualSha) + " (MATCH)");
-            pLog.appendEntry("Asset Relinked (Relocated)", details);
-
-            outNovoItemId = oldItemId;
-            return true;
-        } catch (const std::exception& e) {
-            outError = "Database error during relink: " + juce::String(e.what());
+        if (!relinkarConteudoIdentico(db, pastaProjeto, oldItemId, masterArqId, camAbsOld, newAbsPath, val.actualSha, outError))
             return false;
-        }
+        outNovoItemId = oldItemId;
+        return true;
     }
 
     if (val.isDifferentContent) {

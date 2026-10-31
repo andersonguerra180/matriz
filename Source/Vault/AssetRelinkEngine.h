@@ -5,6 +5,8 @@
 #include <vector>
 #include <map>
 #include <optional>
+#include <functional>
+#include <mutex>
 #include "../Db/Database.h"
 
 namespace matriz::vault {
@@ -27,6 +29,16 @@ struct RelocationResult {
     int offlineCount = 0;
     juce::String inferredOldRoot;
     juce::String inferredNewRoot;
+};
+
+// Locate Offline Files em lote: cada item na categoria em que terminou.
+struct ResultadoRelinkLote {
+    std::vector<std::string> relinkados;         // achados com o mesmo SHA-256: caminho trocado, mesmo Asset ID
+    std::vector<std::string> naoAchados;         // nenhum arquivo com o nome na pasta escolhida
+    std::vector<std::string> conteudoDiferente;  // achado com o nome, mas o conteúdo não bate (fica para o relink individual)
+    std::vector<std::string> jaOnline;           // o arquivo já está no caminho registrado
+    bool cancelado = false;
+    juce::String erro;
 };
 
 struct ValidationResult {
@@ -89,6 +101,18 @@ public:
                                          bool aceitarSubstituicaoComNovoId,
                                          std::string& outNovoItemId,
                                          juce::String& outError);
+
+    // Locate Offline Files em lote: procura o arquivo de cada item pelo nome em `pasta` e nas subpastas (nome comparado
+    // sem maiúsculas/acentos), confere tamanho e SHA-256 e, quando bate, troca o caminho como o relink individual com
+    // conteúdo igual (mesmo Asset ID, PREMIS e Project Log). Conteúdo diferente nunca é trocado aqui. Os hashes são
+    // feitos sem o lock de escrita; as gravações, numa transação só com `escrita` travado. Fora da message thread.
+    static ResultadoRelinkLote relinkarEmLotePorPasta(matriz::db::Database& db,
+                                                      std::recursive_mutex& escrita,
+                                                      const juce::File& pastaProjeto,
+                                                      const std::vector<std::string>& itemIds,
+                                                      const juce::File& pasta,
+                                                      std::function<bool()> cancelado,
+                                                      std::function<void(int feitos, int total)> progresso);
 
     // Helper to compute SHA-256 for a file
     static juce::String calcularSha256(const juce::File& file);
