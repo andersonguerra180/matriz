@@ -341,6 +341,15 @@ private:
             resized();
             repaint();
         }
+        // Abre as pastas acima de `id` (a árvore inteira fica visível, como no Finder: entrar numa pasta não esconde as de cima).
+        void revelar(const ProjetoAberto::NoArvore& raiz, const std::string& id) {
+            std::vector<const ProjetoAberto::NoArvore*> caminho;
+            if (!caminhoAte(raiz, id, caminho)) return;
+            for (size_t i = 0; i + 1 < caminho.size(); ++i) {
+                abertos_.insert(caminho[i]->id);
+                fechados_.erase(caminho[i]->id);
+            }
+        }
         int alturaArvore() const { return raiz_ == nullptr ? 0 : 34 + static_cast<int>(linhas_.size()) * kAlturaLinhaArvore + 6; }
         int alturaNecessaria() const { return alturaArvore() + dono_.filtros_->getHeight() + 12; }
 
@@ -693,7 +702,8 @@ private:
         ids_ = atual->filhos.empty() ? atual->itemIds : atual->itemIdsDiretos;
         atualizarNavegacao();
         mosaico_->definirSubpastas(std::move(subpastas));
-        coluna_->definirArvore(atual, pastaId_);
+        coluna_->revelar(arvoreDoMapa_, pastaId_);
+        coluna_->definirArvore(&arvoreDoMapa_, pastaId_);  // a árvore inteira do container, a pasta atual destacada
         filtros_->definirEstiloExplorer(!ids_.empty(), naRaiz());
         std::set<std::string> todos;
         coletarIdsRecursivos(arvoreDoMapa_, todos);
