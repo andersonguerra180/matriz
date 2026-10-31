@@ -30,6 +30,8 @@ inline juce::Colour corVideo() { return juce::Colour(0xff8a63c7); }
 inline juce::Colour corAudio() { return juce::Colour(0xff2a9d8f); }
 inline juce::Colour corFoto() { return juce::Colour(0xffe08a3c); }
 inline juce::Colour corDocumento() { return juce::Colour(0xff2e8b57); }
+// Destaque laranja: contador de filtros ativos ("1 active", bolinha da aba Filters, "Clear").
+inline juce::Colour corDestaque() { return juce::Colour(0xffc2612a); }
 
 enum class Tipo { Video, Audio, Foto, Documento };
 

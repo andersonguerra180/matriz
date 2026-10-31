@@ -130,11 +130,52 @@ void FiltrosComponent::definirEstiloExplorer(bool comChips, bool comColecoes) {
     repaint();
 }
 
+void FiltrosComponent::definirComGrupos(bool comGrupos) {
+    grupos_ = comGrupos;
+    reconstruirLinhas();
+    resized();
+    repaint();
+}
+
+int FiltrosComponent::ativosNoGrupo(const juce::String& grupo) const {
+    if (grupo == "tipo") return static_cast<int>(mosaico_.filtrosTipoMidiaAtivos().size());
+    if (grupo == "extensao") return static_cast<int>(mosaico_.filtrosExtensaoAtivos().size());
+    if (grupo == "content") return static_cast<int>(mosaico_.filtrosCollectionTypeAtivos().size());
+    if (grupo == "estado") return static_cast<int>(mosaico_.filtrosEstadoAtivos().size());
+    if (grupo == "vaults") return vaultFiltrado_.isNotEmpty() ? 1 : 0;
+    if (grupo == "colecoes") return colecaoEmbutidaFiltrada_.isNotEmpty() ? 1 : 0;
+    return 0;
+}
+
+int FiltrosComponent::filtrosAtivos() const {
+    int n = 0;
+    for (const char* g : {"tipo", "extensao", "content", "estado", "vaults", "colecoes"}) n += ativosNoGrupo(g);
+    return n;
+}
+
+void FiltrosComponent::limparTudo() {
+    mosaico_.limparFiltros();
+    if (vaultFiltrado_.isNotEmpty() || colecaoEmbutidaFiltrada_.isNotEmpty()) {
+        vaultFiltrado_.clear();
+        colecaoEmbutidaFiltrada_.clear();
+        mosaico_.definirFiltroItens(std::nullopt);
+    }
+    if (aoSincronizarBusca) aoSincronizarBusca({});
+    recarregar();
+    if (aoMudarFiltros) aoMudarFiltros();
+}
+
 void FiltrosComponent::reconstruirLinhasExplorer() {
-    auto cabecalho = [&](const char* chave) { linhas_.push_back({TipoLinha::CabecalhoSecao, matriz::i18n::t(chave), "", -1, false}); };
+    // Com grupos: o cabeçalho leva o id do grupo em `chave`; grupo fechado não lista as linhas dele.
+    bool aberto = true;
+    auto cabecalho = [&](const char* chave, const char* grupo) {
+        linhas_.push_back({TipoLinha::CabecalhoSecao, matriz::i18n::t(chave), grupo, -1, false});
+        aberto = !grupos_ || gruposFechados_.count(grupo) == 0;
+    };
     if (comChips_) {
         if (!dados_.porTipoMidia.empty()) {
-            cabecalho("mosaico.filtrar_tipo");
+            cabecalho("mosaico.filtrar_tipo", "tipo");
+            if (aberto)
             for (auto& [chave, contagem] : dados_.porTipoMidia) {
                 juce::String rotulo = chave.empty() ? matriz::i18n::t("grade.nao_classificado") : juce::String(chave);
                 if (!chave.empty()) {
@@ -148,43 +189,49 @@ void FiltrosComponent::reconstruirLinhasExplorer() {
             }
         }
         if (!dados_.porExtensao.empty()) {
-            cabecalho("filtros.secao_extensao");
+            cabecalho("filtros.secao_extensao", "extensao");
+            if (aberto)
             for (auto& [chave, contagem] : dados_.porExtensao)
                 linhas_.push_back({TipoLinha::ChipExtensao, "." + juce::String(chave), juce::String(chave), contagem,
                                    mosaico_.filtrosExtensaoAtivos().count(juce::String(chave)) > 0});
         }
         if (!dados_.porCollectionType.empty() || dados_.semCollectionType > 0) {
-            cabecalho("filtros.secao_collection");
+            cabecalho("filtros.secao_collection", "content");
+            if (aberto)
             for (auto& [chave, contagem] : dados_.porCollectionType)
                 linhas_.push_back({TipoLinha::ChipCollectionType, juce::String(chave), juce::String(chave), contagem,
                                    mosaico_.filtrosCollectionTypeAtivos().count(juce::String(chave)) > 0});
-            if (dados_.semCollectionType > 0)
+            if (aberto && dados_.semCollectionType > 0)
                 linhas_.push_back({TipoLinha::ChipCollectionType, matriz::i18n::t("janela_pasta.sem_content"), "", dados_.semCollectionType,
                                    mosaico_.filtrosCollectionTypeAtivos().count(juce::String()) > 0});
         }
         if (!dados_.porEstado.empty()) {
-            cabecalho("mosaico.filtrar_estado");
+            cabecalho("mosaico.filtrar_estado", "estado");
+            if (aberto)
             for (auto& [chave, contagem] : dados_.porEstado)
                 linhas_.push_back({TipoLinha::ChipEstado, rotuloEstado(chave), juce::String(chave), contagem,
                                    mosaico_.filtrosEstadoAtivos().count(juce::String(chave)) > 0});
         }
         const bool algumFiltroAtivo = !mosaico_.filtrosTipoMidiaAtivos().empty() || !mosaico_.filtrosEstadoAtivos().empty() ||
                                       !mosaico_.filtrosExtensaoAtivos().empty() || !mosaico_.filtrosCollectionTypeAtivos().empty();
-        if (algumFiltroAtivo) linhas_.push_back({TipoLinha::Limpar, matriz::i18n::t("filtros.limpar"), "", -1, false});
+        if (algumFiltroAtivo && !grupos_) linhas_.push_back({TipoLinha::Limpar, matriz::i18n::t("filtros.limpar"), "", -1, false});
     }
     if (!dados_.vaults.empty()) {
-        cabecalho("filtros.secao_vaults");
+        cabecalho("filtros.secao_vaults", "vaults");
+        if (aberto)
         for (const auto& v : dados_.vaults)
             linhas_.push_back({TipoLinha::Vault, v.nome, juce::String(v.id), v.totalItens, v.online});
     }
     if (comColecoes_) {
-        cabecalho("filtros.secao_colecoes");
+        cabecalho("filtros.secao_colecoes", "colecoes");
+        if (aberto) {
         for (const auto& c : dados_.embutidas)
             linhas_.push_back({TipoLinha::ColecaoEmbutida, c.rotulo, juce::String(c.chave), c.contagem,
                                colecaoEmbutidaFiltrada_ == juce::String(c.chave)});
         for (auto& colecao : dados_.salvas)
             linhas_.push_back({TipoLinha::Colecao, colecao.nome, juce::String(colecao.id), -1, false});
-        linhas_.push_back({TipoLinha::SalvarColecao, "+ " + matriz::i18n::t("filtros.salvar_colecao"), "", -1, false});
+        }
+        if (aberto) linhas_.push_back({TipoLinha::SalvarColecao, "+ " + matriz::i18n::t("filtros.salvar_colecao"), "", -1, false});
     }
 }
 
@@ -321,7 +368,9 @@ int FiltrosComponent::alturaDaLinha(int indice) const {
     const int larguraContagem = linha.contagem >= 0
                                     ? explorer::larguraDoTexto(explorer::fonte(12.5f), explorer::comMilhares(linha.contagem, pt)) + 10 : 0;
     const bool comPonto = linha.tipo == TipoLinha::Vault || linha.tipo == TipoLinha::ChipTipoMidia;
-    const int disponivel = getWidth() - 2 * kMargemExplorer - larguraContagem - (comPonto ? 16 : 0);
+    const bool comCaixa = grupos_ && (linha.tipo == TipoLinha::ChipTipoMidia || linha.tipo == TipoLinha::ChipEstado ||
+                                      linha.tipo == TipoLinha::ChipExtensao || linha.tipo == TipoLinha::ChipCollectionType);
+    const int disponivel = getWidth() - 2 * kMargemExplorer - larguraContagem - (comPonto ? 16 : 0) - (comCaixa ? 24 : 0);
     return explorer::larguraDoTexto(explorer::fonte(13.5f), linha.rotulo) > disponivel ? 46 : kAlturaLinhaExplorer;
 }
 
@@ -356,26 +405,65 @@ void FiltrosComponent::pintarExplorer(juce::Graphics& g) {
         const auto& linha = linhas_[static_cast<size_t>(i)];
         const auto bounds = boundsDaLinha(i);
         if (linha.tipo == TipoLinha::CabecalhoSecao) {
+            auto area = bounds.withTrimmedLeft(kMargemExplorer).withTrimmedRight(kMargemExplorer).withTrimmedBottom(4);
+            if (grupos_) {
+                // Seta (aberto/fechado) + título; à direita "N active" quando o grupo tem filtro marcado.
+                const bool fechado = gruposFechados_.count(linha.chave) > 0;
+                const auto seta = area.removeFromLeft(16).withTrimmedTop(area.getHeight() - 16).toFloat();
+                juce::Path p;
+                const float cx = seta.getCentreX() - 2.0f, cy = seta.getCentreY();
+                if (fechado) { p.startNewSubPath(cx - 2.0f, cy - 4.0f); p.lineTo(cx + 2.0f, cy); p.lineTo(cx - 2.0f, cy + 4.0f); }
+                else { p.startNewSubPath(cx - 4.0f, cy - 2.0f); p.lineTo(cx, cy + 2.0f); p.lineTo(cx + 4.0f, cy - 2.0f); }
+                g.setColour(c.secundario);
+                g.strokePath(p, juce::PathStrokeType(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                if (const int n = ativosNoGrupo(linha.chave); n > 0) {
+                    const auto texto = matriz::i18n::t("filtros.n_ativos").replace("{n}", juce::String(n));
+                    const auto f = explorer::fonte(12.0f);
+                    g.setColour(explorer::corDestaque());
+                    g.setFont(f);
+                    g.drawText(texto, area.removeFromRight(explorer::larguraDoTexto(f, texto) + 2), juce::Justification::bottomRight, false);
+                    area.removeFromRight(8);
+                }
+            }
             g.setColour(c.secundario);
             g.setFont(explorer::fonteSecao());
-            g.drawText(moldura::caixaAlta(linha.rotulo), bounds.withTrimmedLeft(kMargemExplorer).withTrimmedRight(kMargemExplorer).withTrimmedBottom(4),
-                       juce::Justification::bottomLeft, false);
+            g.drawText(moldura::caixaAlta(linha.rotulo), area, juce::Justification::bottomLeft, false);
             continue;
         }
         const bool ehChip = linha.tipo == TipoLinha::ChipTipoMidia || linha.tipo == TipoLinha::ChipEstado ||
                             linha.tipo == TipoLinha::ChipExtensao || linha.tipo == TipoLinha::ChipCollectionType;
-        const bool selecionada = (ehChip && linha.ativo) || (linha.tipo == TipoLinha::ColecaoEmbutida && linha.ativo) ||
-                                 (linha.tipo == TipoLinha::Vault && vaultFiltrado_ == linha.chave && linha.chave.isNotEmpty());
+        const bool marcada = (ehChip && linha.ativo) || (linha.tipo == TipoLinha::ColecaoEmbutida && linha.ativo) ||
+                             (linha.tipo == TipoLinha::Vault && vaultFiltrado_ == linha.chave && linha.chave.isNotEmpty());
+        // Com grupos o filtro marcado é a caixa de seleção (fundo claro), não a linha em grafite.
+        const bool selecionada = marcada && !grupos_;
         if (i == linhaAlvoDrop_) {
             g.setColour(c.grafite.withAlpha(0.18f));
             g.fillRoundedRectangle(bounds.toFloat().reduced(8.0f, 2.0f), 6.0f);
         }
-        if (selecionada) {
-            g.setColour(c.grafite);
+        if (marcada) {
+            g.setColour(grupos_ ? c.grafite.withAlpha(0.08f) : c.grafite);
             g.fillRoundedRectangle(bounds.toFloat().reduced(8.0f, 2.0f), 6.0f);
         }
         auto miolo = bounds.withTrimmedLeft(kMargemExplorer).withTrimmedRight(kMargemExplorer);
         const auto corTexto = selecionada ? c.sobreGrafite : c.texto;
+        if (grupos_ && ehChip) {
+            const auto caixa = miolo.removeFromLeft(24).withTrimmedRight(9).withSizeKeepingCentre(15, 15).toFloat();
+            if (marcada) {
+                g.setColour(c.grafite);
+                g.fillRoundedRectangle(caixa, 3.0f);
+                juce::Path v;
+                v.startNewSubPath(caixa.getX() + 3.5f, caixa.getCentreY());
+                v.lineTo(caixa.getX() + 6.5f, caixa.getBottom() - 4.0f);
+                v.lineTo(caixa.getRight() - 3.5f, caixa.getY() + 4.0f);
+                g.setColour(c.sobreGrafite);
+                g.strokePath(v, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            } else {
+                g.setColour(c.cartao);
+                g.fillRoundedRectangle(caixa, 3.0f);
+                g.setColour(c.secundario.withAlpha(0.7f));
+                g.drawRoundedRectangle(caixa.reduced(0.5f), 3.0f, 1.0f);
+            }
+        }
         if (linha.tipo == TipoLinha::Vault || linha.tipo == TipoLinha::ChipTipoMidia) {
             juce::Colour cor = linha.ativo ? juce::Colour(0xff2e8b57) : c.secundario.withAlpha(0.6f);  // vault: online / offline
             if (linha.tipo == TipoLinha::ChipTipoMidia) {
@@ -511,6 +599,13 @@ void FiltrosComponent::mouseDown(const juce::MouseEvent& e) {
     if (indice < 0) return;
     auto& linha = linhas_[static_cast<size_t>(indice)];
 
+    if (grupos_ && linha.tipo == TipoLinha::CabecalhoSecao && linha.chave.isNotEmpty()) {  // abre/fecha o grupo
+        if (!gruposFechados_.erase(linha.chave)) gruposFechados_.insert(linha.chave);
+        reconstruirLinhas();
+        resized();
+        repaint();
+        return;
+    }
     if (linha.tipo == TipoLinha::LegendaPublish || linha.tipo == TipoLinha::CabecalhoSecao) return;
 
     if (e.mods.isPopupMenu() && linha.tipo == TipoLinha::Colecao) {
@@ -595,6 +690,7 @@ void FiltrosComponent::mouseDown(const juce::MouseEvent& e) {
     }
 
     recarregar();
+    if (aoMudarFiltros) aoMudarFiltros();
 }
 
 void FiltrosComponent::abrirMenuContextoColecao(int indiceLinha) {

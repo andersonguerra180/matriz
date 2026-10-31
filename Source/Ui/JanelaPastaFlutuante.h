@@ -17,6 +17,8 @@ namespace matriz::ui {
 // da direita é SOMENTE LEITURA. Não apaga nada em disco: "extrair" tira o arquivo da pasta (vai para NO FOLDER).
 // Com pastaId == kPastaSemPasta é a pasta virtual `_no folder`: os itens sem pasta no mapa selecionado do Folder Map (os mesmos
 // que o card NO FOLDER conta), carregados fora da message thread; `selecionarTudo` abre com todos eles selecionados.
+class FloatingPreviewWindow;
+
 class JanelaPastaFlutuante : public juce::DocumentWindow {
 public:
     static constexpr const char* kPastaSemPasta = "@no_folder";
@@ -32,6 +34,9 @@ public:
     // Self-test (--selftest-explorer-visual): entra na pasta `id` como o duplo clique faria.
     void irParaPastaParaTeste(const std::string& id, const juce::String& nome);
     void mostrarArquivoParaTeste(const std::string& itemId);
+    // Duplo clique no arquivo: o preview aberto (nullptr se não abriu).
+    FloatingPreviewWindow* abrirPreviewParaTeste(const std::string& itemId);
+    void mostrarAbaFiltrosParaTeste();  // container: lateral na aba Filters
 
 private:
     class Conteudo;

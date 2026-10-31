@@ -8,6 +8,8 @@
 #include "ProjetoAberto.h"
 #include "Tokens.h"
 
+#include <cmath>
+
 namespace matriz::ui {
 
 using matriz::i18n::t;
@@ -18,7 +20,7 @@ CapaProjetoComponent::CapaProjetoComponent(ProjetoAberto& projeto, const std::st
     btnTrocar_.onClick = [this] { escolherNovaCapa(); };
     btnRemover_.setButtonText(t("projeto.capa.remover"));
     btnRemover_.onClick = [this] { removerCapa(); };
-    if (modo_ == Modo::Detalhado) {
+    if (modo_ != Modo::Compacto) {
         addAndMakeVisible(btnTrocar_);
         addAndMakeVisible(btnRemover_);
     }
@@ -66,7 +68,7 @@ void CapaProjetoComponent::recarregar() {
 }
 
 bool CapaProjetoComponent::isInterestedInFileDrag(const juce::StringArray& arquivos) {
-    if (modo_ != Modo::Detalhado || arquivos.size() != 1) return false;
+    if (modo_ == Modo::Compacto || arquivos.size() != 1) return false;
     return juce::File(arquivos[0]).hasFileExtension("jpg;jpeg;png;tif;tiff;bmp;gif;webp");
 }
 
@@ -117,8 +119,48 @@ void CapaProjetoComponent::aposMudar() {
     if (aoMudar) aoMudar();
 }
 
+namespace {
+constexpr int kLadoCapaLateral = 64;
+constexpr int kAlturaBotaoLateral = 24;
+
+// Texto quebrado por palavra na largura dada (Lateral: nada é cortado, a altura cresce).
+juce::TextLayout layoutDoTexto(const juce::String& texto, const juce::Font& fonte, juce::Colour cor, int largura) {
+    juce::AttributedString a;
+    a.setText(texto);
+    a.setFont(fonte);
+    a.setColour(cor);
+    a.setWordWrap(juce::AttributedString::byWord);
+    juce::TextLayout layout;
+    layout.createLayout(a, static_cast<float>(juce::jmax(1, largura)));
+    return layout;
+}
+juce::Font fonteNomeLateral() { return juce::Font(juce::FontOptions("Jost", 15.0f, juce::Font::bold)); }
+}  // namespace
+
+int CapaProjetoComponent::alturaPara(int largura) const {
+    const int texto = largura - kLadoCapaLateral - 12;
+    const auto artista = artista_.isNotEmpty() ? artista_ : juce::String("-");
+    const int h = 16 + static_cast<int>(std::ceil(layoutDoTexto(nome_, fonteNomeLateral(), {}, texto).getHeight())) + 2 +
+                  static_cast<int>(std::ceil(layoutDoTexto(artista, fonteUi(12.0f), {}, texto).getHeight())) + 8 + kAlturaBotaoLateral;
+    return juce::jmax(kLadoCapaLateral, h);
+}
+
 void CapaProjetoComponent::resized() {
     auto area = getLocalBounds();
+    if (modo_ == Modo::Lateral) {
+        areaCapa_ = area.removeFromLeft(kLadoCapaLateral).withHeight(kLadoCapaLateral);
+        area.removeFromLeft(12);
+        areaTexto_ = area;
+        auto botoes = area.removeFromBottom(kAlturaBotaoLateral);
+        const auto fonteBotao = fonteUi(12.0f);
+        const int wTrocar = juce::jmin(botoes.getWidth(), juce::GlyphArrangement::getStringWidthInt(fonteBotao, btnTrocar_.getButtonText()) + 18);
+        btnTrocar_.setBounds(botoes.removeFromLeft(wTrocar));
+        botoes.removeFromLeft(6);
+        btnRemover_.setBounds(botoes.removeFromLeft(juce::jmin(botoes.getWidth(),
+                                                               juce::GlyphArrangement::getStringWidthInt(fonteBotao, btnRemover_.getButtonText()) + 18)));
+        areaSoltar_ = {};
+        return;
+    }
     if (modo_ == Modo::Compacto) {
         const int lado = juce::jmin(area.getWidth(), area.getHeight());
         areaCapa_ = area.withSizeKeepingCentre(lado, lado);
@@ -152,6 +194,11 @@ void CapaProjetoComponent::paint(juce::Graphics& g) {
         g.reduceClipRegion(clip);
         g.drawImage(imagem, areaCapa_.toFloat(), juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
         g.restoreState();
+    } else if (modo_ == Modo::Lateral) {  // capa pequena: só o disco, sem o texto do espaço reservado
+        g.setColour(juce::Colours::white.withAlpha(0.85f));
+        const auto c = areaCapa_.getCentre().toFloat();
+        g.drawEllipse(c.x - 14.0f, c.y - 14.0f, 28.0f, 28.0f, 1.6f);
+        g.fillEllipse(c.x - 3.0f, c.y - 3.0f, 6.0f, 6.0f);
     } else {
         g.setColour(juce::Colours::white.withAlpha(0.85f));
         const auto c = areaCapa_.getCentre().toFloat();
@@ -164,6 +211,22 @@ void CapaProjetoComponent::paint(juce::Graphics& g) {
         g.drawText(modo_ == Modo::Compacto ? t("projeto.cd.placeholder2") : t("projeto.capa.placeholder2"), areaCapa_.withTrimmedTop(areaCapa_.getHeight() / 2 + 28).withHeight(16), juce::Justification::centred, false);
     }
     if (modo_ == Modo::Compacto) return;
+    if (modo_ == Modo::Lateral) {
+        if (soltando_) {  // soltando uma imagem: o bloco inteiro é o alvo
+            g.setColour(pal.grafite.withAlpha(0.08f));
+            g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
+        }
+        auto texto = areaTexto_;
+        g.setColour(pal.mudo);
+        g.setFont(fonteUi(10.0f, juce::Font::bold).withExtraKerningFactor(0.12f));
+        g.drawText(t("projeto.capa.rotulo"), texto.removeFromTop(16), juce::Justification::centredLeft, false);
+        const auto nome = layoutDoTexto(nome_, fonteNomeLateral(), pal.tinta, texto.getWidth());
+        nome.draw(g, texto.removeFromTop(static_cast<int>(std::ceil(nome.getHeight()))).toFloat());
+        texto.removeFromTop(2);
+        const auto artista = layoutDoTexto(artista_.isNotEmpty() ? artista_ : juce::String("-"), fonteUi(12.0f), pal.mudo, texto.getWidth());
+        artista.draw(g, texto.removeFromTop(static_cast<int>(std::ceil(artista.getHeight()))).toFloat());
+        return;
+    }
 
     // Bloco de texto: rótulo, nome do projeto, artista, origem da capa.
     auto texto = areaTexto_;

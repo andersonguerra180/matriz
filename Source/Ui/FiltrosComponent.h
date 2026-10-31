@@ -49,6 +49,13 @@ public:
     // grafite. Seções: MEDIA TYPE, FILE TYPE, CONTENT, STATUS (só com `comChips`), VAULTS e SMART COLLECTIONS (só com
     // `comColecoes`, uma seção só, terminando em "+ Save current search…"). Sem "Group: type" e sem a legenda.
     void definirEstiloExplorer(bool comChips, bool comColecoes);
+    // Estilo explorer em grupos (lateral da janela do PROJECT CONTAINER, aba Filters): cada seção abre e fecha, os filtros
+    // têm caixa de seleção e o cabeçalho mostra "N active"; Vaults e Smart collections começam fechados. O "Clear all" fica
+    // com quem hospeda (sem a linha "Clear filters").
+    void definirComGrupos(bool comGrupos);
+    int filtrosAtivos() const;  // chips marcados + vault/coleção embutida filtrando
+    void limparTudo();
+    std::function<void()> aoMudarFiltros;  // depois de marcar/desmarcar/limpar (quem hospeda atualiza contadores)
 
     // A caixa de busca mora na barra de ferramentas superior, não mais
     // aqui: duas caixas de busca na mesma tela (uma no topo, outra na
@@ -126,6 +133,9 @@ private:
     int alturaDaLinha(int indice) const;
     void pintarExplorer(juce::Graphics& g);
     bool explorer_ = false, comChips_ = true, comColecoes_ = true;
+    bool grupos_ = false;
+    std::set<juce::String> gruposFechados_{"vaults", "colecoes"};
+    int ativosNoGrupo(const juce::String& grupo) const;
     juce::Rectangle<int> boundsDaLinha(int indice) const;
     int indiceLinhaNaPosicao(int y) const;
     void abrirMenuContextoColecao(int indiceLinha);

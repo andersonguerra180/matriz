@@ -14,13 +14,15 @@ class ProjetoAberto;
 // do IMPORT: trocar aqui troca no container (INTAKE, METADATA e Folder Map).
 class CapaProjetoComponent : public juce::Component, public juce::FileDragAndDropTarget {
 public:
-    enum class Modo { Compacto, Detalhado };
+    // Lateral: bloco pequeno da janela do PROJECT CONTAINER (capa 64 px, nome e artista inteiros, sem cortar, e os botões).
+    enum class Modo { Compacto, Detalhado, Lateral };
 
     CapaProjetoComponent(ProjetoAberto& projeto, const std::string& nestId, Modo modo);
     ~CapaProjetoComponent() override;
 
     void definirContainer(const std::string& nestId);
     void recarregar();  // relê nome, artista e capa
+    int alturaPara(int largura) const;  // Lateral: a altura que mostra nome e artista inteiros nesta largura
 
     void paint(juce::Graphics& g) override;
     void resized() override;

@@ -15,7 +15,6 @@
 #include "PainelMetadadosArquivo.h"
 #include "PreviewComponent.h"
 #include "AudioWorkspace.h"
-#include "CapaProjeto.h"
 #include "ContainerVisual.h"
 #include "Tokens.h"
 #include "Moldura.h"
@@ -120,6 +119,8 @@ public:
     }
 
     ~FloatingPreviewWindow() override = default;
+
+    int linhasDaColunaDoGrupoParaTeste() const { return contentComp_ != nullptr ? contentComp_->linhasDaColunaDoGrupo() : 0; }
 
     void atualizarTituloJanela(const std::string& itemId) {
         auto info = projeto_.arquivoPrincipal(itemId);
@@ -402,6 +403,8 @@ private:
         }
 
         std::function<void(const std::string&)> aoMudouDeArquivo;
+        // Self-test: quantos arquivos a coluna do grupo (nest/container) lista; 0 = coluna escondida.
+        int linhasDaColunaDoGrupo() const { return nestViewport_ && nestViewport_->isVisible() && nestColuna_ ? nestColuna_->numeroDeLinhas() : 0; }
 
         // NEST: clicar num arquivo da coluna o mostra no preview (a capa só muda pelo menu "Use as cover").
         void mostrarArquivoDoNest(const std::string& novoId) {
@@ -551,27 +554,7 @@ private:
                 nestColuna_->definir(std::move(linhas));
             }
             if (nestViewport_) nestViewport_->setVisible(mostrar);
-            if (membros < 2) nestId_.clear();  // pasta do container com 1 arquivo: sem coluna, mas continua no container (capa do projeto)
-            atualizarCapaDoProjeto();
-        }
-
-        // PROJECT (vinil, fita, produção; o DDP tem a janela própria e o YouTube segue com o preview do vídeo): bloco da capa do projeto
-        // (capa 1:1, nome, artista, trocar/remover) acima do player.
-        void atualizarCapaDoProjeto() {
-            const std::string origem = nestId_.empty() ? std::string() : projeto_.origemDoContainer(nestId_);
-            const bool mostrarCapa = !nestId_.empty() && ehOrigemProject(juce::String(origem)) && origem != "youtube";
-            if (mostrarCapa) {
-                if (!capaProjeto_) {
-                    capaProjeto_ = std::make_unique<CapaProjetoComponent>(projeto_, nestId_, CapaProjetoComponent::Modo::Detalhado);
-                    addAndMakeVisible(*capaProjeto_);
-                } else {
-                    capaProjeto_->definirContainer(nestId_);
-                }
-                capaProjeto_->setVisible(true);
-            } else if (capaProjeto_) {
-                capaProjeto_->setVisible(false);
-            }
-            resized();
+            if (membros < 2) nestId_.clear();  // pasta do container com 1 arquivo: sem coluna, mas continua no container
         }
 
         const std::string& itemIdAtual() const { return itemId_; }
@@ -798,9 +781,6 @@ private:
                 if (resizerBar_) resizerBar_->setVisible(false);
             }
 
-            if (capaProjeto_ && capaProjeto_->isVisible() && area.getHeight() > 420) {
-                capaProjeto_->setBounds(area.removeFromTop(juce::jmin(190, area.getHeight() / 4)).reduced(12, 10));
-            }
             if (preview_) preview_->setBounds(area);
             if (escuta_) escuta_->setBounds(area);
             previewArea_ = area;
@@ -852,7 +832,6 @@ private:
         std::unique_ptr<PreviewComponent> preview_;
         std::unique_ptr<AudioWorkspace> escuta_;
         std::unique_ptr<FichaPanelComponent> fichaPanel_;
-        std::unique_ptr<CapaProjetoComponent> capaProjeto_;
         std::unique_ptr<PainelMetadadosArquivo> painelLeitura_;  // só no preview do INTAKE
         bool somenteLeitura_ = false;
         std::optional<std::set<std::string>> idsDaColunaDoGrupo_;  // vazio = todos os membros do nest

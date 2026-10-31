@@ -3,6 +3,7 @@
 
 #include "../I18n/Strings.h"
 #include "AcoesItem.h"
+#include "CapaProjeto.h"
 #include "ImportarMenu.h"
 #include "OverlayComponent.h"
 #include "PainelMetadadosArquivo.h"
@@ -133,6 +134,7 @@ public:
                 filtros_->recarregar();
             }
             atualizarPainelSemSelecao();
+            atualizarLateral();
             // Aberta pelo card NO FOLDER: chega com todos os arquivos selecionados — só depois que o snapshot chegou (o
             // definirFiltroItens de carregarGrade já avisa aqui, com a grade ainda vazia).
             if (selecionarTudo_ && !mosaico_->snapshotPendente() && mosaico_->totalItensCarregados() > 0) {
@@ -158,6 +160,7 @@ public:
         viewportLateral_.setViewedComponent(coluna_.get(), false);
         viewportLateral_.setScrollBarsShown(true, false);
         addAndMakeVisible(viewportLateral_);
+        if (coluna_->comAbas()) montarLateralComAbas();
 
         // Painel da direita: o arquivo selecionado (somente leitura) ou, sem seleção, o resumo da pasta.
         painel_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
@@ -264,6 +267,22 @@ public:
         g.setColour(c.borda);
         g.fillRect(kLarguraLateral, kAlturaBarraNav, 1, getHeight() - kAlturaBarraNav);
         g.fillRect(getWidth() - kLarguraFicha - 1, kAlturaBarraNav, 1, getHeight() - kAlturaBarraNav);
+        if (abasLaterais_ != nullptr) {  // divisórias da lateral do container e o campo "Find folder..."
+            g.setColour(c.borda);
+            g.fillRect(0, abasLaterais_->getBottom() + 8, kLarguraLateral, 1);
+            g.fillRect(0, rodapeLateral_->getY(), kLarguraLateral, 1);
+            if (campoBuscaPasta_.isVisible()) {
+                const auto r = campoBuscaPasta_.getBounds().toFloat();
+                g.setColour(c.cartao);
+                g.fillRoundedRectangle(r, 8.0f);
+                g.setColour(c.borda);
+                g.drawRoundedRectangle(r.reduced(0.5f), 8.0f, 1.0f);
+                const float x = r.getX() + 13.0f, y = r.getCentreY() - 1.0f;
+                g.setColour(c.secundario);
+                g.drawEllipse(x - 4.0f, y - 4.0f, 8.0f, 8.0f, 1.3f);
+                g.drawLine(x + 2.9f, y + 2.9f, x + 5.5f, y + 5.5f, 1.4f);
+            }
+        }
         // campo de busca: fundo em pílula com a lupa
         const auto busca = campoBusca_.getBounds().toFloat();
         g.setColour(c.cartao);
@@ -308,7 +327,19 @@ public:
         trilha_->setBounds(nav);
         if (lblTitulo_.isVisible()) lblTitulo_.setBounds(trilha_->areaDoAtual().translated(trilha_->getX(), trilha_->getY()).expanded(6, 2));
 
-        viewportLateral_.setBounds(area.removeFromLeft(kLarguraLateral));
+        auto lateral = area.removeFromLeft(kLarguraLateral);
+        if (abasLaterais_ != nullptr) {  // container: capa, abas e a linha fixa no topo, rodapé embaixo; só a lista rola
+            if (capa_ != nullptr) capa_->setBounds(lateral.removeFromTop(capa_->alturaPara(lateral.getWidth() - 32) + 24).reduced(16, 12));
+            abasLaterais_->setBounds(lateral.removeFromTop(52).reduced(14, 8));
+            lateral.removeFromTop(1);
+            rodapeLateral_->setBounds(lateral.removeFromBottom(40));
+            const bool pastas = coluna_->aba() == ColunaLateral::Aba::Pastas;
+            campoBuscaPasta_.setVisible(pastas);
+            resumoFiltros_->setVisible(!pastas);
+            if (pastas) campoBuscaPasta_.setBounds(lateral.removeFromTop(46).reduced(14, 7));
+            else resumoFiltros_->setBounds(lateral.removeFromTop(36));
+        }
+        viewportLateral_.setBounds(lateral);
         area.removeFromLeft(1);
         const auto areaDireita = area.removeFromRight(kLarguraFicha).withTrimmedLeft(1);
         painel_->setBounds(areaDireita);
@@ -330,13 +361,28 @@ private:
     // ── coluna da esquerda: árvore de pastas (FOLDER / FOLDERS) + filtros no estilo explorer ─────────────────────────
     class ColunaLateral : public juce::Component, public juce::ComponentListener {
     public:
-        explicit ColunaLateral(Conteudo& dono) : dono_(dono) {}
+        // Janela do container: abas Folders | Filters (uma coisa por vez). Pasta do Folder Map: árvore e filtros empilhados.
+        enum class Aba { Pastas, Filtros };
+        explicit ColunaLateral(Conteudo& dono) : dono_(dono), abas_(!dono.nestId_.empty()) {}
+
+        bool comAbas() const { return abas_; }
+        Aba aba() const { return aba_; }
+        void definirAba(Aba aba) {
+            aba_ = aba;
+            dono_.filtros_->setVisible(!abas_ || aba_ == Aba::Filtros);
+            definirArvore(raiz_, atualId_);
+        }
+        // "Find folder...": só as pastas cujo nome contém o texto (e as de cima delas, abertas).
+        void definirBusca(const juce::String& texto) {
+            busca_ = texto.trim();
+            definirArvore(raiz_, atualId_);
+        }
 
         void definirArvore(const ProjetoAberto::NoArvore* no, const std::string& atualId) {
             raiz_ = no;
             atualId_ = atualId;
             linhas_.clear();
-            if (raiz_ != nullptr) achatar(*raiz_, 0);
+            if (raiz_ != nullptr && mostraArvore()) achatar(*raiz_, 0);
             if (auto* p = getParentComponent()) setSize(p->getWidth(), alturaNecessaria());
             resized();
             repaint();
@@ -350,8 +396,8 @@ private:
                 fechados_.erase(caminho[i]->id);
             }
         }
-        int alturaArvore() const { return raiz_ == nullptr ? 0 : 34 + static_cast<int>(linhas_.size()) * kAlturaLinhaArvore + 6; }
-        int alturaNecessaria() const { return alturaArvore() + dono_.filtros_->getHeight() + 12; }
+        int alturaArvore() const { return raiz_ == nullptr || !mostraArvore() ? 0 : topo() + static_cast<int>(linhas_.size()) * kAlturaLinhaArvore + 6; }
+        int alturaNecessaria() const { return alturaArvore() + (dono_.filtros_->isVisible() ? dono_.filtros_->getHeight() : 0) + 12; }
 
         void resized() override {
             dono_.filtros_->setBounds(0, alturaArvore(), getWidth(), dono_.filtros_->getHeight());
@@ -366,12 +412,14 @@ private:
         void paint(juce::Graphics& g) override {
             const auto c = explorer::cores();
             g.fillAll(c.lateral);
-            if (raiz_ == nullptr) return;
+            if (raiz_ == nullptr || !mostraArvore()) return;
             const bool pt = i18n::localeAtivo().startsWith("pt");
-            g.setColour(c.secundario);
-            g.setFont(explorer::fonteSecao());
-            g.drawText(moldura::caixaAlta(i18n::t(raiz_->filhos.empty() ? "janela_pasta.secao_pasta" : "janela_pasta.secao_pastas")),
-                       juce::Rectangle<int>(16, 0, getWidth() - 32, 30), juce::Justification::bottomLeft, false);
+            if (!abas_) {
+                g.setColour(c.secundario);
+                g.setFont(explorer::fonteSecao());
+                g.drawText(moldura::caixaAlta(i18n::t(raiz_->filhos.empty() ? "janela_pasta.secao_pasta" : "janela_pasta.secao_pastas")),
+                           juce::Rectangle<int>(16, 0, getWidth() - 32, 30), juce::Justification::bottomLeft, false);
+            }
             for (size_t i = 0; i < linhas_.size(); ++i) {
                 const auto& l = linhas_[i];
                 auto r = boundsDaLinha(static_cast<int>(i));
@@ -381,7 +429,12 @@ private:
                     g.setColour(atual ? c.grafite : c.grafite.withAlpha(0.14f));
                     g.fillRoundedRectangle(r.toFloat().reduced(8.0f, 2.0f), 6.0f);
                 }
-                auto miolo = r.withTrimmedLeft(12 + l.profundidade * kRecuoArvore).withTrimmedRight(16);
+                if (abas_ && !atual) {  // linhas-guia: uma vertical por nível acima desta pasta
+                    g.setColour(c.borda);
+                    for (int nivel = 0; nivel < l.profundidade; ++nivel)
+                        g.fillRect(12 + nivel * recuo() + 8, r.getY(), 1, r.getHeight());
+                }
+                auto miolo = r.withTrimmedLeft(12 + l.profundidade * recuo()).withTrimmedRight(16);
                 const auto seta = miolo.removeFromLeft(16);
                 if (!l.no->filhos.empty()) {
                     juce::Path p;
@@ -392,6 +445,7 @@ private:
                     g.strokePath(p, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
                 }
                 miolo.removeFromLeft(2);
+                if (abas_) desenharPasta(g, miolo.removeFromLeft(24).withTrimmedRight(6), l.aberto, atual ? c.sobreGrafite : c.secundario);
                 std::set<std::string> ids;
                 coletarIdsRecursivos(*l.no, ids);
                 const auto contagem = explorer::comMilhares(static_cast<int>(ids.size()), pt);
@@ -411,7 +465,7 @@ private:
             const int i = indiceNaPosicao(e.y);
             if (i < 0) return;
             const auto& l = linhas_[static_cast<size_t>(i)];
-            const int xSeta = 12 + l.profundidade * kRecuoArvore;
+            const int xSeta = 12 + l.profundidade * recuo();
             if (!l.no->filhos.empty() && e.x >= xSeta && e.x < xSeta + 18) {  // seta: abre/fecha
                 (l.aberto ? fechados_ : abertos_).insert(l.no->id);
                 (l.aberto ? abertos_ : fechados_).erase(l.no->id);
@@ -443,24 +497,158 @@ private:
 
     private:
         struct Linha { const ProjetoAberto::NoArvore* no; int profundidade; bool aberto; };
+        bool mostraArvore() const { return !abas_ || aba_ == Aba::Pastas; }
+        int topo() const { return abas_ ? 6 : 34; }
+        int recuo() const { return abas_ ? 18 : kRecuoArvore; }
+        static bool combinaComBusca(const ProjetoAberto::NoArvore& no, const juce::String& busca) {
+            if (juce::String(no.nome).containsIgnoreCase(busca)) return true;
+            for (const auto& f : no.filhos)
+                if (combinaComBusca(f, busca)) return true;
+            return false;
+        }
         void achatar(const ProjetoAberto::NoArvore& no, int profundidade) {
-            const bool aberto = !fechados_.count(no.id) && (profundidade < 3 || abertos_.count(no.id) > 0);
+            if (busca_.isNotEmpty() && profundidade > 0 && !combinaComBusca(no, busca_)) return;
+            const bool aberto = busca_.isNotEmpty() || (!fechados_.count(no.id) && (profundidade < 3 || abertos_.count(no.id) > 0));
             linhas_.push_back({&no, profundidade, aberto && !no.filhos.empty()});
             if (aberto)
                 for (const auto& f : no.filhos) achatar(f, profundidade + 1);
         }
-        juce::Rectangle<int> boundsDaLinha(int i) const { return {0, 34 + i * kAlturaLinhaArvore, getWidth(), kAlturaLinhaArvore}; }
+        // Ícone de pasta (aberta quando a pasta está expandida).
+        static void desenharPasta(juce::Graphics& g, juce::Rectangle<int> area, bool aberta, juce::Colour cor) {
+            const auto r = area.withSizeKeepingCentre(15, 12).toFloat();
+            juce::Path p;
+            p.startNewSubPath(r.getX(), r.getY() + 1.0f);
+            p.lineTo(r.getX() + 5.0f, r.getY() + 1.0f);
+            p.lineTo(r.getX() + 6.5f, r.getY() + 3.0f);
+            p.lineTo(r.getRight(), r.getY() + 3.0f);
+            p.lineTo(r.getRight(), r.getBottom());
+            p.lineTo(r.getX(), r.getBottom());
+            p.closeSubPath();
+            if (aberta) {  // aba da frente inclinada
+                p.startNewSubPath(r.getX(), r.getBottom());
+                p.lineTo(r.getX() + 3.0f, r.getY() + 6.0f);
+                p.lineTo(r.getRight() + 1.5f, r.getY() + 6.0f);
+                p.lineTo(r.getRight() - 1.5f, r.getBottom());
+            }
+            g.setColour(cor);
+            g.strokePath(p, juce::PathStrokeType(1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        juce::Rectangle<int> boundsDaLinha(int i) const { return {0, topo() + i * kAlturaLinhaArvore, getWidth(), kAlturaLinhaArvore}; }
         int indiceNaPosicao(int y) const {
-            if (y < 34) return -1;
-            const int i = (y - 34) / kAlturaLinhaArvore;
+            if (y < topo() || !mostraArvore()) return -1;
+            const int i = (y - topo()) / kAlturaLinhaArvore;
             return i < static_cast<int>(linhas_.size()) ? i : -1;
         }
 
         Conteudo& dono_;
+        const bool abas_;
+        Aba aba_ = Aba::Pastas;
+        juce::String busca_;
         const ProjetoAberto::NoArvore* raiz_ = nullptr;
         std::string atualId_;
         std::vector<Linha> linhas_;
         std::set<std::string> abertos_, fechados_;
+    };
+
+    // ── abas Folders | Filters da lateral do container (a ativa em grafite; Filters com a contagem em laranja) ─────────
+    class AbasLaterais : public juce::Component {
+    public:
+        explicit AbasLaterais(Conteudo& dono) : dono_(dono) {}
+        void paint(juce::Graphics& g) override {
+            const auto c = explorer::cores();
+            const auto r = getLocalBounds().toFloat();
+            g.setColour(c.barra);
+            g.fillRoundedRectangle(r, r.getHeight() * 0.5f);
+            g.setColour(c.borda);
+            g.drawRoundedRectangle(r.reduced(0.5f), r.getHeight() * 0.5f, 1.0f);
+            const bool pastas = dono_.coluna_->aba() == ColunaLateral::Aba::Pastas;
+            auto metade = r.reduced(3.0f);
+            const auto esquerda = metade.removeFromLeft(metade.getWidth() * 0.5f);
+            desenharPilula(g, esquerda, pastas, i18n::t("janela_pasta.secao_pastas"), false);
+            const int n = dono_.filtros_->filtrosAtivos();
+            const auto rotulo = i18n::t("janela_pasta.aba_filtros");
+            if (n == 0) { desenharPilula(g, metade, !pastas, rotulo, false); return; }
+            // Filters + bolinha laranja com o total de filtros ativos, centrados juntos.
+            desenharPilula(g, metade, !pastas, {}, false);
+            const auto f = explorer::fonte(13.0f, !pastas);
+            const int wTexto = explorer::larguraDoTexto(f, rotulo);
+            const float d = 16.0f;
+            const float x0 = metade.getCentreX() - (static_cast<float>(wTexto) + 6.0f + d) * 0.5f;
+            g.setColour(!pastas ? c.sobreGrafite : c.texto);
+            g.setFont(f);
+            g.drawText(rotulo, juce::Rectangle<float>(x0, metade.getY(), static_cast<float>(wTexto) + 2.0f, metade.getHeight()),
+                       juce::Justification::centredLeft, false);
+            const juce::Rectangle<float> bola(x0 + static_cast<float>(wTexto) + 6.0f, metade.getCentreY() - d * 0.5f, d, d);
+            g.setColour(explorer::corDestaque());
+            g.fillEllipse(bola);
+            g.setColour(juce::Colours::white);
+            g.setFont(explorer::fonte(10.5f, true));
+            g.drawText(juce::String(n), bola, juce::Justification::centred, false);
+        }
+        void mouseUp(const juce::MouseEvent& e) override {
+            dono_.definirAbaLateral(e.x < getWidth() / 2 ? ColunaLateral::Aba::Pastas : ColunaLateral::Aba::Filtros);
+        }
+    private:
+        Conteudo& dono_;
+    };
+
+    // ── linha fixa da lateral: "In MASTER · 5 files   Clear all" (aba Filters) ou o rodapé ("● 1 filter active · Clear" /
+    // "Counts reflect the current folder.") ───────────────────────────────────────────────────────────────────────────
+    class LinhaLateral : public juce::Component {
+    public:
+        enum class Tipo { ResumoFiltros, Rodape };
+        LinhaLateral(Conteudo& dono, Tipo tipo) : dono_(dono), tipo_(tipo) {}
+        void paint(juce::Graphics& g) override {
+            const auto c = explorer::cores();
+            auto r = getLocalBounds().reduced(16, 0);
+            areaLink_ = {};
+            const int n = dono_.filtros_->filtrosAtivos();
+            const auto fonte = explorer::fonte(12.5f);
+            auto escrever = [&](const juce::String& texto, juce::Colour cor, const juce::Font& f) {
+                const int w = juce::jmin(r.getWidth(), explorer::larguraDoTexto(f, texto) + 2);
+                g.setColour(cor);
+                g.setFont(f);
+                g.drawText(texto, r.removeFromLeft(w), juce::Justification::centredLeft, false);
+                return w;
+            };
+            const auto link = i18n::t(tipo_ == Tipo::ResumoFiltros ? "janela_pasta.limpar_tudo" : "janela_pasta.limpar");
+            if (tipo_ == Tipo::ResumoFiltros) {
+                if (n > 0) {
+                    const int w = explorer::larguraDoTexto(fonte, link) + 2;
+                    areaLink_ = r.removeFromRight(w);
+                    g.setColour(explorer::corDestaque());
+                    g.setFont(fonte);
+                    g.drawText(link, areaLink_, juce::Justification::centredRight, false);
+                    r.removeFromRight(8);
+                }
+                escrever(i18n::t("janela_pasta.em_pasta") + " ", c.secundario, fonte);
+                escrever(dono_.nome_, c.texto, explorer::fonte(12.5f, true));
+                escrever(kPonto + contagemI18n("janela_pasta.n_arquivos", static_cast<int>(dono_.ids_.size())), c.secundario, fonte);
+                return;
+            }
+            if (dono_.coluna_->aba() == ColunaLateral::Aba::Filtros) {
+                escrever(i18n::t("janela_pasta.contagens_da_pasta"), c.secundario, fonte);
+                return;
+            }
+            if (n == 0) return;
+            const auto ponto = r.removeFromLeft(14);
+            g.setColour(explorer::corDestaque());
+            g.fillEllipse(static_cast<float>(ponto.getX()), static_cast<float>(ponto.getCentreY()) - 3.5f, 7.0f, 7.0f);
+            escrever(i18n::t(n == 1 ? "janela_pasta.um_filtro_ativo" : "janela_pasta.n_filtros_ativos").replace("{n}", juce::String(n)) + kPonto,
+                     c.secundario, fonte);
+            const int w = escrever(link, explorer::corDestaque(), fonte);
+            areaLink_ = juce::Rectangle<int>(r.getX() - w, 0, w, getHeight());
+        }
+        void mouseMove(const juce::MouseEvent& e) override {
+            setMouseCursor(areaLink_.contains(e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        }
+        void mouseUp(const juce::MouseEvent& e) override {
+            if (areaLink_.contains(e.getPosition())) dono_.filtros_->limparTudo();
+        }
+    private:
+        Conteudo& dono_;
+        Tipo tipo_;
+        juce::Rectangle<int> areaLink_;
     };
 
     // ── caminho clicável: Acervo › Site › IMAGES › PEDRA DE GUARATIBA ──────────────────────────────────────────────
@@ -561,6 +749,51 @@ private:
     private:
         Conteudo& dono_;
     };
+
+    // Janela do container: abas Folders | Filters, "Find folder...", resumo dos filtros, rodapé e a capa do PROJECT.
+    void montarLateralComAbas() {
+        filtros_->definirComGrupos(true);
+        filtros_->aoMudarFiltros = [this] { atualizarLateral(); };
+        filtros_->setVisible(false);  // começa na aba Folders
+        abasLaterais_ = std::make_unique<AbasLaterais>(*this);
+        addAndMakeVisible(*abasLaterais_);
+        resumoFiltros_ = std::make_unique<LinhaLateral>(*this, LinhaLateral::Tipo::ResumoFiltros);
+        addChildComponent(*resumoFiltros_);
+        rodapeLateral_ = std::make_unique<LinhaLateral>(*this, LinhaLateral::Tipo::Rodape);
+        addAndMakeVisible(*rodapeLateral_);
+        campoBuscaPasta_.setTextToShowWhenEmpty(i18n::t("janela_pasta.busca_pasta"), explorer::cores().secundario);
+        campoBuscaPasta_.setIndents(28, 0);
+        campoBuscaPasta_.setJustification(juce::Justification::centredLeft);
+        campoBuscaPasta_.setFont(explorer::fonte(13.0f));
+        campoBuscaPasta_.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+        campoBuscaPasta_.setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+        campoBuscaPasta_.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+        campoBuscaPasta_.setColour(juce::TextEditor::textColourId, explorer::cores().texto);
+        campoBuscaPasta_.onTextChange = [this] { coluna_->definirBusca(campoBuscaPasta_.getText()); };
+        addAndMakeVisible(campoBuscaPasta_);
+        // Capa do PROJECT (vinil, fita, produção): aqui na janela do container, não no preview do arquivo. DDP tem janela própria.
+        const std::string origem = projeto_.origemDoContainer(nestId_);
+        if (ehOrigemProject(juce::String(origem)) && origem != "youtube") {
+            capa_ = std::make_unique<CapaProjetoComponent>(projeto_, nestId_, CapaProjetoComponent::Modo::Lateral);
+            capa_->aoMudar = [this] { resized(); repaint(); };
+            addAndMakeVisible(*capa_);
+        }
+    }
+
+    void definirAbaLateral(ColunaLateral::Aba aba) {
+        coluna_->definirAba(aba);
+        viewportLateral_.setViewPosition(0, 0);
+        resized();
+        repaint();
+        atualizarLateral();
+    }
+
+    void atualizarLateral() {
+        if (abasLaterais_ == nullptr) return;
+        abasLaterais_->repaint();
+        resumoFiltros_->repaint();
+        rodapeLateral_->repaint();
+    }
 
     bool podeRenomear() const {
         return nestId_.empty() && !semPasta_ && !projeto_.somenteLeitura() && !projeto_.mapaSelecionadoNoFolderMap().empty() &&
@@ -1042,6 +1275,10 @@ private:
     std::unique_ptr<MosaicoComponent> mosaico_;
     std::unique_ptr<FiltrosComponent> filtros_;
     std::unique_ptr<ColunaLateral> coluna_;
+    std::unique_ptr<AbasLaterais> abasLaterais_;          // só no container
+    std::unique_ptr<LinhaLateral> resumoFiltros_, rodapeLateral_;
+    std::unique_ptr<CapaProjetoComponent> capa_;          // container PROJECT (vinil, fita, produção)
+    juce::TextEditor campoBuscaPasta_;                     // "Find folder..."
     std::unique_ptr<PainelMetadadosArquivo> painel_;  // resumo da pasta (nada selecionado / cartão de pasta)
     std::unique_ptr<FichaPanelComponent> ficha_;       // arquivo(s) selecionado(s): a ficha editável do GRID
     std::unique_ptr<Trilha> trilha_;
@@ -1104,6 +1341,16 @@ void JanelaPastaFlutuante::mostrarArquivoParaTeste(const std::string& itemId) {
         conteudo_->mosaico_->definirSelecao({itemId});
         conteudo_->aoMudarSelecao();
     }
+}
+
+void JanelaPastaFlutuante::mostrarAbaFiltrosParaTeste() {
+    if (conteudo_ != nullptr && conteudo_->coluna_->comAbas()) conteudo_->definirAbaLateral(Conteudo::ColunaLateral::Aba::Filtros);
+}
+
+FloatingPreviewWindow* JanelaPastaFlutuante::abrirPreviewParaTeste(const std::string& itemId) {
+    if (conteudo_ == nullptr) return nullptr;
+    conteudo_->abrirPreview(itemId);
+    return conteudo_->janelaPreview_.get();
 }
 
 void JanelaPastaFlutuante::closeButtonPressed() {

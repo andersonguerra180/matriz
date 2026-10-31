@@ -7521,6 +7521,9 @@ int rodarExplorerVisualSelfTest() {
                 janela->irParaPastaParaTeste(pedra->id, pedra->nome);
                 girar(2500);
                 salvar(*janela, "explorer_pasta");
+                janela->mostrarAbaFiltrosParaTeste();
+                girar(1200);
+                salvar(*janela, "explorer_filtros");
                 janela->mostrarArquivoParaTeste(*pedra->itemIdsDiretos.begin());
                 girar(2500);
                 salvar(*janela, "explorer_arquivo");
@@ -7534,6 +7537,16 @@ int rodarExplorerVisualSelfTest() {
                                                    img.getPixelAt(img.getWidth() - 5, img.getHeight() - 5).getAlpha() == 0;
                     std::cout << (cantoTransparente ? "  OK   " : "  FAIL ") << "preview window has no rectangle behind the card\n";
                     if (!cantoTransparente) ++falhas;
+                }
+                {
+                    // Duplo clique num arquivo da pasta: a coluna da esquerda do preview lista só os arquivos desta pasta.
+                    auto* preview = janela->abrirPreviewParaTeste(*pedra->itemIdsDiretos.begin());
+                    girar(1500);
+                    const int linhas = preview != nullptr ? preview->linhasDaColunaDoGrupoParaTeste() : -1;
+                    const bool soDaPasta = linhas == static_cast<int>(pedra->itemIdsDiretos.size());
+                    std::cout << (soDaPasta ? "  OK   " : "  FAIL ") << "preview column lists only the folder's files (" << linhas << " of "
+                              << pedra->itemIdsDiretos.size() << ")\n";
+                    if (!soDaPasta) ++falhas;
                 }
                 janela->irParaPastaParaTeste(nest, "Acervo Djalma Correa");
                 girar(1500);
