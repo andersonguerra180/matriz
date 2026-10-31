@@ -32,6 +32,7 @@ constexpr int kAlturaLinhaArvore = 28;
 constexpr int kRecuoArvore = 14;
 constexpr int kMenuExtrairDaPasta = 9001;
 constexpr int kMenuMoverParaPasta = 9002;
+constexpr int kMenuExtrairDoContainer = 9003;
 
 void coletarIdsRecursivos(const ProjetoAberto::NoArvore& no, std::set<std::string>& out) {
     out.insert(no.itemIds.begin(), no.itemIds.end());
@@ -941,6 +942,8 @@ private:
         menu.addSeparator();
         // `_no folder` e container: não há pasta do Folder Map de onde extrair.
         if (!semPasta_ && nestId_.empty()) menu.addItem(kMenuExtrairDaPasta, i18n::t("janela_pasta.extrair"));
+        // Container: tira os arquivos dele (voltam ao grid como itens comuns; com Undo). Container com 1 arquivo se desfaz.
+        if (!nestId_.empty()) menu.addItem(kMenuExtrairDoContainer, i18n::t("janela_pasta.extrair_container"), !projeto_.somenteLeitura());
         menu.addItem(kMenuMoverParaPasta, i18n::t("janela_pasta.mover"));
         juce::Component::SafePointer<Conteudo> seguro(this);
         ProjetoAberto* proj = &projeto_;
@@ -955,6 +958,11 @@ private:
                 };
                 if (const auto* raiz = acharNo(seguro->arvoreDoMapa_, seguro->pastaId_)) coleta(*raiz);
                 proj->removerItensDasPastas(std::vector<std::string>(ids.begin(), ids.end()), pastas);  // um passo de Undo
+                seguro->escopoCarregado_.reset();
+                seguro->recarregarItens();
+                if (seguro->aoMudouDados_) seguro->aoMudouDados_();
+            } else if (r == kMenuExtrairDoContainer) {
+                proj->extrairDoNest(std::vector<std::string>(ids.begin(), ids.end()));  // um passo de Undo
                 seguro->escopoCarregado_.reset();
                 seguro->recarregarItens();
                 if (seguro->aoMudouDados_) seguro->aoMudouDados_();

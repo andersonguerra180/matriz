@@ -2359,6 +2359,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"janela_pasta.contagem", "{n} files"},
         {"janela_pasta.selecionados", "{n} selected"},
         {"janela_pasta.extrair", "Extract from this folder"},
+        {"janela_pasta.extrair_container", "Extract from Container"},
         {"janela_pasta.mover", "Move to folder..."},
         {"moldura.secao.backup", "Backup"},
         {"moldura.secao.explorador", "Explorer"},
