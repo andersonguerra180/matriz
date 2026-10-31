@@ -1717,7 +1717,7 @@ public:
             geolocalizacao_.editorCoords->setTextToShowWhenEmpty("e.g. -16.4435, -39.0643", juce::Colour(0xff7d766c));
         }
         geolocalizacao_.editorCoords->onFocusLost = commitGeo;
-        geolocalizacao_.editorCoords->onReturnKey = commitGeo;
+        geolocalizacao_.editorCoords->onReturnKey = [this, commitGeo] { commitGeo(); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
         addAndMakeVisible(*geolocalizacao_.editorCoords);
 
         // Address
@@ -1743,7 +1743,7 @@ public:
         geolocalizacao_.editorAddress->setText(geoOpt && geoOpt->formattedAddress ? *geoOpt->formattedAddress : "");
         geolocalizacao_.editorAddress->setTextToShowWhenEmpty("e.g. Av. Paulista, 1000", juce::Colour(0xff7d766c));
         geolocalizacao_.editorAddress->onFocusLost = commitGeo;
-        geolocalizacao_.editorAddress->onReturnKey = commitGeo;
+        geolocalizacao_.editorAddress->onReturnKey = [this, commitGeo] { commitGeo(); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
         addAndMakeVisible(*geolocalizacao_.editorAddress);
 
         // City
@@ -1769,7 +1769,7 @@ public:
         geolocalizacao_.editorCity->setText(geoOpt && geoOpt->city ? *geoOpt->city : "");
         geolocalizacao_.editorCity->setTextToShowWhenEmpty("e.g. Porto Seguro", juce::Colour(0xff7d766c));
         geolocalizacao_.editorCity->onFocusLost = commitGeo;
-        geolocalizacao_.editorCity->onReturnKey = commitGeo;
+        geolocalizacao_.editorCity->onReturnKey = [this, commitGeo] { commitGeo(); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
         addAndMakeVisible(*geolocalizacao_.editorCity);
 
         // State
@@ -1795,7 +1795,7 @@ public:
         geolocalizacao_.editorState->setText(geoOpt && geoOpt->stateProvince ? *geoOpt->stateProvince : "");
         geolocalizacao_.editorState->setTextToShowWhenEmpty("e.g. Bahia", juce::Colour(0xff7d766c));
         geolocalizacao_.editorState->onFocusLost = commitGeo;
-        geolocalizacao_.editorState->onReturnKey = commitGeo;
+        geolocalizacao_.editorState->onReturnKey = [this, commitGeo] { commitGeo(); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
         addAndMakeVisible(*geolocalizacao_.editorState);
 
         // Country
@@ -1821,7 +1821,7 @@ public:
         geolocalizacao_.editorCountry->setText(geoOpt && geoOpt->country ? *geoOpt->country : "");
         geolocalizacao_.editorCountry->setTextToShowWhenEmpty(isPt ? "Ex: Brasil" : "e.g. Brazil", juce::Colour(0xff7d766c));
         geolocalizacao_.editorCountry->onFocusLost = commitGeo;
-        geolocalizacao_.editorCountry->onReturnKey = commitGeo;
+        geolocalizacao_.editorCountry->onReturnKey = [this, commitGeo] { commitGeo(); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
         addAndMakeVisible(*geolocalizacao_.editorCountry);
 
         btnAjudaGeoLocation_ = std::make_unique<juce::TextButton>("?");
@@ -2127,6 +2127,8 @@ public:
     std::function<void()> aoMudarClassificacao;
     std::function<void()> aoMudar;
     std::function<void(const std::string&)> aoAplicarSucesso;
+    // Enter num campo (ou escolha num dropdown) devolve o foco à grade — mesma regra da ficha em lote.
+    std::function<void()> aoPedirFocoGrade;
 
     juce::Component* editorDoCampoParaTeste(const std::string& nivel, int nivelIndice, const std::string& campoId) {
         for (auto& cu : camposUnificados_) {
@@ -2858,7 +2860,11 @@ private:
                 }
             };
             ed->onFocusLost = linha->onCommit;
-            ed->onReturnKey = linha->onCommit;
+            // Enter (não onFocusLost) devolve o foco à grade, como na ficha em lote.
+            ed->onReturnKey = [this, commit = linha->onCommit] {
+                if (commit) commit();
+                if (aoPedirFocoGrade) aoPedirFocoGrade();
+            };
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
             if (dbColuna == "lista") instalarBotaoPastaDaLista(*linhaRaw, itemId);
@@ -2919,7 +2925,10 @@ private:
                     if (aoMudar) aoMudar();
                 }
             };
-            combo->onChange = linha->onCommit;
+            combo->onChange = [this, commit = linha->onCommit] {
+                if (commit) commit();
+                if (aoPedirFocoGrade) aoPedirFocoGrade();
+            };
             addAndMakeVisible(*combo);
             linha->editor = std::move(combo);
 
@@ -3711,7 +3720,7 @@ private:
                     if (campo.opcoes[i] == valorAtual.toStdString()) idSelecionado = static_cast<int>(i) + 1;
                 }
                 combo->setSelectedId(idSelecionado, juce::dontSendNotification);
-                combo->onChange = [this, linha] { commitLinha(*linha); };
+                combo->onChange = [this, linha] { commitLinha(*linha); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
                 return combo;
             }
             case CampoTipo::OpcaoLivre: {
@@ -3743,7 +3752,7 @@ private:
                 }
 
                 combo->setText(valorAtual, juce::dontSendNotification);
-                combo->onChange = [this, linha] { commitLinha(*linha); };
+                combo->onChange = [this, linha] { commitLinha(*linha); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
                 return combo;
             }
             default: {
@@ -3751,7 +3760,7 @@ private:
                 editor->setText(valorAtual, false);
                 if (campo.tipo == CampoTipo::Data) editor->setTextToShowWhenEmpty("AAAA-MM-DD", matriz::ui::tema().textoTerciario);
                 editor->onFocusLost = [this, linha] { commitLinha(*linha); };
-                editor->onReturnKey = [this, linha] { commitLinha(*linha); };
+                editor->onReturnKey = [this, linha] { commitLinha(*linha); if (aoPedirFocoGrade) aoPedirFocoGrade(); };
                 return editor;
             }
         }
@@ -6235,6 +6244,7 @@ FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(proj
     conteudo_->aoMudarClassificacao = [this] { if (aoAplicarEmLote) aoAplicarEmLote(); };
     conteudo_->aoMudar = [this] { if (aoMudar) aoMudar(); };
     conteudo_->aoAplicarSucesso = [this](const std::string& itemId) { if (aoAplicarSucesso) aoAplicarSucesso(itemId); };
+    conteudo_->aoPedirFocoGrade = [this] { if (aoPedirFocoGrade) aoPedirFocoGrade(); };
 }
 
 FichaPanelComponent::~FichaPanelComponent() {
