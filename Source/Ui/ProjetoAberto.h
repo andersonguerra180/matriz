@@ -493,12 +493,12 @@ public:
     // processou uma (Etapa 4 escreve isso; pode não existir ainda).
     std::optional<juce::String> caminhoMiniaturaPrincipal(const std::string& itemId) const;
 
-    // Imagens do próprio catálogo (arquivo master com extensão de imagem) cujo código, título ou nome do arquivo contém
-    // `termo` (vazio = as mais recentes). Alimenta o seletor "capa a partir do catálogo".
+    // Imagens do próprio catálogo (arquivo master com extensão de imagem), as mais recentes primeiro, sem limite; com
+    // `termo`, só as que a busca da grade (buscarItens) acha. Alimenta o seletor "capa a partir do catálogo". Fora da
+    // message thread (a busca e a varredura das extensões custam).
     struct ImagemCatalogo { std::string id, codigo, titulo; };
     // `soEstes` (não vazio): só entre esses itens (as imagens do container, que o seletor mostra primeiro).
-    std::vector<ImagemCatalogo> buscarImagensDoCatalogo(const std::string& termo, int limite = 200,
-                                                        const std::vector<std::string>& soEstes = {}) const;
+    std::vector<ImagemCatalogo> buscarImagensDoCatalogo(const std::string& termo, const std::vector<std::string>& soEstes = {}) const;
 
     void gerarMiniaturasFaltantes();
 

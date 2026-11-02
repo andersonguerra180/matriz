@@ -3010,31 +3010,37 @@ std::optional<juce::String> ProjetoAberto::caminhoMiniaturaPrincipal(const std::
     return projeto_->pasta().getChildFile(relativo).getFullPathName();
 }
 
-std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalogo(const std::string& termo, int limite,
+std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalogo(const std::string& termo,
                                                                                    const std::vector<std::string>& soEstes) const {
     std::vector<ImagemCatalogo> out;
     if (!projeto_) return out;
     try {
-        const std::string padrao = "%" + termo + "%";
+        // Com termo: a mesma busca da grade (FTS, campos, tags, pessoas, notas...), não só título/código/caminho.
+        std::vector<std::string> filtro = soEstes;
+        if (!termo.empty()) {
+            const auto achados = buscarItens(juce::String::fromUTF8(termo.c_str()));
+            std::vector<std::string> ids;
+            if (soEstes.empty()) ids.assign(achados.begin(), achados.end());
+            else for (const auto& id : soEstes) if (achados.count(id)) ids.push_back(id);
+            if (ids.empty()) return out;
+            filtro = std::move(ids);
+        }
         auto stmt = leitura().prepare(
-            "SELECT i.id, i.codigo_acervo, COALESCE(NULLIF(i.titulo, ''), a.caminho_relativo) "
+            "SELECT i.id, i.codigo_acervo, COALESCE(NULLIF(i.titulo, ''), a.caminho_relativo), a.caminho_relativo "
             "FROM item i JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
             "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(i.estado, '') != 'duplicata' AND COALESCE(a.papel, '') != 'capa_frente' "
-            "AND (LOWER(a.caminho_relativo) LIKE '%.jpg' OR LOWER(a.caminho_relativo) LIKE '%.jpeg' OR "
-            "     LOWER(a.caminho_relativo) LIKE '%.png' OR LOWER(a.caminho_relativo) LIKE '%.gif' OR "
-            "     LOWER(a.caminho_relativo) LIKE '%.bmp' OR LOWER(a.caminho_relativo) LIKE '%.webp' OR "
-            "     LOWER(a.caminho_relativo) LIKE '%.tif' OR LOWER(a.caminho_relativo) LIKE '%.tiff') "
-            "AND (? = '' OR i.titulo LIKE ? OR i.codigo_acervo LIKE ? OR a.caminho_relativo LIKE ?) "
             "AND (? = 0 OR i.id IN (SELECT value FROM json_each(?))) "
-            "ORDER BY i.criado_em DESC LIMIT ?");
-        stmt.bind(1, matriz::db::Value::of(termo));
-        stmt.bind(2, matriz::db::Value::of(padrao));
-        stmt.bind(3, matriz::db::Value::of(padrao));
-        stmt.bind(4, matriz::db::Value::of(padrao));
-        stmt.bind(5, matriz::db::Value::of(static_cast<long long>(soEstes.empty() ? 0 : 1)));
-        stmt.bind(6, matriz::db::Value::of(idsEmJson(soEstes)));
-        stmt.bind(7, matriz::db::Value::of(static_cast<long long>(limite)));
-        while (stmt.step()) out.push_back({stmt.columnText(0), stmt.columnText(1), stmt.columnText(2)});
+            "ORDER BY i.criado_em DESC");
+        stmt.bind(1, matriz::db::Value::of(static_cast<long long>(filtro.empty() ? 0 : 1)));
+        stmt.bind(2, matriz::db::Value::of(idsEmJson(filtro)));
+        while (stmt.step()) {
+            // Imagem = a mesma lista de extensões do ingest (HEIC, RAW, PSD... entram).
+            const juce::String caminho = juce::String::fromUTF8(stmt.columnText(3).c_str());
+            const int ponto = caminho.lastIndexOfChar('.');
+            if (ponto < 0 || matriz::ingest::categoriaPorExtensao(caminho.substring(ponto + 1)) != matriz::ingest::CategoriaMidia::Imagem)
+                continue;
+            out.push_back({stmt.columnText(0), stmt.columnText(1), stmt.columnText(2)});
+        }
     } catch (const std::exception&) {}
     return out;
 }

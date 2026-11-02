@@ -17,6 +17,8 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "../Vault/Resolucao.h"
 
+#include <unordered_map>
+
 namespace matriz::ui::acoes {
 
 namespace {
@@ -244,17 +246,26 @@ public:
 
     void definir(std::vector<Celula> celulas) {
         celulas_ = std::move(celulas);
+        indice_.clear();
+        for (size_t i = 0; i < celulas_.size(); ++i) indice_.emplace(celulas_[i].id, i);
         selecionada_ = -1;
         relayout(getWidth());
     }
     const std::vector<Celula>& celulas() const { return celulas_; }
 
     void definirImagem(const std::string& id, const juce::Image& img) {
-        for (size_t i = 0; i < celulas_.size(); ++i)
-            if (celulas_[i].id == id) {
-                celulas_[i].imagem = img;
-                if (i < rects_.size()) repaint(rects_[i]);
-            }
+        const auto it = indice_.find(id);
+        if (it == indice_.end()) return;
+        celulas_[it->second].imagem = img;
+        if (it->second < rects_.size()) repaint(rects_[it->second]);
+    }
+
+    // Células que tocam `area` (coordenadas da grade): as que a rolagem mostra, para carregar só essas miniaturas.
+    std::vector<size_t> indicesEm(juce::Rectangle<int> area) const {
+        std::vector<size_t> out;
+        for (size_t i = 0; i < rects_.size(); ++i)
+            if (rects_[i].intersects(area)) out.push_back(i);
+        return out;
     }
 
     void relayout(int largura) {
@@ -338,12 +349,20 @@ private:
     }
 
     std::vector<Celula> celulas_;
+    std::unordered_map<std::string, size_t> indice_;  // id -> célula
     std::vector<juce::Rectangle<int>> rects_;
     std::vector<std::pair<juce::Rectangle<int>, juce::String>> cabecalhos_;
     int selecionada_ = -1;
 };
 
-// Seletor de capa a partir do PRÓPRIO catálogo: busca por código/título/nome do arquivo e grade de miniaturas
+// Viewport que avisa quando a área visível muda (rolagem/tamanho): o seletor carrega as miniaturas que aparecem.
+class VisorComAviso : public juce::Viewport {
+public:
+    std::function<void()> aoMudarArea;
+    void visibleAreaChanged(const juce::Rectangle<int>&) override { if (aoMudarArea) aoMudarArea(); }
+};
+
+// Seletor de capa a partir do PRÓPRIO catálogo: todas as imagens (a busca é a mesma da grade) numa grade de miniaturas
 // (as imagens do container primeiro); prévia maior da escolhida.
 class SeletorImagemCatalogo : public juce::Component, private juce::Timer {
 public:
@@ -357,6 +376,7 @@ public:
         grade_.aoConfirmar = [this](int i) { selecionar(i); if (!escolhido_.empty()) escolher(true); };
         visor_.setViewedComponent(&grade_, false);
         visor_.setScrollBarsShown(true, false);
+        visor_.aoMudarArea = [this] { carregarVisiveis(); };
         addAndMakeVisible(visor_);
         lblContagem_.setColour(juce::Label::textColourId, tk.textoTerciario);
         lblContagem_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
@@ -374,7 +394,10 @@ public:
         consultar();
     }
 
-    ~SeletorImagemCatalogo() override { cancelarCarga(); }
+    ~SeletorImagemCatalogo() override {
+        cancelarCarga();
+        poolMiniaturas_.removeAllJobs(true, 2000);
+    }
 
     static void exibir(ProjetoAberto& projeto, std::vector<std::string> doContainer, std::function<void(std::string)> aoEscolher) {
         juce::DialogWindow::LaunchOptions opt;
@@ -413,6 +436,7 @@ public:
         area.removeFromRight(10);
         visor_.setBounds(area);
         grade_.relayout(area.getWidth() - visor_.getScrollBarThickness());
+        carregarVisiveis();
     }
 
 private:
@@ -430,8 +454,32 @@ private:
 
     void timerCallback() override { stopTimer(); consultar(); }
 
+    // A busca (a mesma da grade) e a leitura das extensões rodam fora da message thread; resposta de uma busca já
+    // superada por outra mais nova é descartada.
     void consultar() {
         const std::string termo = busca_.getText().trim().toStdString();
+        const int geracao = ++geracaoConsulta_;
+        cancelarCarga();
+        lblContagem_.setText(matriz::i18n::t("acoes.capa_buscando"), juce::dontSendNotification);
+        ProjetoAberto* p = &projeto_;
+        const auto vivo = projeto_.tokenVida();
+        const auto doContainer = doContainer_;
+        juce::Component::SafePointer<SeletorImagemCatalogo> seguro(this);
+        juce::Thread::launch([p, vivo, termo, doContainer, geracao, seguro] {
+            if (vivo.expired()) return;
+            std::vector<ProjetoAberto::ImagemCatalogo> doCont, catalogo;
+            try {
+                if (!doContainer.empty()) doCont = p->buscarImagensDoCatalogo(termo, doContainer);
+                catalogo = p->buscarImagensDoCatalogo(termo);
+            } catch (...) {}
+            juce::MessageManager::callAsync([seguro, geracao, doCont = std::move(doCont), catalogo = std::move(catalogo)] {
+                if (seguro == nullptr || seguro->geracaoConsulta_ != geracao) return;
+                seguro->mostrar(doCont, catalogo);
+            });
+        });
+    }
+
+    void mostrar(const std::vector<ProjetoAberto::ImagemCatalogo>& doCont, const std::vector<ProjetoAberto::ImagemCatalogo>& catalogo) {
         std::vector<GradeImagensCapa::Celula> celulas;
         std::set<std::string> vistos;
         auto juntar = [&](const std::vector<ProjetoAberto::ImagemCatalogo>& lista, bool doContainer) {
@@ -444,30 +492,36 @@ private:
                 celulas.push_back(std::move(c));
             }
         };
-        if (!doContainer_.empty()) juntar(projeto_.buscarImagensDoCatalogo(termo, 500, doContainer_), true);
-        juntar(projeto_.buscarImagensDoCatalogo(termo), false);
+        juntar(doCont, true);
+        juntar(catalogo, false);
         grade_.definir(std::move(celulas));
         visor_.setViewPosition(0, 0);
         selecionar(-1);
         lblContagem_.setText(matriz::i18n::t("acoes.capa_contagem").replace("{n}", juce::String(static_cast<int>(grade_.celulas().size()))),
                              juce::dontSendNotification);
-        carregarMiniaturas();
+        cancelarCarga_ = std::make_shared<std::atomic<bool>>(false);
+        pedidos_.clear();
+        carregarVisiveis();
     }
 
-    // Miniaturas (as de .miniaturas, pequenas) lidas e decodificadas fora da message thread, na ordem da grade; cada
-    // bloco volta por callAsync. Uma busca nova cancela a carga anterior.
+    // Miniaturas (as de .miniaturas) lidas, decodificadas e reduzidas fora da message thread, só as das células visíveis
+    // (mais uma tela abaixo): o catálogo inteiro na memória seriam gigas. Cada bloco volta por callAsync; uma busca
+    // nova cancela a carga anterior.
     void cancelarCarga() { if (cancelarCarga_) cancelarCarga_->store(true); }
-    void carregarMiniaturas() {
-        cancelarCarga();
-        cancelarCarga_ = std::make_shared<std::atomic<bool>>(false);
+    void carregarVisiveis() {
+        if (!cancelarCarga_ || cancelarCarga_->load()) return;
+        const auto area = visor_.getViewArea();
         std::vector<std::string> ids;
-        for (const auto& c : grade_.celulas()) ids.push_back(c.id);
+        for (const auto i : grade_.indicesEm(area.withHeight(area.getHeight() * 2))) {
+            const auto& c = grade_.celulas()[i];
+            if (!c.imagem.isValid() && pedidos_.insert(c.id).second) ids.push_back(c.id);
+        }
         if (ids.empty()) return;
         ProjetoAberto* p = &projeto_;
         const auto vivo = projeto_.tokenVida();
         auto cancelar = cancelarCarga_;
         juce::Component::SafePointer<SeletorImagemCatalogo> seguro(this);
-        juce::Thread::launch([p, vivo, ids, cancelar, seguro] {
+        poolMiniaturas_.addJob([p, vivo, ids, cancelar, seguro] {
             std::vector<std::pair<std::string, juce::Image>> bloco;
             auto enviar = [&] {
                 if (bloco.empty()) return;
@@ -486,6 +540,11 @@ private:
                         if (f.existsAsFile()) img = juce::ImageFileFormat::loadFrom(f);
                     }
                 } catch (...) {}
+                constexpr int kMaxLado = 264;  // 2x a célula (tela retina); a prévia também usa esta
+                if (img.isValid() && juce::jmax(img.getWidth(), img.getHeight()) > kMaxLado) {
+                    const float k = static_cast<float>(kMaxLado) / static_cast<float>(juce::jmax(img.getWidth(), img.getHeight()));
+                    img = img.rescaled(juce::jmax(1, juce::roundToInt(img.getWidth() * k)), juce::jmax(1, juce::roundToInt(img.getHeight() * k)));
+                }
                 if (img.isValid()) bloco.emplace_back(id, img);
                 if (bloco.size() >= 12) enviar();
             }
@@ -509,13 +568,16 @@ private:
     std::function<void(std::string)> aoEscolher_;
     juce::TextEditor busca_;
     GradeImagensCapa grade_;
-    juce::Viewport visor_;
+    VisorComAviso visor_;
     juce::Label lblContagem_;
     juce::TextButton btnUsar_, btnCancelar_;
     juce::Rectangle<int> areaPrevia_;
     juce::Image previa_;
     std::string escolhido_;
     std::shared_ptr<std::atomic<bool>> cancelarCarga_;
+    std::set<std::string> pedidos_;  // miniaturas já pedidas nesta busca
+    int geracaoConsulta_ = 0;
+    juce::ThreadPool poolMiniaturas_{2};
 };
 
 // Na grade um CONTAINER (nest com origem) aparece pela capa dele: a capa que vale ali é a do container
