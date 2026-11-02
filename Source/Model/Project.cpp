@@ -1135,29 +1135,41 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
 
     cronometro("view_colecao_revisao");
     // Atualiza a view em projetos existentes: BACKUP_VERIFIED só vale quando
-    // o evento mais recente do item foi SUCCESS.
+    // o evento mais recente do item foi SUCCESS. A view já existe (registro.sql cria com IF NOT EXISTS), então
+    // sem o DROP o CREATE lançava, o catch engolia e projeto antigo ficava com a definição velha para sempre.
+    // Só recria quando a definição gravada ainda não tem a regra do evento mais recente (sem escrita a cada abertura).
     try {
-        registro.exec(
-            "CREATE VIEW asset_preservation_status AS "
-            "SELECT i.id AS item_id, i.persistent_id, "
-            "CASE WHEN i.persistent_id IS NOT NULL THEN 'OK' ELSE 'UNKNOWN' END AS identity_status, "
-            "CASE WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.checksum_sha256 IS NOT NULL "
-            "AND a.estado_presenca = 'corrompido') THEN 'CRITICAL' "
-            "WHEN EXISTS (SELECT 1 FROM preservation_event pe WHERE pe.item_id = i.id AND pe.event_type = 'FIXITY_CHECK' "
-            "AND pe.event_outcome = 'SUCCESS') THEN 'OK' "
-            "WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.checksum_sha256 IS NOT NULL) THEN 'WARNING' "
-            "ELSE 'UNKNOWN' END AS fixity_status, "
-            "CASE WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.caracteristicas_tecnicas_json "
-            "IS NOT NULL AND a.caracteristicas_tecnicas_json <> '{}') THEN 'OK' ELSE 'UNKNOWN' END AS format_status, "
-            "CASE WHEN (SELECT pe.event_outcome FROM preservation_event pe WHERE pe.item_id = i.id "
-            "AND pe.event_type = 'BACKUP_VERIFIED' ORDER BY pe.event_date_time DESC, pe.criado_em DESC LIMIT 1) = 'SUCCESS' "
-            "THEN 'OK' WHEN EXISTS (SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id) THEN 'WARNING' "
-            "ELSE 'WARNING' END AS backup_status, "
-            "CASE WHEN EXISTS (SELECT 1 FROM preservation_right pr WHERE pr.item_id = i.id AND pr.rights_status <> 'UNKNOWN') "
-            "THEN 'OK' WHEN EXISTS (SELECT 1 FROM preservation_right pr WHERE pr.item_id = i.id) THEN 'WARNING' "
-            "ELSE 'UNKNOWN' END AS rights_status, "
-            "CASE WHEN EXISTS (SELECT 1 FROM preservation_event pe WHERE pe.item_id = i.id AND pe.event_type = 'INGEST') "
-            "THEN 'OK' ELSE 'UNKNOWN' END AS provenance_status FROM item i");
+        bool atual = false;
+        {
+            auto st = registro.prepare("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'asset_preservation_status'");
+            if (st.step()) atual = st.columnText(0).find("ORDER BY pe.event_date_time DESC") != std::string::npos;
+        }
+        if (!atual) {
+            registro.exec("DROP VIEW IF EXISTS asset_preservation_status");
+            registro.exec(
+                "CREATE VIEW asset_preservation_status AS "
+                "SELECT i.id AS item_id, i.persistent_id, "
+                "CASE WHEN i.persistent_id IS NOT NULL THEN 'OK' ELSE 'UNKNOWN' END AS identity_status, "
+                "CASE WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.checksum_sha256 IS NOT NULL "
+                "AND a.estado_presenca = 'corrompido') THEN 'CRITICAL' "
+                "WHEN EXISTS (SELECT 1 FROM preservation_event pe WHERE pe.item_id = i.id AND pe.event_type = 'FIXITY_CHECK' "
+                "AND pe.event_outcome = 'SUCCESS') THEN 'OK' "
+                "WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.checksum_sha256 IS NOT NULL) THEN 'WARNING' "
+                "ELSE 'UNKNOWN' END AS fixity_status, "
+                "CASE WHEN EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.caracteristicas_tecnicas_json "
+                "IS NOT NULL AND a.caracteristicas_tecnicas_json <> '{}') THEN 'OK' ELSE 'UNKNOWN' END AS format_status, "
+                "CASE WHEN (SELECT pe.event_outcome FROM preservation_event pe WHERE pe.item_id = i.id "
+                "AND pe.event_type = 'BACKUP_VERIFIED' ORDER BY pe.event_date_time DESC, pe.criado_em DESC LIMIT 1) = 'SUCCESS' "
+                "THEN 'OK' WHEN EXISTS (SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id) THEN 'WARNING' "
+                "ELSE 'WARNING' END AS backup_status, "
+                "CASE WHEN EXISTS (SELECT 1 FROM preservation_right pr WHERE pr.item_id = i.id AND pr.rights_status <> 'UNKNOWN') "
+                "THEN 'OK' WHEN EXISTS (SELECT 1 FROM preservation_right pr WHERE pr.item_id = i.id) THEN 'WARNING' "
+                "ELSE 'UNKNOWN' END AS rights_status, "
+                "CASE WHEN EXISTS (SELECT 1 FROM preservation_event pe WHERE pe.item_id = i.id AND pe.event_type = 'INGEST') "
+                "THEN 'OK' ELSE 'UNKNOWN' END AS provenance_status FROM item i");
+        }
+    } catch (const std::exception& e) {
+        juce::Logger::writeToLog("[migracao] view asset_preservation_status: " + juce::String(e.what()));
     } catch (...) {}
 
     cronometro("view_preservation_status");
