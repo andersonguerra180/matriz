@@ -4,6 +4,7 @@
 #include <atomic>
 #include <array>
 #include <functional>
+#include <map>
 #include <set>
 #include <vector>
 #include <string>
@@ -146,6 +147,8 @@ private:
         int scope = 1;
         std::set<std::string> selecionadosNoGrid;
         std::set<int> fileTypes;  // vazio = todos (ver tiposSelecionados_)
+        std::set<juce::String> containers;          // vazio = sem filtro (ver containersSelecionados_)
+        std::set<std::string> membrosDosContainers; // resolvido no run(): os arquivos dos containers/nests escolhidos
         int sizeFilter = 1;
         juce::int64 sizeLimitBytes = 0;
         // item: filtro por ano — 0 em qualquer um dos dois = sem limite
@@ -222,6 +225,14 @@ private:
     std::unique_ptr<ComboDePainel> cbFileType_;  // abre os interruptores de tipo (múltipla escolha)
     std::set<int> tiposSelecionados_;            // vazio = todos; 2..7 = Image, Video, Audio, Docs, Sessions, Other
     void abrirPainelTipos();
+    // CONTAINER: só os arquivos dos project containers / nests escolhidos (E com o Scope). Valores: kTodosContainers,
+    // kTodosNests ou o id do nest. Vazio = sem filtro. A lista é lida fora da message thread ao abrir o painel.
+    std::unique_ptr<juce::Label> lblContainers_;
+    std::unique_ptr<ComboDePainel> cbContainers_;
+    std::set<juce::String> containersSelecionados_;
+    std::map<juce::String, juce::String> rotulosContainers_;  // valor -> rótulo, para o texto do combo
+    void abrirPainelContainers();
+    void atualizarTextoContainers();
     void atualizarTextoTipos();
     std::unique_ptr<juce::Label> lblFileSize_;
     std::unique_ptr<juce::ComboBox> cbSizeFilter_;

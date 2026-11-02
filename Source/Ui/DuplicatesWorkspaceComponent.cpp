@@ -1274,6 +1274,17 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     cbScope_->setTooltip("Choose search scope (all database files vs selected grid items)");
     addAndMakeVisible(*cbScope_);
 
+    lblContainers_ = std::make_unique<juce::Label>("lblContainers", matriz::i18n::t("duplicatas.lbl_containers"));
+    lblContainers_->setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(*lblContainers_);
+
+    cbContainers_ = std::make_unique<ComboDePainel>();
+    cbContainers_->setName("cbContainers");
+    cbContainers_->aoAbrir = [this] { abrirPainelContainers(); };
+    atualizarTextoContainers();
+    cbContainers_->setTooltip(matriz::i18n::t("duplicatas.containers_dica"));
+    addAndMakeVisible(*cbContainers_);
+
     lblFileType_ = std::make_unique<juce::Label>("lblFileType", matriz::i18n::t("duplicatas.lbl_type"));
     lblFileType_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblFileType_);
@@ -1664,6 +1675,118 @@ void DuplicatesWorkspaceComponent::abrirPainelTipos() {
     PainelListaEscolha::abrir(*cbFileType_, std::move(c));
 }
 
+namespace {
+const juce::String kTodosContainers = "tudo:containers", kTodosNests = "tudo:nests";
+} // namespace
+
+void DuplicatesWorkspaceComponent::atualizarTextoContainers() {
+    if (!cbContainers_) return;
+    juce::String texto = matriz::i18n::t("duplicatas.containers_nenhum");
+    if (containersSelecionados_.size() > 1) {
+        texto = matriz::i18n::t("catwork.n_selecionados").replace("{n}", juce::String(static_cast<int>(containersSelecionados_.size())));
+    } else if (!containersSelecionados_.empty()) {
+        const auto it = rotulosContainers_.find(*containersSelecionados_.begin());
+        texto = it != rotulosContainers_.end() ? it->second : matriz::i18n::t("catwork.n_selecionados").replace("{n}", "1");
+    }
+    cbContainers_->setText(texto, juce::dontSendNotification);
+}
+
+void DuplicatesWorkspaceComponent::abrirPainelContainers() {
+    if (!cbContainers_) return;
+    // Containers e nests do projeto (só os de 2+ arquivos, como a grade), lidos fora da message thread; o painel abre
+    // quando a lista chega.
+    ProjetoAberto* proj = &projeto_;
+    const auto vivo = projeto_.tokenVida();
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> seguro(this);
+    juce::Thread::launch([proj, vivo, seguro] {
+        if (vivo.expired()) return;
+        struct Grupo { std::string nestId, nome, capaId; bool container = false; int total = 0; };
+        std::map<std::string, Grupo> grupos;
+        try {
+            auto& db = proj->projeto().registroLeitura();
+            for (const auto& [itemId, n] : ProjetoAberto::mapaDeNests(db)) {
+                juce::ignoreUnused(itemId);
+                auto& g = grupos[n.nestId];
+                g.nestId = n.nestId;
+                g.nome = n.nome;
+                g.capaId = n.capaId;
+                g.container = !n.origem.empty();
+                g.total = n.total;
+            }
+            // Nest sem nome: o nome da capa (título ou código), para dar para reconhecer na lista.
+            auto st = db.prepare("SELECT COALESCE(NULLIF(titulo, ''), codigo_acervo) FROM item WHERE id = ?");
+            for (auto& [nid, g] : grupos) {
+                juce::ignoreUnused(nid);
+                if (!g.nome.empty() || g.capaId.empty()) continue;
+                st.reset();
+                st.bind(1, matriz::db::Value::of(g.capaId));
+                if (st.step()) g.nome = st.columnText(0);
+            }
+        } catch (...) {}
+        juce::MessageManager::callAsync([seguro, grupos = std::move(grupos)] {
+            if (seguro == nullptr || seguro->cbContainers_ == nullptr) return;
+            auto* self = seguro.getComponent();
+            PainelListaEscolha::Config c;
+            c.titulo = matriz::i18n::t("duplicatas.painel_containers");
+            c.modo = PainelListaEscolha::Modo::Multipla;
+            self->rotulosContainers_.clear();
+            auto opcao = [&](const juce::String& valor, const juce::String& rotulo, int contagem) {
+                PainelListaEscolha::Opcao o;
+                o.valor = valor;
+                o.rotulo = rotulo;
+                o.contagem = contagem;
+                o.ligado = self->containersSelecionados_.count(valor) > 0;
+                self->rotulosContainers_[valor] = rotulo;
+                c.opcoes.push_back(std::move(o));
+            };
+            auto cabecalho = [&](const juce::String& rotulo) {
+                PainelListaEscolha::Opcao o;
+                o.rotulo = rotulo;
+                o.cabecalho = true;
+                c.opcoes.push_back(std::move(o));
+            };
+            std::vector<const Grupo*> containers, nests;
+            for (const auto& [nid, g] : grupos) {
+                juce::ignoreUnused(nid);
+                (g.container ? containers : nests).push_back(&g);
+            }
+            auto porNome = [](const Grupo* a, const Grupo* b) {
+                return juce::String::fromUTF8(a->nome.c_str()).compareNatural(juce::String::fromUTF8(b->nome.c_str())) < 0;
+            };
+            std::sort(containers.begin(), containers.end(), porNome);
+            std::sort(nests.begin(), nests.end(), porNome);
+            int arqContainers = 0, arqNests = 0;
+            for (const auto* g : containers) arqContainers += g->total;
+            for (const auto* g : nests) arqNests += g->total;
+            opcao(kTodosContainers, matriz::i18n::t("duplicatas.containers_todos"), arqContainers);
+            opcao(kTodosNests, matriz::i18n::t("duplicatas.nests_todos"), arqNests);
+            if (!containers.empty()) cabecalho(matriz::i18n::t("duplicatas.containers_cabecalho"));
+            for (const auto* g : containers)
+                opcao(juce::String(g->nestId), juce::String::fromUTF8(g->nome.c_str()), g->total);
+            if (!nests.empty()) cabecalho(matriz::i18n::t("duplicatas.nests_cabecalho"));
+            for (const auto* g : nests)
+                opcao(juce::String(g->nestId), juce::String::fromUTF8(g->nome.c_str()), g->total);
+            // Escolha que sumiu do projeto (container desfeito) não fica filtrando escondida.
+            for (auto it = self->containersSelecionados_.begin(); it != self->containersSelecionados_.end();)
+                it = self->rotulosContainers_.count(*it) ? std::next(it) : self->containersSelecionados_.erase(it);
+            self->atualizarTextoContainers();
+            // Vale para o próximo SCAN, como o FILE TYPE.
+            c.aoAlternar = [seguro](const juce::String& valor, bool ligado) {
+                if (seguro == nullptr) return;
+                if (ligado) seguro->containersSelecionados_.insert(valor);
+                else seguro->containersSelecionados_.erase(valor);
+                seguro->atualizarTextoContainers();
+            };
+            c.aoLimparTudo = [seguro] {
+                if (seguro == nullptr) return;
+                seguro->containersSelecionados_.clear();
+                seguro->atualizarTextoContainers();
+            };
+            PainelListaEscolha::abrir(*self->cbContainers_, std::move(c));
+        });
+    });
+}
+
 void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (lblStatus_) {
@@ -1686,6 +1809,18 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbScope_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         cbScope_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         cbScope_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+    }
+    if (lblContainers_) {
+        lblContainers_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
+        lblContainers_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        lblContainers_->setText(matriz::i18n::t("duplicatas.lbl_containers"), juce::dontSendNotification);
+    }
+    if (cbContainers_) {
+        cbContainers_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        cbContainers_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        cbContainers_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        cbContainers_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+        atualizarTextoContainers();
     }
     if (lblFileType_) {
         lblFileType_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
@@ -1850,6 +1985,8 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
         return;
     }
     activeFilters_.fileTypes = tiposSelecionados_;
+    activeFilters_.containers = containersSelecionados_;
+    activeFilters_.membrosDosContainers.clear();
     activeFilters_.sizeFilter = cbSizeFilter_->getSelectedId();
     
     double userValue = txtSizeValue_->getText().getDoubleValue();
@@ -1908,6 +2045,19 @@ void DuplicatesWorkspaceComponent::run() {
             const auto expandido = projeto_.expandirMembrosDeNest(
                 std::vector<std::string>(activeFilters_.selecionadosNoGrid.begin(), activeFilters_.selecionadosNoGrid.end()));
             activeFilters_.selecionadosNoGrid.insert(expandido.begin(), expandido.end());
+        } catch (...) {}
+    }
+
+    // CONTAINER: os arquivos dos project containers / nests escolhidos (todos os membros, não só a capa).
+    if (!activeFilters_.containers.empty()) {
+        try {
+            const bool todosContainers = activeFilters_.containers.count(kTodosContainers) > 0;
+            const bool todosNests = activeFilters_.containers.count(kTodosNests) > 0;
+            for (const auto& [itemId, n] : ProjetoAberto::mapaDeNests(projeto_.projeto().registroLeitura())) {
+                const bool ehContainer = !n.origem.empty();
+                if ((ehContainer && todosContainers) || (!ehContainer && todosNests) || activeFilters_.containers.count(juce::String(n.nestId)))
+                    activeFilters_.membrosDosContainers.insert(itemId);
+            }
         } catch (...) {}
     }
 
@@ -2012,6 +2162,11 @@ void DuplicatesWorkspaceComponent::run() {
                     if (activeFilters_.selecionadosNoGrid.count(info.itemId) == 0) {
                         continue;
                     }
+                }
+
+                // Filter 1b: Container / nest
+                if (!activeFilters_.containers.empty() && activeFilters_.membrosDosContainers.count(info.itemId) == 0) {
+                    continue;
                 }
 
                 // Filter 2: File Type
@@ -2225,7 +2380,8 @@ void DuplicatesWorkspaceComponent::run() {
     } else {
         // Com qualquer filtro ativo (escopo, tipo, tamanho, ano) o "original" também tem que passar pelos filtros:
         // só se comparam arquivos que estão dentro do que o usuário escolheu.
-        const bool filtrosAtivos = activeFilters_.scope == 2 || !activeFilters_.fileTypes.empty() || activeFilters_.sizeFilter > 1 ||
+        const bool filtrosAtivos = activeFilters_.scope == 2 || !activeFilters_.containers.empty() || !activeFilters_.fileTypes.empty() ||
+                                   activeFilters_.sizeFilter > 1 ||
                                    activeFilters_.anoDe > 0 || activeFilters_.anoAte > 0;
         std::set<std::string> idsFiltrados;
         if (filtrosAtivos) for (const auto& it : items) idsFiltrados.insert(it.itemId);
@@ -3706,6 +3862,7 @@ void DuplicatesWorkspaceComponent::resized() {
         corpo.removeFromTop(6);
     };
     linhaRotulo(*lblScope_, *cbScope_);
+    linhaRotulo(*lblContainers_, *cbContainers_);
     linhaRotulo(*lblFileType_, *cbFileType_);
     linhaRotulo(*lblFileSize_, *cbSizeFilter_);
     if (txtSizeValue_->isVisible()) {
