@@ -5,12 +5,15 @@
 #include "ProjetoAberto.h"
 #include "TiposContainer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
 
 #include "../I18n/Strings.h"
 #include "FichasSomDados.h"
+#include "IntakeWorkspaceComponent.h"
+#include "TraducaoContent.h"
 #include "OriginalSourceMedium.h"
 
 // Contexto de cada card da janela IMPORT: o que a escolha já implica (tabela) e as fichas que perguntam o resto.
@@ -141,6 +144,47 @@ Campo cEscolha(const std::string& id, const std::string& en, const std::string& 
         if (extra) extra(s, op);
     };
     return c;
+}
+
+// CONTENT TYPE, SUBJECT e LIST do PROJECT CONTAINER (todas as fichas de container): são os campos homônimos dos metadados de
+// cada arquivo do container. Salvar a ficha grava neles (CONTENT e LIST trocam o valor; SUBJECT troca o que o container tinha
+// posto, sem tirar o assunto próprio do arquivo — ver reaplicarQuestionarioDoContainer). `grupoVocab`: grupo do vocabulário
+// de CONTENT ("AUDIO", "VIDEO", "IMAGE", "DOCUMENT"; vazio = todos); `contentPadrao`: o CONTENT do tipo, já escolhido.
+Campos camposSincronizadosDoContainer(const juce::String& grupoVocab, const std::string& contentPadrao = {}) {
+    const juce::String grupo = t("imp.ficha.container_sincronizado");
+    const bool pt = matriz::i18n::localeAtivo() == "pt_BR";
+    std::vector<juce::String> canon, rotulos;
+    for (const auto& g : IntakeWorkspaceComponent::vocabularioColecoes()) {
+        if (grupoVocab.isNotEmpty() && g.grupo != grupoVocab) continue;
+        for (const auto& v : g.itens) {
+            if (std::find(canon.begin(), canon.end(), v) != canon.end()) continue;
+            canon.push_back(v);
+            rotulos.push_back(pt ? traduzirContent(v, true) : v);
+        }
+    }
+    Campos out;
+    Campo content;
+    content.def = { "c_content", rot("CONTENT TYPE", "TIPO DE CONTEÚDO"), "", rot("Same as the CONTENT TYPE of each file", "O mesmo TIPO DE CONTEÚDO de cada arquivo"), rotulos };
+    if (!contentPadrao.empty()) content.def.valorInicial = pt ? traduzirContent(juce::String(contentPadrao), true) : juce::String(contentPadrao);
+    content.def.grupo = grupo;
+    content.aplica = [canon, rotulos](const Resultado& r, SobreMaterial& s) {
+        const int i = indiceDe(rotulos, juce::String::fromUTF8(valorDe(r, "c_content").c_str()));
+        if (i >= 0) s.collectionType = canon[static_cast<size_t>(i)].toStdString();
+    };
+    out.push_back(std::move(content));
+    // SUBJECT da ficha vale no lugar do que os outros campos somariam (artista, categoria...).
+    Campo subject = cTexto("c_subject", "SUBJECT", "ASSUNTO", "Separated by commas", "Separados por vírgula",
+                           [](SobreMaterial& s, const std::string& v) { s.subject = v; }, false);
+    subject.def.grupo = grupo;
+    out.push_back(std::move(subject));
+    // LIST da ficha vale no lugar da que o nome do álbum / projeto daria.
+    Campo lista = cTexto("c_lista", "LIST", "LISTA", "", "", [](SobreMaterial& s, const std::string& v) {
+        s.campos.erase(std::remove_if(s.campos.begin(), s.campos.end(), [](const auto& c) { return c.first == "lista"; }), s.campos.end());
+        definirLista(s, v);
+    }, false);
+    lista.def.grupo = grupo;
+    out.push_back(std::move(lista));
+    return out;
 }
 
 // "Original source format": o que sai escolhido vira SOURCE MEDIUM (JSON de OriginalSourceMediumInfo) de cada arquivo.
@@ -633,6 +677,10 @@ Ficha fichaAudio(const std::string& folha) {
         f.campos.push_back(cIdentificacao());
         f.campos.push_back(cContexto());
     }
+    // As folhas que viram PROJECT CONTAINER (produção, DDP, vinil, fita): CONTENT TYPE / SUBJECT / LIST do container.
+    if (folha == "audio.production.project" || folha == "audio.preservation.ddp" || folha == "audio.preservation.vinyl" ||
+        folha == "audio.preservation.tape")
+        juntar(f, camposSincronizadosDoContainer("AUDIO", folha == "audio.preservation.ddp" ? "Master" : ""));
     return f;
 }
 
@@ -755,7 +803,33 @@ Ficha fichaYoutube() {
                                   partes.addTokens(juce::String::fromUTF8(v.c_str()), ",;", "");
                                   for (auto& p : partes) if (p.trim().isNotEmpty()) s.tags.push_back(p.trim().toStdString());
                               }, false));
+    juntar(f, camposSincronizadosDoContainer("VIDEO", "YouTube Video"));
     return f;
+}
+
+// PROJECT CONTAINER de um tipo sem player (EP, Album, Single, Photo...): "production.<tipo>" no IMPORT e o Edit Project Info
+// dos containers do "Group as Project Container". Nome do container + os campos sincronizados com os arquivos.
+Ficha fichaContainerDeTipo(const TipoContainer& tipo) {
+    Ficha f;
+    f.campos.push_back(cTexto("c_nome", "Container name", "Nome do container", "", "",
+                              [](SobreMaterial& s, const std::string& v) { s.nomeContainer = v; }, false));
+    juce::String grupoVocab;
+    switch (tipo.categoriaConteudo) {
+        case CategoriaConteudo::Audio: grupoVocab = "AUDIO"; break;
+        case CategoriaConteudo::Video: grupoVocab = "VIDEO"; break;
+        case CategoriaConteudo::Image: grupoVocab = "IMAGE"; break;
+        case CategoriaConteudo::Docs:  grupoVocab = "DOCUMENT"; break;
+        case CategoriaConteudo::Nenhuma: break;
+    }
+    juntar(f, camposSincronizadosDoContainer(grupoVocab, tipo.content));
+    return f;
+}
+
+// Tipo sem player de uma folha "production.<tipo>" (nullptr se não é uma).
+const TipoContainer* tipoDaFolhaDeContainer(const std::string& id) {
+    if (id.rfind("production.", 0) != 0) return nullptr;
+    const auto* tipo = tipoDeContainer(id.substr(11));
+    return tipo != nullptr && !tipo->temPlayer() ? tipo : nullptr;
 }
 
 Ficha fichaOutro() {
@@ -938,6 +1012,7 @@ bool folhaImportarTemFicha(const std::string& id) {
     if (id == "photos.folder" || id == "photos.camera_card") return true;
     if (id == "documents.native" || id == "documents.scanned" || id == "documents.web") return true;
     if (folhaDeAudioTemFicha(id)) return true;
+    if (tipoDaFolhaDeContainer(id) != nullptr) return true;  // PROJECT CONTAINER sem player (EP, Album, Photo...)
     return ehOutro(id);
 }
 
@@ -948,7 +1023,10 @@ namespace {
 Ficha montarFichaDaFolha(const std::string& id, juce::String& titulo, juce::String& mensagem) {
     mensagem = t("imp.ficha.msg.opcional");
     Ficha ficha;
-    if (id.rfind("audio.", 0) == 0) {
+    if (const auto* tipo = tipoDaFolhaDeContainer(id)) {
+        titulo = t("imp.ficha.container.titulo") + juce::String::fromUTF8(" \xe2\x80\xba ") + rotuloDoTipoContainer(*tipo);
+        ficha = fichaContainerDeTipo(*tipo);
+    } else if (id.rfind("audio.", 0) == 0) {
         titulo = t("imp.ficha.audio.titulo") + juce::String::fromUTF8(" \xe2\x80\xba ") + t("imp.node." + id);
         if (id == "audio.preservation.ddp") mensagem = t("imp.ficha.ddp.msg");
         if (id == "audio.production.midi") mensagem = t("imp.ficha.midi.msg");
@@ -1037,7 +1115,9 @@ bool questionarioDeJson(const std::string& json, std::string& folha, std::map<st
     return !folha.empty();
 }
 
-std::string folhaDaOrigemDoContainer(const std::string& origem) {
+std::string folhaDaOrigemDoContainer(const std::string& origem, const std::string& tipoContainer) {
+    // Sem player ("Group as Project Container" num tipo como EP, Album, Photo): a ficha curta do tipo.
+    if (origem == kOrigemContainerGenerico && !tipoContainer.empty()) return "production." + tipoContainer;
     if (origem == "production") return "audio.production.project";
     if (origem == "ddp") return "audio.preservation.ddp";
     if (origem == "vinyl") return "audio.preservation.vinyl";
@@ -1052,8 +1132,10 @@ void editarQuestionarioDoContainer(PainelOverlay& overlay, ProjetoAberto& projet
     std::map<std::string, std::string> respostas;
     const std::string json = projeto.questionarioDoContainer(nestId);
     if (json.empty() || !questionarioDeJson(json, folha, respostas)) {  // container de antes desta função: ficha em branco da origem
-        folha = folhaDaOrigemDoContainer(origem);
+        folha = folhaDaOrigemDoContainer(origem, projeto.tipoDoContainer(nestId));
         respostas.clear();
+        // Sem questionário guardado (container do "Group as Project Container"): a ficha abre com o nome que ele já tem.
+        if (const auto nome = projeto.nomeDoContainer(nestId); !nome.empty()) respostas["c_nome"] = nome;
     }
     if (folha.empty() || !folhaImportarTemFicha(folha)) {
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, t("imp.editar_questionario"), t("imp.editar_questionario.sem"));

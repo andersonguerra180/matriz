@@ -4001,7 +4001,7 @@ void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<in
     m.addSeparator();
     m.addItem(3, isPt ? juce::String::fromUTF8("Obter Informações...") : "Get Info...");
     const auto& itemClicado = todosItens_[static_cast<size_t>(itemIndex)];
-    const bool ehContainer = itemEhContainer(itemClicado) && ehOrigemComFicha(itemClicado.containerOrigem);
+    const bool ehContainer = itemEhContainer(itemClicado) && ehOrigemProject(itemClicado.containerOrigem);  // os sem player: a ficha curta do tipo
     if (ehContainer) {
         m.addSeparator();
         m.addItem(4, i18n::t("imp.editar_questionario"));

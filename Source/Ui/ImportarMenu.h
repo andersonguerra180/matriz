@@ -53,7 +53,8 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDeRespostasImportar
                                                                                 const std::map<std::string, std::string>& respostas);
 std::string questionarioParaJson(const matriz::ingest::SobreMaterial& sobre);  // "" = sem questionário
 bool questionarioDeJson(const std::string& json, std::string& folha, std::map<std::string, std::string>& respostas);
-std::string folhaDaOrigemDoContainer(const std::string& origem);  // origem do container -> card do IMPORT ("" = não tem)
+// origem (e tipo, para os containers sem player) do container -> card do IMPORT ("" = não tem)
+std::string folhaDaOrigemDoContainer(const std::string& origem, const std::string& tipoContainer = {});
 // Botão direito > "Editar questionário inicial": reabre a ficha com as respostas guardadas e, ao continuar, troca as respostas
 // antigas pelas novas em todos os arquivos do container. `aoFechar(aplicou)` roda sempre ao terminar (aplicou = gravou mudanças).
 void editarQuestionarioDoContainer(PainelOverlay& overlay, ProjetoAberto& projeto, const std::string& nestId, const std::string& origem,

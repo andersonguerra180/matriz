@@ -2642,6 +2642,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"intake.container_vinyl", "Vinyl transcription"},
         {"intake.container_tape", "Tape transcription"},
         {"imp.ficha.msg.opcional", "Everything here is optional — SKIP imports it as it is."},
+        {"imp.ficha.container_sincronizado", "PROJECT CONTAINER — saved to every file in it"},
+        {"imp.ficha.container.titulo", "Project Container"},
         {"imp.ficha.formato.dica.generico", "Where the material originally lived. Leave empty if unknown."},
         {"imp.ficha.fotos.titulo", "PHOTO CONTEXT"},
         {"imp.ficha.arquivos.titulo", "FILES CONTEXT"},

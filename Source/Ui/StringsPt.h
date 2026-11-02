@@ -2665,6 +2665,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"intake.container_vinyl", "Transcrição de vinil"},
         {"intake.container_tape", "Transcrição de fita"},
         {"imp.ficha.msg.opcional", "Tudo aqui é opcional — PULAR importa como está."},
+        {"imp.ficha.container_sincronizado", "PROJECT CONTAINER — gravado em todos os arquivos dele"},
+        {"imp.ficha.container.titulo", "Project Container"},
         {"imp.ficha.formato.dica.generico", "Onde o material vivia originalmente. Deixe vazio se não souber."},
         {"imp.ficha.fotos.titulo", "CONTEXTO DAS FOTOS"},
         {"imp.ficha.arquivos.titulo", "CONTEXTO DOS ARQUIVOS"},

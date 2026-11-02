@@ -5946,6 +5946,16 @@ std::string ProjetoAberto::tipoDoContainer(const std::string& nestId) const {
     return {};
 }
 
+std::string ProjetoAberto::nomeDoContainer(const std::string& nestId) const {
+    if (!projeto_ || nestId.empty()) return {};
+    try {
+        auto st = leitura().prepare("SELECT nome FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nestId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    } catch (...) {}
+    return {};
+}
+
 void ProjetoAberto::definirQuestionarioDoContainer(const std::string& nestId, const std::string& json) {
     if (somenteLeitura_ || !projeto_ || nestId.empty() || json.empty()) return;
     registrarUndoDoContainer(*this, "Edit Container Questionnaire", nestId, false);

@@ -5280,7 +5280,7 @@ void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
             const std::string nestId = lf.nestId, origem = lf.containerOrigem;
             if (matriz::ui::ehOrigemProject(juce::String(origem)))
                 menu.addItem(i18n::t("projeto.abrir"), true, false, [seguro, nestId, origem] { if (seguro && seguro->aoAbrirProject) seguro->aoAbrirProject(nestId, origem); });
-            if (matriz::ui::ehOrigemComFicha(juce::String(origem)))
+            if (matriz::ui::ehOrigemProject(juce::String(origem)))  // todo PROJECT tem ficha (os sem player, a curta do tipo)
                 menu.addItem(i18n::t("imp.editar_questionario"), true, false, [seguro, nestId, origem] { if (seguro) seguro->editarQuestionarioDoContainerSolto(nestId, origem); });
             menu.addSeparator();
             break;
