@@ -1160,6 +1160,8 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
             resultado.falhas.push_back(ip.codigoAcervo + ": name conflict at destination");
             continue;
         }
+        juce::File destinoArquivo;
+        bool criadoNestaRodada = false;
         try {
             // A origem é sempre o MAIN (ou um CLONE, espelho dele): se a
             // leitura cai no mesmo arquivo que a ORIGEM daria, não há cópia
@@ -1189,7 +1191,7 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                 ++resultado.foraDoMain;
                 continue;
             }
-            juce::File destinoArquivo = destinoExport.getChildFile(ip.caminhoRelativoDestino);
+            destinoArquivo = destinoExport.getChildFile(ip.caminhoRelativoDestino);
             if (destinoArquivo.existsAsFile()) {
                 // Já exportado (rodada anterior): pula sem sobrescrever e sem contar como falha — senão rodar o
                 // export de novo para completar o que faltou listava TODO arquivo como "falha". Cópia simples
@@ -1202,9 +1204,14 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                     resultado.jaExistiamDiferentes.push_back(ip.codigoAcervo + ": " + destinoArquivo.getFullPathName().toStdString());
                 continue;
             }
-            destinoArquivo.getParentDirectory().createDirectory();
-            if (!noBackup->copyFileTo(destinoArquivo) || destinoArquivo.getSize() != noBackup->getSize())
-                throw std::runtime_error("copy failed: " + destinoArquivo.getFullPathName().toStdString());
+            // Cópia verificada (".mtz-tmp" + SHA-256 da leitura + releitura + rename), a mesma do MAIN: com o
+            // copyFileTo direto, uma falha no meio (disco cheio, volume desmontado, queda) deixava o arquivo
+            // truncado COM O NOME FINAL, e a rodada seguinte o pulava como "já exportado".
+            const CopiaVerificada copia = copiarVerificado(*noBackup, destinoArquivo);
+            if (!copia.ok)
+                throw std::runtime_error("copy failed: " + destinoArquivo.getFullPathName().toStdString() +
+                                         (copia.erro.empty() ? std::string() : " (" + copia.erro + ")"));
+            criadoNestaRodada = true;
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
             if (itensComMarcaDagua.count(ip.itemId) > 0) {
                 auto cfgWm = ui::ProjetoAberto::carregarConfiguracaoWatermarkDePasta(pastaProjeto);
@@ -1272,6 +1279,9 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
             ++resultado.copiados;
         } catch (const std::exception& e) {
             resultado.falhas.push_back(ip.codigoAcervo + ": " + e.what());
+            // Falhou depois da cópia (marca d'água, embed, limpeza): não deixa o arquivo pela metade com o nome
+            // final, senão a próxima rodada o pula como "já exportado". Só apaga o que esta rodada criou.
+            if (criadoNestaRodada) destinoArquivo.deleteFile();
         }
     }
     try {
