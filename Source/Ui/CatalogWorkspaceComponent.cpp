@@ -1037,6 +1037,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         else if (cat.chave == "others")      cat.rotulo = matriz::i18n::t("catwork.others");
         else if (cat.chave == "phone_dump")  cat.rotulo = matriz::i18n::t("catwork.phone_dump");
         else if (cat.chave == "ai_generated") cat.rotulo = matriz::i18n::t("catwork.ai_generated");
+        else if (cat.chave == "offline")     cat.rotulo = matriz::i18n::t("catwork.offline");
         else if (cat.chave == "projects")    cat.rotulo = matriz::i18n::t("catwork.projects");
         else if (cat.chave == "merge_conflitos") cat.rotulo = matriz::i18n::t("catwork.merge_conflitos");
     }
@@ -1101,6 +1102,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     // Ordem do mapa "FILTROS DO METADATA": AI generated | Projects, depois Phone dump e Merge conflicts (os nomes longos,
     // na linha inteira).
     categorias_.push_back({matriz::i18n::t("catwork.ai_generated"), "ai_generated", 0});
+    categorias_.push_back({matriz::i18n::t("catwork.offline"), "offline", 0});
     categorias_.push_back({matriz::i18n::t("catwork.projects"), "projects", 0});
     categorias_.push_back({matriz::i18n::t("catwork.phone_dump"), "phone_dump", 0});
 
@@ -1415,6 +1417,8 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             bool match = false;
             if (*tipoMidiaSelecionado_ == "ai_generated") {
                 match = item.aiGenerated;
+            } else if (*tipoMidiaSelecionado_ == "offline") {
+                match = item.offline;
             } else if (*tipoMidiaSelecionado_ == "phone_dump") {
                 match = ehDump(item);
             } else if (*tipoMidiaSelecionado_ == "projects") {
@@ -1806,6 +1810,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 if (filtroTipoMidiaAnos.has_value()) {
                     if (*filtroTipoMidiaAnos == "ai_generated") {
                         pTipo = item.aiGenerated;
+                    } else if (*filtroTipoMidiaAnos == "offline") {
+                        pTipo = item.offline;
                     } else if (*filtroTipoMidiaAnos == "phone_dump") {
                         pTipo = isDump;
                     } else if (*filtroTipoMidiaAnos == "projects") {
@@ -1829,6 +1835,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 // MEDIA TYPE: ano + collection + subject + lista (não filtra por si mesmo).
                 if (pAno && pColl && pSubj && pLista) {
                     if (item.aiGenerated) ++res.aiGenerated;
+                    if (item.offline) ++res.offline;
                     if (isProjeto) {
                         ++res.projetos;
                         ++contagemProjetoPorContent[item.nestContent];
@@ -1992,6 +1999,7 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("others", res.outros);
     definirContagem("phone_dump", res.phoneDump);
     definirContagem("ai_generated", res.aiGenerated);
+    definirContagem("offline", res.offline);
     definirContagem("projects", res.projetos);
     if (contentsDeProjetos_ != res.projetosPorContent) {
         contentsDeProjetos_ = res.projetosPorContent;

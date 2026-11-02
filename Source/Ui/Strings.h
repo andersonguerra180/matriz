@@ -1778,7 +1778,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.conflitos_lote", "{n} kept item(s) had values that differed from the discarded duplicate. The kept values stayed; the others are in each item's history. Review them in METADATA > \"Merge conflicts\"."},
         {"catwork.secao_revisao", "REVIEW"},
         {"catwork.phone_dump", "Phone dump"},
-        {"catwork.ai_generated", "AI generated"},
+        {"catwork.ai_generated", "AI"},
         {"catwork.find_duplicates", "Find duplicates"},
         {"catwork.find_duplicates_tip", "Open the duplicates window (whole project or the current selection)"},
         {"duplicatas.janela_titulo", "Duplicates"},

@@ -1790,7 +1790,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"duplicatas.conflitos_lote", "{n} item(ns) mantido(s) tinham valores diferentes da duplicata descartada. Os valores do mantido ficaram; os outros estão no histórico de cada item. Revise em METADATA > \"Conflitos de merge\"."},
         {"catwork.secao_revisao", "REVISÃO"},
         {"catwork.phone_dump", "Phone dump"},
-        {"catwork.ai_generated", "Gerado por IA"},
+        {"catwork.ai_generated", "IA"},
         {"catwork.find_duplicates", "Procurar duplicatas"},
         {"catwork.find_duplicates_tip", "Abre a janela de duplicatas (projeto inteiro ou a seleção atual)"},
         {"duplicatas.janela_titulo", "Duplicatas"},
