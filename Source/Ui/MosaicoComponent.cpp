@@ -154,7 +154,7 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 auto it = nests.find(item.id);
                 if (it == nests.end()) {
                     item.nestId.clear(); item.nestCapaId.clear(); item.nestTotal = 0; item.nestCapa = false;
-                    item.nestOrigem.clear(); item.nestCapaImagem.clear(); item.nestIcone.clear();
+                    item.nestOrigem.clear(); item.nestCapaImagem.clear(); item.nestIcone.clear(); item.nestContent.clear();
                     continue;
                 }
                 item.nestId = it->second.nestId;
@@ -162,6 +162,7 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 item.nestTotal = it->second.total;
                 item.nestCapa = (item.id == it->second.capaId);
                 item.nestOrigem = it->second.origem;  // container (com origem) continua container; sem origem é NEST
+                item.nestContent = it->second.content;
                 item.nestCapaImagem = it->second.capaImagem.empty() ? std::string()
                                       : pastaDoProjeto.getChildFile(juce::String(it->second.capaImagem)).getFullPathName().toStdString();
                 item.nestIcone = it->second.icone;

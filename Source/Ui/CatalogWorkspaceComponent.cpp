@@ -15,6 +15,7 @@
 #include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Model/NomesCanonicos.h"
+#include "TraducaoContent.h"
 
 #include "ArvoreBackupComponent.h"
 #include "EstatisticasComponent.h"
@@ -926,6 +927,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     if (btnMostrarRejeitados_) btnMostrarRejeitados_->setLookAndFeel(nullptr);
     for (auto& b : botoesCategorias_) if (b) b->setLookAndFeel(nullptr);
     for (auto& b : botoesAnos_) if (b) b->setLookAndFeel(nullptr);
+    for (auto& b : botoesContentProjetos_) if (b) b->setLookAndFeel(nullptr);
     if (btnAnosMais_) btnAnosMais_->setLookAndFeel(nullptr);
 }
 
@@ -1417,6 +1419,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
                 match = ehDump(item);
             } else if (*tipoMidiaSelecionado_ == "projects") {
                 match = ehProjeto(item);  // só os containers PROJECT (a capa de cada um)
+                if (match && contentProjetoSelecionado_.has_value()) match = item.nestContent == *contentProjetoSelecionado_;
             } else {
                 // PROJECT e os containers do PHONE DUMP (galeria/WhatsApp) só aparecem na categoria deles; o arquivo com
                 // Original Source Medium = Phone Dump aparece em PHONE DUMP e TAMBÉM no tipo dele (decisão 2026-10-24).
@@ -1716,7 +1719,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     const int geracao = ++geracaoContagens_;
 
     const bool ocultarGeo = ocultarComGeo_;
-    poolContagens_.addJob([ocultarGeo, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSelValores, listaSelValores, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado,
+    const std::optional<std::string> contentProjeto = contentProjetoSelecionado_;
+    poolContagens_.addJob([ocultarGeo, contentProjeto, safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSelValores, listaSelValores, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1772,6 +1776,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             const bool contentCortaLista = escC, subjCortaLista = escS;
 
             std::map<int, int> contagemPorAno;
+            std::map<std::string, int> contagemProjetoPorContent;
             int semAno = 0;
             std::map<std::string, int> contagemPorCollection;
             int semCollection = 0;
@@ -1804,7 +1809,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     } else if (*filtroTipoMidiaAnos == "phone_dump") {
                         pTipo = isDump;
                     } else if (*filtroTipoMidiaAnos == "projects") {
-                        pTipo = isProjeto;
+                        pTipo = isProjeto && (!contentProjeto.has_value() || item.nestContent == *contentProjeto);
                     } else if (isDumpDeContainer || isProjeto) {
                         pTipo = false;
                     } else {
@@ -1826,6 +1831,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     if (item.aiGenerated) ++res.aiGenerated;
                     if (isProjeto) {
                         ++res.projetos;
+                        ++contagemProjetoPorContent[item.nestContent];
                     } else if (isDumpDeContainer) {
                         ++res.phoneDump;
                     } else {
@@ -1893,6 +1899,14 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 if (v != kSemSubject && !grafiaPorChaveSubject.count(matriz::model::nomes::chave(v))) contagemPorSubject.emplace(v, 0);
             for (const auto& v : listaSelValores)
                 if (v != kSemLista && !grafiaPorChaveLista.count(matriz::model::nomes::chave(v))) contagemPorLista.emplace(v, 0);
+
+            if (contentProjeto.has_value()) contagemProjetoPorContent.emplace(*contentProjeto, 0);  // a escolha nunca some
+            for (const auto& par : contagemProjetoPorContent) res.projetosPorContent.push_back(par);
+            // Mais containers primeiro; "sem CONTENT" por último.
+            std::stable_sort(res.projetosPorContent.begin(), res.projetosPorContent.end(), [](const auto& a, const auto& b) {
+                if (a.first.empty() != b.first.empty()) return b.first.empty();
+                return a.second > b.second;
+            });
 
             for (auto it = contagemPorAno.rbegin(); it != contagemPorAno.rend(); ++it)
                 res.anos.push_back({it->first, it->second});
@@ -1979,6 +1993,10 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("phone_dump", res.phoneDump);
     definirContagem("ai_generated", res.aiGenerated);
     definirContagem("projects", res.projetos);
+    if (contentsDeProjetos_ != res.projetosPorContent) {
+        contentsDeProjetos_ = res.projetosPorContent;
+        construirSubChipsProjetos();
+    }
 
     bool reconstruiuAnoOuCollection = false;
 
@@ -2090,6 +2108,7 @@ void CatalogWorkspaceComponent::atualizarBotaoBounce() {
 
 void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     tipoMidiaSelecionado_ = std::nullopt;
+    contentProjetoSelecionado_ = std::nullopt;
     anosSelecionados_.clear();
     collectionsSelecionados_.clear();
     subjectsSelecionados_.clear();
@@ -2185,6 +2204,7 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
             tipoMidiaSelecionado_ = std::nullopt;
         else
             tipoMidiaSelecionado_ = chave;
+        contentProjetoSelecionado_ = std::nullopt;  // o sub-chip só vale dentro do PROJECTS
         atualizarContagens();
     }
 
@@ -2222,7 +2242,51 @@ void CatalogWorkspaceComponent::atualizarBotoesSidebar() {
             ativo ? tema().textoPrimario : tema().textoSecundario);
         if (i > 0) barra::definirAtivo(*botoesCategorias_[i], ativo);
     }
+    atualizarSubChipsProjetos();
     repaint(0, 0, kLarguraSidebar, getHeight());  // "N active" no título do card FILTERS
+}
+
+void CatalogWorkspaceComponent::construirSubChipsProjetos() {
+    for (auto& b : botoesContentProjetos_) if (b) { b->setLookAndFeel(nullptr); removeChildComponent(b.get()); }
+    botoesContentProjetos_.clear();
+    const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
+    for (const auto& [content, n] : contentsDeProjetos_) {
+        const juce::String rotulo = content.empty() ? matriz::i18n::t("catwork.projects_sem_content")
+                                                    : (pt ? traduzirContent(juce::String::fromUTF8(content.c_str()), true)
+                                                          : juce::String::fromUTF8(content.c_str()));
+        auto btn = std::make_unique<juce::TextButton>(rotulo + " (" + juce::String(n) + ")");
+        btn->setLookAndFeel(&chipLf_);
+        btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btn->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+        barra::definirCor(*btn, barra::corDoTipo("projects"));
+        btn->getProperties().set("apagarSemContagem", true);
+        const std::string valor = content;
+        btn->onClick = [this, valor] {
+            if (contentProjetoSelecionado_.has_value() && *contentProjetoSelecionado_ == valor) contentProjetoSelecionado_ = std::nullopt;
+            else contentProjetoSelecionado_ = valor;
+            atualizarSubChipsProjetos();
+            aplicarFiltrosAdicionais();
+            atualizarContagens();
+        };
+        addChildComponent(*btn);
+        botoesContentProjetos_.push_back(std::move(btn));
+    }
+    atualizarSubChipsProjetos();
+    resized();
+}
+
+void CatalogWorkspaceComponent::atualizarSubChipsProjetos() {
+    const bool visiveis = tipoMidiaSelecionado_.has_value() && *tipoMidiaSelecionado_ == "projects";
+    bool mudouVisibilidade = false;
+    for (size_t i = 0; i < botoesContentProjetos_.size() && i < contentsDeProjetos_.size(); ++i) {
+        auto& b = *botoesContentProjetos_[i];
+        const bool ativo = contentProjetoSelecionado_.has_value() && *contentProjetoSelecionado_ == contentsDeProjetos_[i].first;
+        b.setColour(juce::TextButton::buttonColourId, ativo ? tema().acento.withAlpha(0.2f) : juce::Colours::transparentBlack);
+        b.setColour(juce::TextButton::textColourOffId, ativo ? tema().textoPrimario : tema().textoSecundario);
+        barra::definirAtivo(b, ativo);
+        if (b.isVisible() != visiveis) { b.setVisible(visiveis); mudouVisibilidade = true; }
+    }
+    if (mudouVisibilidade) resized();  // as linhas dos sub-chips entram/saem do card MEDIA TYPE
 }
 
 void CatalogWorkspaceComponent::navegarParaPastaOrigem(std::optional<std::string> nomePasta) {
@@ -2738,9 +2802,26 @@ void CatalogWorkspaceComponent::resized() {
             primeiraLinha = false;
             return corpo.removeFromTop(kChipH);
         };
+        // Sub-chips do PROJECTS (CONTENT dos containers), recuados, logo abaixo da linha dele; só com PROJECTS ligado.
+        const bool comSubChips = !botoesContentProjetos_.empty() && botoesContentProjetos_.front()->isVisible();
+        auto subChipsSe = [&](size_t a, size_t b) {
+            if (!comSubChips || (categorias_[a].chave != "projects" && categorias_[b].chave != "projects")) return;
+            const int recuo = 12, meiaSub = (corpo.getWidth() - recuo - kGap) / 2;
+            for (size_t k = 0; k < botoesContentProjetos_.size(); ++k) {
+                auto linha = novaLinha().withTrimmedLeft(recuo);
+                const bool parCabe = k + 1 < botoesContentProjetos_.size() &&
+                                     larguraNecessariaDoChip(botoesContentProjetos_[k]->getButtonText(), true) <= meiaSub &&
+                                     larguraNecessariaDoChip(botoesContentProjetos_[k + 1]->getButtonText(), true) <= meiaSub;
+                if (!parCabe) { botoesContentProjetos_[k]->setBounds(linha); continue; }
+                botoesContentProjetos_[k]->setBounds(linha.removeFromLeft(meiaSub));
+                linha.removeFromLeft(kGap);
+                botoesContentProjetos_[++k]->setBounds(linha);
+            }
+        };
         for (size_t i = static_cast<size_t>(indiceInicioMediaType_); i < botoesCategorias_.size(); ++i) {
             const bool inteira = precisaLinhaInteira(i) || i + 1 >= botoesCategorias_.size() || precisaLinhaInteira(i + 1);
             auto linha = novaLinha();
+            const size_t primeiro = i;
             if (inteira) {
                 botoesCategorias_[i]->setBounds(linha);
             } else {
@@ -2748,6 +2829,7 @@ void CatalogWorkspaceComponent::resized() {
                 linha.removeFromLeft(kGap);
                 botoesCategorias_[++i]->setBounds(linha);
             }
+            subChipsSe(primeiro, i);
         }
     }
     barra_.finalizarCard();

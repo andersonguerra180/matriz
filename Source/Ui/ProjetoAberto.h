@@ -47,6 +47,7 @@ struct ItemResumo {
     int nestTotal = 0;
     bool nestCapa = false;
     std::string nestOrigem;  // não vazio = nest é um CONTAINER de importação (gallery|drive|bridge|lightroom|ddp|production|vinyl|tape)
+    std::string nestContent; // CONTENT do container (o mais frequente entre os arquivos dele; vazio = nenhum): sub-chips do PROJECTS
     std::string nestCapaImagem;  // caminho absoluto da capa do container (vinil/fita), vazio se não tem
     std::string nestIcone;       // recurso do ícone escolhido na ficha (ex.: ci_daw_pro_tools_png), vazio = ícone da origem
     std::string nestNome;        // nome do container (ficha); a capa do container mostra este nome em `titulo`
@@ -1016,6 +1017,7 @@ public:
         std::string icone;       // nest.icone; vazio = ícone da origem
         std::string nome;        // nest.nome (ficha); vazio = sem nome próprio
         std::string tipo;        // nest.tipo_container (ex.: "audio.album"); vazio = container do IMPORT antigo ou nest comum
+        std::string content;     // CONTENT mais frequente entre os membros (vazio = nenhum tem)
         int total = 0;
     };
     // item -> nest (só nests com 2+ membros). Uma consulta, usada ao montar a lista da grade.

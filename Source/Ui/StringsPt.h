@@ -2639,6 +2639,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"arvore_backup.abrir_como_foldermap", "Abrir como Folder Map"},
         {"projeto.abrir", "Abrir projeto"},
         {"catwork.projects", "Projetos"},
+        {"catwork.projects_sem_content", "Sem tipo de conteúdo"},
         {"projeto.capa.trocar", "Trocar capa..."},
         {"projeto.capa.remover", "Remover"},
         {"projeto.capa.placeholder", "CAPA 1:1"},

@@ -435,6 +435,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             r.nestTotal = nit->second.total;
             r.nestCapa = (r.id == nit->second.capaId);
             r.nestOrigem = nit->second.origem;
+            r.nestContent = nit->second.content;
             if (!nit->second.capaImagem.empty())
                 r.nestCapaImagem = pastaProjeto.getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
             r.nestIcone = nit->second.icone;
@@ -1191,6 +1192,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                     r.nestTotal = nit->second.total;
                     r.nestCapa = (r.id == nit->second.capaId);
                     r.nestOrigem = nit->second.origem;
+                    r.nestContent = nit->second.content;
                     if (!nit->second.capaImagem.empty())
                         r.nestCapaImagem = projeto_->pasta().getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
                     r.nestIcone = nit->second.icone;
@@ -5655,10 +5657,13 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             "SELECT ni.item_id, ni.nest_id, "
             "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
             "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)), "
-            "n.origem, n.capa_imagem, n.icone, n.nome, n.tipo_container "
+            "n.origem, n.capa_imagem, n.icone, n.nome, n.tipo_container, "
+            "(SELECT NULLIF(TRIM(i3.collection_type), '') FROM item i3 WHERE i3.id = ni.item_id) "
             "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
         std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe, nomeDe, tipoDe;
+        std::map<std::string, std::map<std::string, int>> contentsDe;  // nest -> CONTENT dos membros -> quantos
         while (st.step()) {
+            if (!st.columnIsNull(8)) ++contentsDe[st.columnText(1)][st.columnText(8)];
             membros[st.columnText(1)].push_back(st.columnText(0));
             capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
             if (!st.columnIsNull(3)) origemDe[st.columnText(1)] = st.columnText(3);
@@ -5677,6 +5682,11 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             if (auto iit = iconeDe.find(nid); iit != iconeDe.end()) info.icone = iit->second;
             if (auto nmit = nomeDe.find(nid); nmit != nomeDe.end()) info.nome = nmit->second;
             if (auto tit = tipoDe.find(nid); tit != tipoDe.end()) info.tipo = tit->second;
+            if (auto cit = contentsDe.find(nid); cit != contentsDe.end()) {
+                int maior = 0;
+                for (const auto& [content, n] : cit->second)
+                    if (n > maior) { maior = n; info.content = content; }  // empate: a ordem alfabética
+            }
             info.total = static_cast<int>(itens.size());
             for (const auto& id : itens) out[id] = info;
         }

@@ -81,6 +81,7 @@ private:
         int phoneDump = 0;
         int aiGenerated = 0;
         int projetos = 0;  // capas de containers PROJECT (DDP, vinil, fita, produção, YouTube)
+        std::vector<std::pair<std::string, int>> projetosPorContent;  // PROJECTS por CONTENT do container ("" = sem)
         int revisao = 0;
         int vulneraveis = 0;
         int mergeConflitos = 0;
@@ -313,6 +314,13 @@ private:
     int categoriaSelecionada_ = 0;
     std::vector<std::unique_ptr<juce::TextButton>> botoesCategorias_;
     std::optional<std::string> tipoMidiaSelecionado_;
+    // Sub-chips do PROJECTS (só com ele ligado): um por CONTENT dos containers (EP, Album, Single...), para juntar cada tipo.
+    // Escolha única; "" = os containers sem CONTENT. Desligar PROJECTS (ou Reset) solta a escolha.
+    std::vector<std::pair<std::string, int>> contentsDeProjetos_;
+    std::vector<std::unique_ptr<juce::TextButton>> botoesContentProjetos_;
+    std::optional<std::string> contentProjetoSelecionado_;
+    void construirSubChipsProjetos();
+    void atualizarSubChipsProjetos();  // destaque e visibilidade
     int indiceInicioMediaType_ = 0;
 
     // Um EVENT DATE gravado na ficha precisa reavaliar os filtros de data na
