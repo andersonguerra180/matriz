@@ -171,6 +171,7 @@ target_sources(matriz_selftest PRIVATE
     Source/Ficha/CatalogoDeFichas.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp
+    Source/Model/MergeFichas.cpp
     Source/Model/CaminhosBanco.cpp
     Source/Model/NomesCanonicos.cpp
     Source/Model/NomesSeguros.cpp
@@ -279,7 +280,8 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Model/NomesCanonicos.cpp
     Source/Model/CaminhosBanco.cpp
     Source/Model/NomesSeguros.cpp
-    Source/Model/Project.cpp)
+    Source/Model/Project.cpp
+    Source/Model/MergeFichas.cpp)
 
 if(APPLE)
     target_sources(matriz_ingest_selftest PRIVATE
@@ -345,6 +347,7 @@ juce_generate_juce_header(matriz_interop_selftest)
 target_sources(matriz_interop_selftest PRIVATE
     tools/interop_selftest/main.cpp
     Source/Model/Project.cpp
+    Source/Model/MergeFichas.cpp
     Source/Model/CaminhosBanco.cpp
     Source/Model/NomesCanonicos.cpp
     Source/Model/NomesSeguros.cpp
@@ -834,6 +837,7 @@ target_sources(matriz_analytics_selftest PRIVATE
     Source/Db/Database.cpp
     Source/Model/ProjectLog.cpp
     Source/Model/Project.cpp
+    Source/Model/MergeFichas.cpp
     Source/Model/CaminhosBanco.cpp
     Source/Model/NomesCanonicos.cpp
     Source/Model/NomesSeguros.cpp
