@@ -4,6 +4,43 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Capa do catálogo, tipos novos, Duplicates por container, PROJECTS por CONTENT, ficha do container — 2026-11-02
+
+- Branch: `fix/auditoria-2026-10-27`. Um commit por item (ver `git log`).
+- Seletor "Use image as cover" (`SeletorImagemCatalogo`, AcoesItem.cpp): antes mostrava só as 200 imagens mais recentes, com
+  8 extensões, e buscava só em título/código/caminho. Agora `buscarImagensDoCatalogo` usa `buscarItens` (a busca da grade),
+  a lista de extensões do ingest (`categoriaPorExtensao`) e não tem limite; consulta fora da message thread; miniaturas só das
+  células visíveis (+1 tela), reduzidas para 264 px, num `ThreadPool` de 2.
+- Tipos novos (Audio): `audio.single`, `audio.mixing_package`, `audio.mastering_package`. CONTENT novos: "Mixing Package",
+  "Mastering Package" (as 4 listas de CONTENT + as 2 traduções).
+- Duplicates: linha "Group:" nos filtros (`cbContainers_`), múltipla escolha: todos os containers, todos os nests ou cada
+  um pelo nome. E com o Scope. Lista lida fora da message thread (`mapaDeNests`); resolvida em membros no `run()`.
+- METADATA: PROJECTS ligado mostra sub-chips por CONTENT do container (`ItemResumo::nestContent` = CONTENT mais frequente
+  entre os membros, calculado em `mapaDeNests`). Escolha única; desligar PROJECTS ou Reset solta.
+- Ficha do container: CONTENT TYPE / SUBJECT / LIST (`c_content`, `c_subject`, `c_lista`, card "PROJECT CONTAINER") no fim
+  das fichas de produção, DDP, vinil, fita e YouTube, e numa ficha curta nova para os tipos sem player (folha
+  `production.<tipo>`: nome + os 3 campos), que também aparece no card correspondente do IMPORT. Edit Project Info passa a
+  valer para todo PROJECT (`ehOrigemProject`). Gravação = o caminho de sempre (`reaplicarQuestionarioDoContainer`):
+  CONTENT e LIST trocam o valor em TODOS os membros (não só os da categoria do tipo); SUBJECT troca a parte posta pelo
+  container e mantém o assunto próprio do arquivo. Sem coluna nova: as respostas ficam em `nest.questionario`.
+- No banco real (Bunker Analog) há 15 containers com 0 arquivos (6 production, 9 projeto): não aparecem na grade; limpar
+  é decisão do usuário.
+
+### Item 6 pedido em 2026-11-02 — container dentro de container (plano, sem código)
+
+- Hoje `nest_item.item_id` é PRIMARY KEY (um arquivo, um nest) e o "Group as Project Container" é bloqueado se algum
+  arquivo já está em nest/container.
+- Proposta: `garantirColuna(registro, "nest", "pai_nest_id", "TEXT")`. O container de dentro continua com os seus
+  arquivos; o de fora aponta para ele. Agrupar uma seleção que tem capas de container: os soltos entram no novo, os
+  containers viram filhos. Include in Container com uma capa de container: idem. Ungroup: os filhos voltam ao topo.
+- `mapaDeNests`: arquivo de um container filho conta para o de fora (a grade mostra só a capa do de fora; total inclui
+  os descendentes). PROJECTS conta só os de topo.
+- Janela do container: arquivos diretos + containers filhos como células (capa); duplo clique abre o filho na mesma
+  janela, com voltar/caminho, igual a abrir um container na grade.
+- Também mexe em: Folder Map/exports (subpasta do filho dentro da do pai), Duplicates (descendentes), Undo, contagens.
+- Perguntar ao usuário antes: a ficha do pai sincroniza SUBJECT/LIST/CONTENT também nos filhos? No export, o filho vira
+  subpasta do pai?
+
 ## Foco da ficha, Include in Container, Locate em lote, capa do container — 2026-10-31
 
 - Branch: `fix/auditoria-2026-10-27`. Commits `3f58ffa`, `909a4fe`, `07c046c`, `f3092f4`, `8f42da1` (um por item).
