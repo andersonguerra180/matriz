@@ -4,6 +4,27 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Fixes da auditoria de 2026-11-02 (B-02, B-03, B-04, B-05) — 2026-11-02
+
+- Branch: `claude/dreamy-cerf-0b1fw5` (a partir de `fix/auditoria-2026-10-27` @ `e2f38c0`). Um commit por defeito.
+  Relatório: `AUDITORIA_2026-11-02.md` no branch `audit/relatorio-2026-11-02`.
+- B-02 (`4d481bf`): `migrarBuscaFtsIndexada` filtra `item_campo.valor IS NULL` (o `busca_fts_map.conteudo` é NOT NULL e a
+  reconstrução voltava no ROLLBACK e se repetia em TODA abertura); gatilhos de insert/update de `item_campo` só indexam
+  valor não NULL (`registro.sql` + cópia embutida + `migrarGatilhosItemCampoSemNulo` para projetos já migrados); falha vai
+  para o log e para o perf.log (`[Abrir] migracao=busca_fts_indexada FALHOU`). Conferir no perf.log do Bunker Analog se a
+  abertura caiu: o bloco `busca_fts_indexada` deve aparecer UMA vez (a reconstrução que agora completa) e depois sumir.
+- B-05 (`6172fc7`): view `asset_preservation_status` recriada (DROP + CREATE) só quando a definição gravada não tem a regra
+  do BACKUP_VERIFIED mais recente.
+- B-03 (`3e741ac`): `definirTags`/`adicionarTag`/`removerTag`/`redefinirMetadadosItens` não escrevem mais na `busca_fts`
+  (os gatilhos de `item_tag` já fazem, pelo mapa). Ainda escrevem direto: `Source/Ingest/AiScan.cpp` (sem chamador).
+- B-04 (`b81e573`): `executarExport` copia com `copiarVerificado` (`.mtz-tmp` + hash + rename) e apaga o arquivo criado
+  na rodada se algo falha depois (marca d'água/embed/limpeza). Arquivos truncados de exports ANTIGOS continuam lá e
+  continuam sendo pulados ("já existe"; cópia simples com tamanho diferente aparece em `jaExistiamDiferentes`) — apagar à
+  mão ou decidir se o aviso vira reexport.
+- Verificado: SQL dos gatilhos/reconstrução em SQLite 3.45-schema real (Python); `Project.cpp`, `Consolidacao.cpp` e
+  `ProjetoAberto.cpp` compilam em Linux/GCC (o ProjetoAberto só com `int64_t`→`long long` em 5689/9631, erro antigo e só
+  de Linux). NÃO rodados: self-tests, `--selftest-lote`, ASan/TSan (não linkam em Linux; falta `DiskIdentity` e o B-01).
+
 ## Capa do catálogo, tipos novos, Duplicates por container, PROJECTS por CONTENT, ficha do container — 2026-11-02
 
 - Branch: `fix/auditoria-2026-10-27`. Um commit por item (ver `git log`).
