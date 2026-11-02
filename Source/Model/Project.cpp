@@ -724,12 +724,28 @@ void migrarItemMarcacaoParaBounce(matriz::db::Database& registro) {
 }
 
 void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice) {
+    // Cronômetro por bloco no perf.log ("[Abrir] migracao=<bloco> N ms", só o que passa de 50 ms): a etapa
+    // schemas_e_migracoes da abertura chegou a 16 min num projeto grande em HD e não se sabia qual bloco pesava.
+    auto inicioBloco = std::chrono::steady_clock::now();
+    auto cronometro = [&inicioBloco](const char* bloco) {
+        const auto agora = std::chrono::steady_clock::now();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(agora - inicioBloco).count();
+        inicioBloco = agora;
+        if (ms >= 50)
+            matriz::diag::logarWatchdog("[Abrir] migracao=" + juce::String(bloco) + " " + juce::String(static_cast<juce::int64>(ms)) + " ms");
+    };
     migrarItemParaCodigoOpcional(registro);
+    cronometro("codigo_opcional");
     migrarItemMarcacaoParaBounce(registro);
+    cronometro("marcacao_bounce");
     migrarAiScanParaIndice(registro, indice);
+    cronometro("ai_scan_indice");
     migrarConsolidacaoRegistro(registro);
+    cronometro("consolidacao_registro");
     registro.execScript(readBinarySql(BinaryData::registro_sql, BinaryData::registro_sqlSize));
+    cronometro("registro_sql");
     indice.execScript(readBinarySql(BinaryData::indice_sql, BinaryData::indice_sqlSize));
+    cronometro("indice_sql");
     // Conflitos de merge presos em duplicatas resolvidas (de antes de juntarFichas levá-los ao mantido).
     try {
         registro.exec("BEGIN IMMEDIATE");
@@ -742,13 +758,16 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             try { registro.exec("ROLLBACK"); } catch (...) {}
         }
     } catch (...) {}  // projeto somente leitura: fica para a próxima abertura
+    cronometro("conflitos_merge");
     // Precisa rodar DEPOIS do execScript acima (que só cria o gatilho se
     // ele ainda não existir) e ANTES das migrações de item_campo -> item
     // logo abaixo, que são justamente o UPDATE em massa que ficava lento.
     migrarEscopoGatilhoBusca(registro);
+    cronometro("escopo_gatilho_busca");
     // Idem: gatilhos antigos de busca_fts (sem busca_fts_map) precisam ser
     // substituídos antes de qualquer UPDATE/INSERT em massa que os dispare.
     migrarBuscaFtsIndexada(registro);
+    cronometro("busca_fts_indexada");
 
     // Colunas acrescentadas depois da primeira versão do schema.
     garantirColuna(registro, "consolidacao_registro", "destino_path", "TEXT NOT NULL DEFAULT ''");
@@ -845,8 +864,11 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         "CREATE TABLE IF NOT EXISTS lixeira_item ("
         "  item_id TEXT NOT NULL, mapa_id TEXT NOT NULL, pasta_origem_id TEXT, nome_pasta_origem TEXT, deletado_em TEXT NOT NULL, "
         "  PRIMARY KEY (item_id, mapa_id))");
+    cronometro("colunas_1");
     migrarFolderMapUnico(registro);
+    cronometro("folder_map_unico");
     migrarMapaDoMain(registro);
+    cronometro("mapa_do_main");
 
     // Reconstrução leva única
     garantirColuna(registro, "marcador", "tipo_id", "TEXT REFERENCES tipo_marcador(id)");
@@ -884,6 +906,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // Etapa 5: código do SOURCE (S01…/custom). Vazio = automático, ainda não fixado.
     garantirColuna(registro, "vault", "codigo", "TEXT NOT NULL DEFAULT ''");
 
+    cronometro("colunas_2");
     try {
         registro.execScript(
             "CREATE TABLE IF NOT EXISTS vault_evento ("
@@ -901,6 +924,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         registro.run("DELETE FROM vault WHERE localizacao LIKE '/System/Volumes/%' OR localizacao IN ('/', '/dev', '/net', '/home') OR nome IN ('dev', 'System Drive', 'Preboot', 'Update', 'VM', 'xarts', 'Hardware');", {});
     } catch (...) {}
 
+    cronometro("vault_evento");
     // Unified metadata columns (replaces Original/Editable dual model)
     garantirColuna(registro, "item", "ano", "TEXT");
     garantirColuna(registro, "item", "caminho_catalogo", "TEXT");
@@ -935,6 +959,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "item", "dc_coverage", "TEXT");
     garantirColuna(registro, "item", "dc_rights", "TEXT");
 
+    cronometro("colunas_3");
     // Asset Geolocation Table Migration
     registro.execScript(
         "CREATE TABLE IF NOT EXISTS asset_geolocation ("
@@ -966,6 +991,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         "CREATE INDEX IF NOT EXISTS idx_geo_country_state_city ON asset_geolocation(country, state_province, city);"
     );
 
+    cronometro("geolocalizacao");
     // Migrate existing item_campo values to new columns if they exist.
     // Uma única leitura sequencial de item_campo (só leitura, sem trava de escrita) em vez de 5 UPDATEs com
     // subconsulta correlacionada por item: num HD frio cada UPDATE era ~15 mil buscas aleatórias no índice
@@ -1006,6 +1032,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         // Migration from old campos is best-effort — may not exist
     }
 
+    cronometro("item_campo_para_item");
     try {
         registro.execScript(
             "CREATE TABLE IF NOT EXISTS catalog_colecao_link ("
@@ -1018,6 +1045,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         );
     } catch (...) {}
 
+    cronometro("catalog_colecao_link");
     try {
         registro.execScript(
             "CREATE TABLE IF NOT EXISTS collection_person ("
@@ -1028,6 +1056,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         );
     } catch (...) {}
 
+    cronometro("collection_person");
     try {
         registro.run(
             "INSERT OR IGNORE INTO tipo_marcador (id, rotulo, cor, embutido) VALUES "
@@ -1047,6 +1076,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         );
     } catch (...) {}
 
+    cronometro("tipo_marcador");
     try {
         registro.exec("DROP VIEW IF EXISTS colecao_revisao");
         registro.exec(
@@ -1057,6 +1087,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             "  AND (m.tipo_id IN ('revisar', 'dropout'))");
     } catch (...) {}
 
+    cronometro("view_colecao_revisao");
     // Atualiza a view em projetos existentes: BACKUP_VERIFIED só vale quando
     // o evento mais recente do item foi SUCCESS.
     try {
@@ -1083,6 +1114,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             "THEN 'OK' ELSE 'UNKNOWN' END AS provenance_status FROM item i");
     } catch (...) {}
 
+    cronometro("view_preservation_status");
     // Migração de metadados_editados
     garantirColuna(registro, "item", "metadados_editados", "INTEGER NOT NULL DEFAULT 0");
 
@@ -1099,6 +1131,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         registro.exec("CREATE INDEX IF NOT EXISTS idx_item_lote_grid ON item(lote_grid_id)");
     } catch (...) {}
 
+    cronometro("colunas_4_lote_grid");
     // Garantir triggers de busca em projetos existentes
     try {
         registro.exec(
@@ -1135,6 +1168,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         );
     } catch (...) {}
 
+    cronometro("gatilhos_busca");
     // Backfill busca_fts completo e consistente
     try {
         auto stmt = registro.prepare("SELECT COUNT(*) FROM busca_fts");
@@ -1181,6 +1215,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         // Ignora erros caso a tabela ainda não exista em contextos antigos
     }
 
+    cronometro("backfill_busca_fts");
     // -----------------------------------------------------------------------
     // Camada de Preservação — migração aditiva (idempotente)
     // -----------------------------------------------------------------------
@@ -1206,6 +1241,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             { db::Value::of(agoraIso8601()) });
     } catch (...) {}
 
+    cronometro("agentes_preservacao");
     // 3. Atribuição bulk de persistent_id para assets existentes.
     //    Uma única instrução SQL — sem loop, sem N operações individuais.
     //    O formato é determinístico: "BKR:ASSET:" + primeiros 8 hex do UUID sem hífens.
@@ -1218,6 +1254,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             {});
     } catch (...) {}
 
+    cronometro("persistent_id");
     // 4. Um único evento de migração por projeto — registrado somente se ainda
     //    não existe nenhum evento MIGRATION (idempotente via INSERT OR IGNORE).
     //    agent_id = 'bkr-agent-sistema' (seed acima garante que existe).
@@ -1248,6 +1285,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             { db::Value::of(agora), db::Value::of(agora) });
     } catch (...) {}
 
+    cronometro("eventos_migration");
     // 5. Garantir que os índices de performance para acervos grandes existam
     try {
         registro.exec("CREATE INDEX IF NOT EXISTS idx_item_quarentena_criado ON item(em_quarentena, criado_em)");
@@ -1262,6 +1300,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_derivada_de ON arquivo(derivada_de_arquivo_id)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_proveniencia_item ON proveniencia(item_id)");
     } catch (...) {}
+    cronometro("indices_performance");
 }
 
 } // namespace
