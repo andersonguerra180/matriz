@@ -2598,9 +2598,7 @@ void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& item
             db.run("DELETE FROM item_tag WHERE item_id = ?",
                    {matriz::db::Value::of(itemId)});
 
-            // 3. Clear search entries for tags
-            db.run("DELETE FROM busca_fts WHERE item_id = ? AND conteudo LIKE '#%'",
-                   {matriz::db::Value::of(itemId)});
+            // 3. Índice de busca das tags: trg_item_tag_busca_delete já tirou (pelo busca_fts_map) com o DELETE acima.
 
             // 4. Find if there are native readings for ano / date or source_media
             std::optional<std::string> nativeAno;
@@ -2690,21 +2688,9 @@ void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std
                  matriz::db::Value::of(itemId),
                  matriz::db::Value::of(tag)});
         }
-        // Index tags in FTS (both with and without '#') — erro aqui não
-        // derruba a transação inteira, só a indexação de busca fica velha.
-        try {
-            db.run("DELETE FROM busca_fts WHERE item_id = ? AND (conteudo LIKE '#%' OR conteudo IN (SELECT tag FROM item_tag WHERE item_id = ?))",
-                   {matriz::db::Value::of(itemId), matriz::db::Value::of(itemId)});
-            for (const auto& tag : tags) {
-                if (tag.empty()) continue;
-                db.run(
-                    "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-                    {matriz::db::Value::of(itemId), matriz::db::Value::of(tag)});
-                db.run(
-                    "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-                    {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + tag)});
-            }
-        } catch (...) {}
+        // Índice de busca (tag e "#tag"): os gatilhos trg_item_tag_busca_insert/delete mantêm busca_fts e
+        // busca_fts_map com o DELETE/INSERT acima. Não escrever na busca_fts direto: varre o índice inteiro
+        // (item_id é UNINDEXED), duplica termos e deixa linhas fora do mapa.
         try {
             db.run(
                 "UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?",
@@ -2744,14 +2730,7 @@ void ProjetoAberto::adicionarTag(const std::string& itemId, const std::string& t
         {matriz::db::Value::of(matriz::model::novoUuid()),
          matriz::db::Value::of(itemId),
          matriz::db::Value::of(cleanStr)});
-    try {
-        projeto_->registro().run(
-            "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-            {matriz::db::Value::of(itemId), matriz::db::Value::of(cleanStr)});
-        projeto_->registro().run(
-            "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-            {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + cleanStr)});
-    } catch (...) {}
+    // Índice de busca: trg_item_tag_busca_insert (tag e "#tag", com busca_fts_map).
     try {
         projeto_->registro().run(
             "UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?",
@@ -2785,10 +2764,7 @@ void ProjetoAberto::removerTag(const std::string& itemId, const std::string& tag
     }
     projeto_->registro().run("DELETE FROM item_tag WHERE item_id = ? AND (tag = ? OR tag = ?)",
                               {matriz::db::Value::of(itemId), matriz::db::Value::of(tag), matriz::db::Value::of(cleanStr)});
-    try {
-        projeto_->registro().run("DELETE FROM busca_fts WHERE item_id = ? AND (conteudo = ? OR conteudo = ? OR conteudo = ?)",
-                                  {matriz::db::Value::of(itemId), matriz::db::Value::of(tag), matriz::db::Value::of(cleanStr), matriz::db::Value::of("#" + cleanStr)});
-    } catch (...) {}
+    // Índice de busca: trg_item_tag_busca_delete (pelo busca_fts_map).
     EventBus::obterInstancia().dispararItemAlterado(itemId, "tags");
 }
 
