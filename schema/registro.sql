@@ -727,9 +727,10 @@ CREATE TRIGGER IF NOT EXISTS trg_item_busca_update AFTER UPDATE OF titulo, codig
     INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.id, new.titulo);
 END;
 
+-- valor NULL não entra (busca_fts_map.conteudo é NOT NULL; sem a guarda o INSERT do campo abortava).
 CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_insert AFTER INSERT ON item_campo FOR EACH ROW BEGIN
-    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor);
-    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor);
+    INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.valor WHERE new.valor IS NOT NULL;
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.valor WHERE new.valor IS NOT NULL;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_delete AFTER DELETE ON item_campo FOR EACH ROW BEGIN
@@ -740,8 +741,8 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_update AFTER UPDATE ON item_campo FOR EACH ROW BEGIN
     DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor);
     DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor;
-    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor);
-    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor);
+    INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.valor WHERE new.valor IS NOT NULL;
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.valor WHERE new.valor IS NOT NULL;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_assunto_busca_insert AFTER INSERT ON item_assunto FOR EACH ROW BEGIN

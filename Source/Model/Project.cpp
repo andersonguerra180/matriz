@@ -547,8 +547,8 @@ void migrarBuscaFtsIndexada(matriz::db::Database& registro) {
             "END;"
 
             "CREATE TRIGGER trg_item_campo_busca_insert AFTER INSERT ON item_campo FOR EACH ROW BEGIN "
-            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor); "
-            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor); "
+            "INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.valor WHERE new.valor IS NOT NULL; "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.valor WHERE new.valor IS NOT NULL; "
             "END;"
 
             "CREATE TRIGGER trg_item_campo_busca_delete AFTER DELETE ON item_campo FOR EACH ROW BEGIN "
@@ -559,8 +559,8 @@ void migrarBuscaFtsIndexada(matriz::db::Database& registro) {
             "CREATE TRIGGER trg_item_campo_busca_update AFTER UPDATE ON item_campo FOR EACH ROW BEGIN "
             "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor); "
             "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor; "
-            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor); "
-            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor); "
+            "INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.valor WHERE new.valor IS NOT NULL; "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.valor WHERE new.valor IS NOT NULL; "
             "END;"
 
             "CREATE TRIGGER trg_item_assunto_busca_insert AFTER INSERT ON item_assunto FOR EACH ROW BEGIN "
@@ -615,7 +615,9 @@ void migrarBuscaFtsIndexada(matriz::db::Database& registro) {
 
         registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT id, codigo_acervo FROM item WHERE codigo_acervo IS NOT NULL");
         registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT id, titulo FROM item");
-        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, valor FROM item_campo");
+        // valor NULL fica fora (busca_fts_map.conteudo é NOT NULL): com ele, o INSERT no mapa abaixo falhava, a
+        // reconstrução inteira voltava no ROLLBACK e se repetia em TODA abertura do projeto.
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, valor FROM item_campo WHERE valor IS NOT NULL");
         registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT ia.item_id, a.termo FROM item_assunto ia JOIN assunto a ON a.id = ia.assunto_id");
         registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, tag FROM item_tag");
         registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, '#' || tag FROM item_tag");
@@ -629,6 +631,48 @@ void migrarBuscaFtsIndexada(matriz::db::Database& registro) {
         registro.exec("INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT rowid, item_id, conteudo FROM busca_fts");
 
         registro.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { registro.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("[migracao] busca_fts_indexada falhou (refaz na próxima abertura): " + juce::String(e.what()));
+        matriz::diag::logarWatchdog("[Abrir] migracao=busca_fts_indexada FALHOU: " + juce::String(e.what()));
+    } catch (...) {
+        try { registro.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("[migracao] busca_fts_indexada falhou (refaz na próxima abertura)");
+    }
+}
+
+// Projetos que já passaram por migrarBuscaFtsIndexada têm os gatilhos de item_campo sem guarda de NULL: um
+// item_campo com valor NULL fazia o INSERT no busca_fts_map (conteudo NOT NULL) abortar a gravação do campo.
+// Troca só esses dois gatilhos (os mesmos corpos de schema/registro.sql). Idempotente.
+void migrarGatilhosItemCampoSemNulo(matriz::db::Database& registro) {
+    try {
+        auto st = registro.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='trg_item_campo_busca_insert'");
+        if (!st.step()) return;
+        const std::string sql = st.columnText(0);
+        if (sql.find("busca_fts_map") == std::string::npos) return;   // formato antigo: migrarBuscaFtsIndexada cuida
+        if (sql.find("new.valor IS NOT NULL") != std::string::npos) return;  // já migrado
+    } catch (...) {
+        return;
+    }
+    try {
+        registro.exec("BEGIN IMMEDIATE");
+        registro.exec("DROP TRIGGER IF EXISTS trg_item_campo_busca_insert");
+        registro.exec("DROP TRIGGER IF EXISTS trg_item_campo_busca_update");
+        registro.execScript(
+            "CREATE TRIGGER trg_item_campo_busca_insert AFTER INSERT ON item_campo FOR EACH ROW BEGIN "
+            "INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.valor WHERE new.valor IS NOT NULL; "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.valor WHERE new.valor IS NOT NULL; "
+            "END;"
+            "CREATE TRIGGER trg_item_campo_busca_update AFTER UPDATE ON item_campo FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor; "
+            "INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.valor WHERE new.valor IS NOT NULL; "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.valor WHERE new.valor IS NOT NULL; "
+            "END;");
+        registro.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { registro.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("[migracao] gatilhos de item_campo sem guarda de NULL: " + juce::String(e.what()));
     } catch (...) {
         try { registro.exec("ROLLBACK"); } catch (...) {}
     }
@@ -768,6 +812,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // substituídos antes de qualquer UPDATE/INSERT em massa que os dispare.
     migrarBuscaFtsIndexada(registro);
     cronometro("busca_fts_indexada");
+    migrarGatilhosItemCampoSemNulo(registro);
+    cronometro("gatilhos_item_campo_sem_nulo");
 
     // Colunas acrescentadas depois da primeira versão do schema.
     garantirColuna(registro, "consolidacao_registro", "destino_path", "TEXT NOT NULL DEFAULT ''");
