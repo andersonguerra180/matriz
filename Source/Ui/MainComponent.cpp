@@ -3534,6 +3534,9 @@ public:
     explicit PeliculaJanela(std::function<void()> aoClicar) : aoClicar_(std::move(aoClicar)) {}
     void paint(juce::Graphics& g) override { g.fillAll(juce::Colour(0xff1b1917).withAlpha(0.38f)); }
     void mouseDown(const juce::MouseEvent&) override { if (aoClicar_) aoClicar_(); }
+    // Arrastando da janela (grade da pasta -> árvore/Folder Map da tela principal): a película não pode ser o alvo, senão
+    // o drop nunca chega ao que está embaixo. Fora do arrasto ela segue pegando o clique.
+    bool hitTest(int, int) override { return juce::Desktop::getInstance().getNumDraggingMouseSources() == 0; }
 private:
     std::function<void()> aoClicar_;
 };
