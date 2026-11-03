@@ -3042,8 +3042,10 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
     }
     DBG("gerarMiniaturasFaltantes: " + juce::String((int)comMiniatura.size()) + " itens já têm miniatura");
 
+    // Sem caracteristicas_tecnicas_json aqui: ler o JSON de todos os arquivos (páginas de overflow) deixava o
+    // "Checking files on disk..." minutos parado num HD; ele só é lido para quem vai mesmo gerar miniatura.
     auto stmt = reg.prepare(
-        std::string("SELECT a.item_id, a.id, a.caracteristicas_tecnicas_json, ") +
+        std::string("SELECT a.item_id, a.id, '', ") +
         matriz::vault::colunasDeResolucao() +
         " FROM arquivo a " + matriz::vault::joinDeResolucao() +
         " ORDER BY a.eh_master DESC, a.id");
@@ -3068,7 +3070,6 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
         if (jaProcessados.count(itemId)) continue;
 
         std::string arquivoId = stmt.columnText(1);
-        std::string jsonTecnico = stmt.columnText(2);
         juce::File arq = matriz::vault::caminhoEsperado(pasta, stmt.columnText(3),
                                                          stmt.columnText(4), stmt.columnText(5));
         const auto cat = matriz::ingest::categoriaPorExtensao(arq);
@@ -3098,6 +3099,12 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
             cat != matriz::ingest::CategoriaMidia::Texto)
             continue;
 
+        std::string jsonTecnico;
+        {
+            auto st = reg.prepare("SELECT caracteristicas_tecnicas_json FROM arquivo WHERE id = ?");
+            st.bind(1, matriz::db::Value::of(arquivoId));
+            if (st.step()) jsonTecnico = st.columnText(0);
+        }
         std::optional<double> duracao;
         juce::var raiz = juce::JSON::parse(jsonTecnico);
         if (raiz.isObject() && raiz.hasProperty("duracaoSegundos"))
