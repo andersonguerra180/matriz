@@ -232,7 +232,7 @@ void Sha256Parcial::atualizar(const void* dados, size_t n) {
     const auto* p = static_cast<const unsigned char*>(dados);
     impl_->total += n;
     while (n > 0) {
-        const size_t parte = std::min(n, sizeof(impl_->buf) - impl_->nbuf);
+        const size_t parte = (std::min)(n, sizeof(impl_->buf) - impl_->nbuf);
         std::memcpy(impl_->buf + impl_->nbuf, p, parte);
         impl_->nbuf += parte;
         p += parte;
