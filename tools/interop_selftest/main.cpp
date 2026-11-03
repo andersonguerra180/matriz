@@ -1342,8 +1342,16 @@ int executarVerificacao(const juce::File& baseDir) {
 
 } // namespace
 
+// juce::Logger sem logger instalado vai para o depurador (OutputDebugString no Windows) e some do log do CI.
+struct LoggerConsole : juce::Logger {
+    void logMessage(const juce::String& m) override { std::cerr << "[log] " << m.toStdString() << std::endl; }
+};
+
 int main(int argc, char* argv[]) {
     juce::ScopedJuceInitialiser_GUI juceInit;
+    LoggerConsole loggerConsole;
+    juce::Logger::setCurrentLogger(&loggerConsole);
+    struct TirarLogger { ~TirarLogger() { juce::Logger::setCurrentLogger(nullptr); } } tirarLogger;
 
     if (argc < 3) {
         std::cerr << "Uso: matriz_interop_selftest --gerar <dir> [--rapido] | --verificar <dir> [--rapido]\n";
