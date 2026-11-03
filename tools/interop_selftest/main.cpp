@@ -169,8 +169,8 @@ int executarGeracao(const juce::File& baseDir) {
     db.run("INSERT INTO item (id, projeto_id, titulo, dc_title, dc_description, ano, collection_type, dc_subject, tipo_midia, estado, criado_em, atualizado_em) "
            "VALUES (?, ?, 'Gravação do Show de Sucesso', 'Gravação do Show de Sucesso', 'Gravação multicanal master', '2026-03-15', 'Concert', 'Show, Ao Vivo, Música Brasileira', 'audio', 'catalogado', ?, ?)",
            {Value::of(id1), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
-    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+    db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqId1), Value::of(id1), Value::of(matriz::caminhos::relativoParaBanco(arq1, pastaOrigens)), Value::of(arq1.getFullPathName().toStdString()), Value::of(ck1.sha256), Value::of(ck1.md5), Value::of(static_cast<juce::int64>(arq1.getSize())), Value::of(agora), Value::of(agora)});
     db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
            "VALUES (?, ?, 'raiz', 0, 'artista_principal', 'Anderson Guerra', 'humano', ?)",
@@ -197,8 +197,8 @@ int executarGeracao(const juce::File& baseDir) {
     db.run("INSERT INTO item (id, projeto_id, titulo, dc_title, dc_description, ano, collection_type, tipo_midia, estado, criado_em, atualizado_em) "
            "VALUES (?, ?, 'Foto da Apresentação', 'Foto da Apresentação', 'Registro fotográfico oficial', '2026', 'Photo', 'imagem', 'catalogado', ?, ?)",
            {Value::of(id2), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
-    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+    db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqId2), Value::of(id2), Value::of(matriz::caminhos::relativoParaBanco(arq2, pastaOrigens)), Value::of(arq2.getFullPathName().toStdString()), Value::of(ck2.sha256), Value::of(ck2.md5), Value::of(static_cast<juce::int64>(arq2.getSize())), Value::of(agora), Value::of(agora)});
     db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
            "VALUES (?, ?, 'raiz', 0, 'fotografo', 'Maria Silva', 'humano', ?)",
@@ -208,8 +208,8 @@ int executarGeracao(const juce::File& baseDir) {
     db.run("INSERT INTO item (id, projeto_id, titulo, dc_title, dc_description, collection_type, tipo_midia, estado, criado_em, atualizado_em) "
            "VALUES (?, ?, 'Documento Oculto', 'Documento Oculto', 'Arquivo confidencial', 'Hidden', 'documento', 'catalogado', ?, ?)",
            {Value::of(idH), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
-    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+    db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqIdH), Value::of(idH), Value::of(matriz::caminhos::relativoParaBanco(arqHidden, pastaOrigens)), Value::of(arqHidden.getFullPathName().toStdString()), Value::of(ckH.sha256), Value::of(ckH.md5), Value::of(static_cast<juce::int64>(arqHidden.getSize())), Value::of(agora), Value::of(agora)});
     db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
            "VALUES (?, ?, 'raiz', 0, 'collection_type', 'Hidden', 'humano', ?)",
@@ -219,8 +219,8 @@ int executarGeracao(const juce::File& baseDir) {
     db.run("INSERT INTO item (id, projeto_id, titulo, dc_title, tipo_midia, estado, criado_em, atualizado_em) "
            "VALUES (?, ?, 'Documento em Caminho Longo', 'Documento em Caminho Longo', 'documento', 'catalogado', ?, ?)",
            {Value::of(idP), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
-    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+    db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqIdP), Value::of(idP), Value::of(matriz::caminhos::relativoParaBanco(arqProfundo, pastaOrigens)), Value::of(arqProfundo.getFullPathName().toStdString()), Value::of(ckP.sha256), Value::of(ckP.md5), Value::of(static_cast<juce::int64>(arqProfundo.getSize())), Value::of(agora), Value::of(agora)});
 
     // Item Especial (origem com ':' e '?', preservado no caminho_absoluto_origem)
@@ -228,8 +228,8 @@ int executarGeracao(const juce::File& baseDir) {
     db.run("INSERT INTO item (id, projeto_id, titulo, dc_title, tipo_midia, estado, criado_em, atualizado_em) "
            "VALUES (?, ?, 'Show Especial com Nome Original Especial', 'Show Especial com Nome Original Especial', 'audio', 'catalogado', ?, ?)",
            {Value::of(idE), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
-    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+    db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqIdE), Value::of(idE), Value::of(matriz::caminhos::relativoParaBanco(arqEspecial, pastaOrigens)), Value::of(origemComCharsEspeciais), Value::of(ckE.sha256), Value::of(ckE.md5), Value::of(static_cast<juce::int64>(arqEspecial.getSize())), Value::of(agora), Value::of(agora)});
 
     // Adiciona entidade de pessoa e lugar
@@ -394,15 +394,15 @@ int executarGeracao(const juce::File& baseDir) {
     db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, dc_title, tipo_midia, estado, criado_em, atualizado_em) "
            "VALUES (?, ?, 'NFD-001', 'Gravação Épica', 'Gravação Épica', 'audio', 'catalogado', ?, ?)",
            {Value::of(idNfd1), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
-    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+    db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqIdNfd1), Value::of(idNfd1), Value::of(matriz::caminhos::relativoParaBanco(arqNfd1, pastaOrigens)), Value::of(arqNfd1.getFullPathName().toStdString()), Value::of(ckNfd1.sha256), Value::of(ckNfd1.md5), Value::of(static_cast<juce::int64>(arqNfd1.getSize())), Value::of(agora), Value::of(agora)});
 
     db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, dc_title, tipo_midia, estado, criado_em, atualizado_em) "
            "VALUES (?, ?, 'NFD-002', 'Ação ç ã ü', 'Ação ç ã ü', 'video', 'catalogado', ?, ?)",
            {Value::of(idNfd2), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
-    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+    db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqIdNfd2), Value::of(idNfd2), Value::of(matriz::caminhos::relativoParaBanco(arqNfd2, pastaOrigens)), Value::of(arqNfd2.getFullPathName().toStdString()), Value::of(ckNfd2.sha256), Value::of(ckNfd2.md5), Value::of(static_cast<juce::int64>(arqNfd2.getSize())), Value::of(agora), Value::of(agora)});
 
     juce::File mainNfd1 = pastaMain.getChildFile("Media").getChildFile(arqNfd1.getFileName());
@@ -453,8 +453,8 @@ int executarGeracao(const juce::File& baseDir) {
                    "VALUES (?, ?, ?, ?, 'documento', 'catalogado', ?, ?)",
                    {Value::of(escItemId), Value::of(proj->projetoId()), Value::of(codAcervo),
                     Value::of("Item Escala " + idxStr), Value::of(agora), Value::of(agora)});
-            db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
-                   "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+            db.run("INSERT INTO arquivo (id, item_id, papel, eh_master, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'preservation_master', 1, ?, ?, ?, ?, ?, ?, ?)",
                    {Value::of(escArqId), Value::of(escItemId),
                     Value::of(matriz::caminhos::relativoParaBanco(arqEsc, pastaOrigens)),
                     Value::of(arqEsc.getFullPathName().toStdString()),
