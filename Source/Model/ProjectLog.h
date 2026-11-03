@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <string>
+#include <vector>
 
 namespace matriz::model {
 
@@ -25,6 +26,14 @@ public:
     void appendEntry(const juce::String& actionTitle,
                      const juce::StringArray& details,
                      const juce::String& author = "System");
+
+    // Several entries in one read-and-rewrite of log.md (batch operations). In chronological order: the result is
+    // the same as calling appendEntry() for each one, last one on top.
+    struct Entry {
+        juce::String actionTitle;
+        juce::StringArray details;
+    };
+    void appendEntries(const std::vector<Entry>& entries, const juce::String& author = "System");
 
 private:
     juce::File projectFolder_;

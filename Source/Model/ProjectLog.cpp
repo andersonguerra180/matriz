@@ -107,28 +107,37 @@ bool ProjectLog::saveContent(const juce::String& newContent) {
 void ProjectLog::appendEntry(const juce::String& actionTitle,
                              const juce::StringArray& details,
                              const juce::String& author) {
+    appendEntries({{actionTitle, details}}, author);
+}
+
+void ProjectLog::appendEntries(const std::vector<Entry>& entries, const juce::String& author) {
+    if (entries.empty()) return;
     std::lock_guard<std::mutex> lock(mutexDoLog());
     ensureInitialized();
     ensureNewestFirst();
 
     juce::String timestamp = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S");
-    juce::String entry;
-    entry << "### [" << timestamp << "] " << actionTitle << "\n"
-          << "- **Author / Agent:** " << (author.isEmpty() ? "Operator" : author) << "\n";
+    juce::String bloco;
+    for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+        juce::String entry;
+        entry << "### [" << timestamp << "] " << it->actionTitle << "\n"
+              << "- **Author / Agent:** " << (author.isEmpty() ? "Operator" : author) << "\n";
 
-    for (const auto& line : details) {
-        entry << "- " << line << "\n";
+        for (const auto& line : it->details) {
+            entry << "- " << line << "\n";
+        }
+        entry << "\n";
+        bloco << entry;
     }
-    entry << "\n";
 
     // Entrada nova no TOPO (logo antes da entrada mais recente); sem entradas ainda, vai no fim do cabeçalho.
     const juce::String texto = logFile_.loadFileAsString();
     const auto inicios = inicioDasEntradas(texto);
     if (inicios.empty()) {
-        logFile_.appendText(entry);
+        logFile_.appendText(bloco);
         return;
     }
-    logFile_.replaceWithText(texto.substring(0, inicios.front()) + entry + texto.substring(inicios.front()));
+    logFile_.replaceWithText(texto.substring(0, inicios.front()) + bloco + texto.substring(inicios.front()));
 }
 
 } // namespace matriz::model
