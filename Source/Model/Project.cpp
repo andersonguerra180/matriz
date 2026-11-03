@@ -1233,8 +1233,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     cronometro("gatilhos_busca");
     // Backfill busca_fts completo e consistente
     try {
-        auto stmt = registro.prepare("SELECT COUNT(*) FROM busca_fts");
-        bool precisaBackfill = !stmt.step() || stmt.columnInt(0) == 0;
+        // Só "está vazia?": COUNT(*) numa FTS5 percorre o índice inteiro (~70 s a cada abertura num acervo grande em HD).
+        auto stmt = registro.prepare("SELECT 1 FROM busca_fts LIMIT 1");
+        bool precisaBackfill = !stmt.step();
         if (precisaBackfill) {
             registro.run("BEGIN TRANSACTION", {});
             try {
