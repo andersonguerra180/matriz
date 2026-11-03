@@ -228,7 +228,15 @@ AssetPresenceReport AssetRelinkEngine::verificarPresencaAssets(matriz::db::Datab
                 }
             }
         }
-    } catch (...) {}
+    } catch (const std::exception& e) {
+        // Antes era catch (...) {} mudo: uma falha no meio devolvia contagens zeradas (0 online, 0 offline) sem
+        // nenhum rastro — foi assim que o RELINK_ORIGENS do interop falhou no Windows sem dizer por quê.
+        juce::Logger::writeToLog("verificarPresencaAssets: interrompido depois de " + juce::String(report.totalAssets) +
+                                 " arquivo(s): " + juce::String(e.what()));
+    } catch (...) {
+        juce::Logger::writeToLog("verificarPresencaAssets: interrompido depois de " + juce::String(report.totalAssets) +
+                                 " arquivo(s) (exceção desconhecida)");
+    }
 
     return report;
 }
