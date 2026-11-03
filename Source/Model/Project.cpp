@@ -1398,6 +1398,13 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         // acervo_item_pasta e o filtro de estado lia a linha inteira de cada item; com estes dois, só índice.
         registro.exec("CREATE INDEX IF NOT EXISTS idx_acervo_item_pasta_mapa ON acervo_item_pasta(mapa_id, item_id)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_item_projeto_estado ON item(projeto_id, estado, id)");
+        // Coleções embutidas (colecao_embutida, contadas a cada atualização da barra do Catalog): sem estes, clipping
+        // lia o cache_arquivo (forma de onda) de cada arquivo, ausentes/não baixados a linha inteira de cada arquivo e
+        // incompletos a linha de cada item e todos os campos dele — mais de 10 min com o HD frio no Bunker Analog.
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_cache_arquivo_true_peak ON cache_arquivo(true_peak, arquivo_id)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_presenca ON arquivo(estado_presenca, item_id)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_item_id_titulo ON item(id, titulo)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_item_campo_item_campo ON item_campo(item_id, campo_id)");
     } catch (...) {}
     cronometro("indices_performance");
 }
