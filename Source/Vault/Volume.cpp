@@ -11,6 +11,8 @@
 #endif
 
 #include "Volume.h"
+
+#include <set>
 #include "../Db/Database.h"
 #include "../Model/Project.h"
 
@@ -337,10 +339,23 @@ void sincronizarDrivesDoProjeto(matriz::db::Database& registro, const std::strin
             std::string vaultId;
         };
         std::vector<ArqRef> arquivos;
-        auto stmtArq = registro.prepare(
+        // Sem vault ou com vault apagado. O "OR NOT EXISTS (...)" numa consulta só varria a tabela arquivo inteira a
+        // cada verificação (minutos num HD); assim os dois passos leem só o índice de vault_id.
+        std::set<std::string> vaultsExistentes, orfaos;
+        {
+            auto st = registro.prepare("SELECT id FROM vault");
+            while (st.step()) vaultsExistentes.insert(st.columnText(0));
+            auto usados = registro.prepare("SELECT DISTINCT vault_id FROM arquivo WHERE vault_id IS NOT NULL AND vault_id <> ''");
+            while (usados.step())
+                if (!vaultsExistentes.count(usados.columnText(0))) orfaos.insert(usados.columnText(0));
+        }
+        std::string sqlArq =
             "SELECT a.id, COALESCE(a.caminho_absoluto_origem, ''), COALESCE(a.caminho_relativo, ''), COALESCE(a.vault_id, '') "
-            "FROM arquivo a "
-            "WHERE a.vault_id IS NULL OR a.vault_id = '' OR NOT EXISTS (SELECT 1 FROM vault v WHERE v.id = a.vault_id);");
+            "FROM arquivo a WHERE a.vault_id IS NULL OR a.vault_id = ''";
+        for (size_t i = 0; i < orfaos.size(); ++i) sqlArq += " OR a.vault_id = ?";
+        auto stmtArq = registro.prepare(sqlArq);
+        int k = 1;
+        for (const auto& o : orfaos) stmtArq.bind(k++, Value::of(o));
 
         while (stmtArq.step()) {
             arquivos.push_back({stmtArq.columnText(0), stmtArq.columnText(1), stmtArq.columnText(2), stmtArq.columnText(3)});
