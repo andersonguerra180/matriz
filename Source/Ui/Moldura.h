@@ -221,7 +221,20 @@ inline int tamanhoComMargem(int tamanho) { return tamanho + 2 * kMargemJanelaNat
 
 // Janela nativa sem barra: transparente e sem a sombra retangular do sistema — o cartão arredondado e a sombra
 // suave são desenhados pela moldura. Com fundo opaco aparecia um retângulo atrás dos cantos arredondados.
+// Só no macOS: no Windows uma janela não opaca vira layered window (repaint inteiro por software a cada quadro, e
+// componentes nativos como o player de vídeo do preview deixam de aparecer). Lá a janela continua opaca, com o fundo da
+// moldura atrás dos cantos — como era antes.
+#if JUCE_MAC
+constexpr bool kJanelaNativaTransparente = true;
+#else
+constexpr bool kJanelaNativaTransparente = false;
+#endif
+
 inline void deixarJanelaTransparente(juce::DialogWindow& dw) {
+    if (!kJanelaNativaTransparente) {
+        dw.setBackgroundColour(paleta().fundo);
+        return;
+    }
     dw.setBackgroundColour(juce::Colours::transparentBlack);
     dw.setDropShadowEnabled(false);
 }
@@ -230,6 +243,10 @@ inline void deixarJanelaTransparente(juce::DialogWindow& dw) {
 // fundo transparente e sem sombra do sistema, senão aparece o retângulo bege (e os cantos pretos) atrás do cartão. O moldura
 // fino e o canto de redimensionar do JUCE também não são desenhados numa janela transparente (MatrizLookAndFeel).
 inline void deixarJanelaTransparente(juce::DocumentWindow& w) {
+    if (!kJanelaNativaTransparente) {
+        w.setBackgroundColour(paleta().fundo);
+        return;
+    }
     w.setBackgroundColour(juce::Colours::transparentBlack);
     w.setDropShadowEnabled(false);
 }
@@ -285,8 +302,13 @@ public:
         // senão aparece um retângulo atrás do cartão arredondado.
         g.saveState();
         g.reduceClipRegion(fora);
-        g.setColour(juce::Colours::transparentBlack);
-        g.getInternalContext().fillRect(cartao.toNearestInt().expanded(1), true);
+        if (kJanelaNativaTransparente) {
+            g.setColour(juce::Colours::transparentBlack);
+            g.getInternalContext().fillRect(cartao.toNearestInt().expanded(1), true);
+        } else {
+            g.setColour(paleta().fundo);  // janela opaca (Windows): os cantos voltam a ter o fundo
+            g.fillPath(fora);
+        }
         desenharSombra(g, cartao.toNearestInt());  // devolve a sombra que o retângulo do conteúdo cobriu nos cantos
         g.restoreState();
         g.setColour(corBordaJanela());
