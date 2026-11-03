@@ -42,6 +42,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Master", juce::String::fromUTF8("Masterização")},
         {"Mixing Package", "Pacote de Mixagem"},
         {"Mastering Package", juce::String::fromUTF8("Pacote de Masterização")},
+        {"Production Package", juce::String::fromUTF8("Pacote de Produção")},
         // Video
         {"Raw Footage", juce::String::fromUTF8("Gravação Bruta")},
         {"Home Video", juce::String::fromUTF8("Vídeo Caseiro")},

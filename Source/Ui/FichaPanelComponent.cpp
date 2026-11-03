@@ -346,6 +346,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Master", juce::String::fromUTF8("Masterização")},
         {"Mixing Package", "Pacote de Mixagem"},
         {"Mastering Package", juce::String::fromUTF8("Pacote de Masterização")},
+        {"Production Package", juce::String::fromUTF8("Pacote de Produção")},
         // Video
         {"Raw Footage", juce::String::fromUTF8("Gravação Bruta")},
         {"Home Video", juce::String::fromUTF8("Vídeo Caseiro")},
@@ -435,7 +436,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     if (cat == MediaCategory::Audio) {
         keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
                 "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-                "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Mixing Package", "Mastering Package", "Raw Audio", "Podcast"};
+                "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Mixing Package", "Mastering Package", "Production Package", "Raw Audio", "Podcast"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                 "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",

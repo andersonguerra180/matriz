@@ -3002,6 +3002,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"tipoc.audio.single", "Single"},
         {"tipoc.audio.mixing_package", "Mixing Package"},
         {"tipoc.audio.mastering_package", "Mastering Package"},
+        {"tipoc.audio.production_package", "Production Package"},
         {"tipoc.audio.demo", "Demo"},
         {"tipoc.audio.soundtrack", "Soundtrack"},
         {"tipoc.audio.stems", "Stems"},

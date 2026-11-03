@@ -33,6 +33,7 @@ const std::vector<TipoContainer>& tiposDeContainer() {
     { "audio.single", CategoriaContainer::Audio, "tipoc.audio.single", "", "Single", CategoriaConteudo::Audio, "ci_aud_music_png" },
     { "audio.mixing_package", CategoriaContainer::Audio, "tipoc.audio.mixing_package", "", "Mixing Package", CategoriaConteudo::Audio, "ci_aud_music_production_png" },
     { "audio.mastering_package", CategoriaContainer::Audio, "tipoc.audio.mastering_package", "", "Mastering Package", CategoriaConteudo::Audio, "ci_aud_mastering_reel_png" },
+    { "audio.production_package", CategoriaContainer::Audio, "tipoc.audio.production_package", "", "Production Package", CategoriaConteudo::Audio, "ci_aud_music_production_png" },
     { "audio.demo", CategoriaContainer::Audio, "tipoc.audio.demo", "", "Demo", CategoriaConteudo::Audio, "ci_aud_music_png" },
     { "audio.soundtrack", CategoriaContainer::Audio, "tipoc.audio.soundtrack", "", "Soundtrack", CategoriaConteudo::Audio, "ci_aud_soundtrack_png" },
     { "audio.stems", CategoriaContainer::Audio, "tipoc.audio.stems", "", "Stems", CategoriaConteudo::Audio, "ci_aud_music_production_png" },
