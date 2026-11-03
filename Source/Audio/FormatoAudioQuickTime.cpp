@@ -141,7 +141,7 @@ public:
                 hr = pBuffer->Lock(&pData, nullptr, &cbCurrentLen);
                 if (SUCCEEDED(hr) && pData) {
                     int framesInBuffer = static_cast<int>(cbCurrentLen / (canais * sizeof(float)));
-                    int toCopy = std::min(framesInBuffer, numSamples - lidos);
+                    int toCopy = (std::min)(framesInBuffer, numSamples - lidos);
                     if (toCopy > 0) {
                         std::memcpy(intercalado_.data() + (lidos * canais), pData, toCopy * canais * sizeof(float));
                         lidos += toCopy;

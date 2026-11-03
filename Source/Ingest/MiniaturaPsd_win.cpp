@@ -52,10 +52,10 @@ bool gerarMiniaturaPsdNativa(const char* origemPath, const char* destinoPath,
                     if (targetW > static_cast<UINT>(ladoMaximoPx) || targetH > static_cast<UINT>(ladoMaximoPx)) {
                         if (origW >= origH) {
                             targetW = static_cast<UINT>(ladoMaximoPx);
-                            targetH = static_cast<UINT>(std::max(1.0, ladoMaximoPx / aspect));
+                            targetH = static_cast<UINT>((std::max)(1.0, ladoMaximoPx / aspect));
                         } else {
                             targetH = static_cast<UINT>(ladoMaximoPx);
-                            targetW = static_cast<UINT>(std::max(1.0, ladoMaximoPx * aspect));
+                            targetW = static_cast<UINT>((std::max)(1.0, ladoMaximoPx * aspect));
                         }
                     }
 
