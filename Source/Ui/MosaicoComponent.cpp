@@ -2989,6 +2989,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.setColour(tk.textoPrimario);
                     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                     const bool emGrupo = agruparNests_ && item.nestTotal > 1;  // janela do container: cada arquivo é ele mesmo
+                    if (emGrupo && !item.nestOrigem.empty() && !item.nestNome.empty()) nome = juce::String::fromUTF8(item.nestNome.c_str());
                     if (emGrupo) {  // NEST / container: o nome ganha o número de arquivos do grupo
                         const juce::String tag = item.nestOrigem.empty()
                                                      ? "  [NEST " + juce::String(item.nestTotal) + "]"
@@ -3211,9 +3212,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText(juce::String::fromUTF8("\xe2\x98\x85"), estrela.toNearestInt(), juce::Justification::centred);
             }
 
-            // Duration badge (bottom-right of thumbnail, or bottom-left if in quarantine mode)
+            // Duration badge (bottom-right of thumbnail, or bottom-left if in quarantine mode). Container PROJECT: sem duração
+            // (a do arquivo-capa não é a do container).
             const juce::String& durText = tx.duracao;
-            if (durText.isNotEmpty()) {
+            if (durText.isNotEmpty() && !containerGrafico) {
                 int badgeW = juce::jmax(36, static_cast<int>(durText.length()) * 7 + 8);
                 int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - badgeW - 4);
                 if (emGrupo && !modoQuarentena_) badgeX -= 20;  // abre espaço para o selo "N" do nest
@@ -3396,7 +3398,11 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText("+", btnMais, juce::Justification::centred);
             }
 
-            const juce::String& nomeExibicaoGrid = tx.nome;
+            // Container PROJECT: o nome dado na ficha (nest.nome), nunca o do arquivo da célula — que nem sempre é a capa
+            // (busca/filtro que só achou outro membro).
+            const juce::String nomeExibicaoGrid = !containerGrafico ? tx.nome
+                                                  : !item.nestNome.empty() ? juce::String::fromUTF8(item.nestNome.c_str())
+                                                  : i18n::t("intake.container_" + juce::String(item.nestOrigem));
             auto areaTexto = bounds.withTop(areaImagem.getBottom() + 2).reduced(6, 0);
             g.setColour(tk.textoPrimario);
             g.setFont(font11Bold);
