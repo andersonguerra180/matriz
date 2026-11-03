@@ -402,6 +402,11 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
         if (mosaico_) {
             mosaico_->atualizarItemEmMemoria(itemId);
+            // Membro de container: o CONTENT/LIST do container sai dos membros (mapaDeNests) — relido pelo evento "nest".
+            if (const auto* item = mosaico_->itemEmMemoria(itemId); item != nullptr && item->nestTotal > 1 && !item->nestOrigem.empty()) {
+                if (loteMetadadosProfundidade_ > 0) nestsAdiadosDuranteLote_ = true;
+                else EventBus::obterInstancia().dispararItemAlterado("", "nest");
+            }
             if (loteMetadadosProfundidade_ > 0) {
                 filtrosAdiadosDuranteLote_ = true;
             } else {
@@ -433,6 +438,10 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         // aplicarFiltrosAdicionais atualiza o predicado enquanto o lote do
         // mosaico ainda está aberto; finalizar faz uma única ordenação.
         if (mosaico_) mosaico_->finalizarLoteAtualizacao();
+        if (loteMetadadosProfundidade_ == 0 && nestsAdiadosDuranteLote_) {
+            nestsAdiadosDuranteLote_ = false;
+            EventBus::obterInstancia().dispararItemAlterado("", "nest");
+        }
         if (loteMetadadosProfundidade_ == 0 && contagensAdiadasDuranteLote_) {
             contagensAdiadasDuranteLote_ = false;
             atualizarContagens();

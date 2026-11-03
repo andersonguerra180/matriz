@@ -361,6 +361,8 @@ private:
     int versaoSnapshotDoFunil_ = -1;
     int loteMetadadosProfundidade_ = 0;
     bool filtrosAdiadosDuranteLote_ = false;
+    // Editou membro de container: CONTENT/LIST do container (seção, sub-chips, barra LIST) são relidos no fim do lote.
+    bool nestsAdiadosDuranteLote_ = false;
     bool contagensAdiadasDuranteLote_ = false;
     // Arquivos vindos de "Show content in grid" (Folder Map/árvores): fica
     // guardado aqui pra sobreviver a toda reaplicação de filtros (ex.: salvar

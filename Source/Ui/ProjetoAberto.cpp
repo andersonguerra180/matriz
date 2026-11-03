@@ -5637,14 +5637,17 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)), "
             "n.origem, n.capa_imagem, n.icone, n.nome, n.tipo_container, "
             "(SELECT NULLIF(TRIM(i3.collection_type), '') FROM item i3 WHERE i3.id = ni.item_id), "
-            "(SELECT NULLIF(TRIM(i4.lista), '') FROM item i4 WHERE i4.id = ni.item_id) "
+            "(SELECT NULLIF(TRIM(i4.lista), '') FROM item i4 WHERE i4.id = ni.item_id), "
+            "(SELECT i5.tipo_midia = 'foto' FROM item i5 WHERE i5.id = ni.item_id) "
             "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
         std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe, nomeDe, tipoDe;
-        std::map<std::string, std::map<std::string, int>> contentsDe;  // nest -> CONTENT dos membros -> quantos
-        std::map<std::string, std::map<std::string, int>> listasDe;    // nest -> LIST dos membros -> quantos
+        // nest -> CONTENT/LIST dos membros -> quantos. As fotos (capa, artes, "Album Cover") contam à parte e só valem se
+        // nenhum outro membro tiver o campo: a foto de capa nunca decide a categoria de um container PROJECT.
+        std::map<std::string, std::map<std::string, int>> contentsDe, listasDe, contentsFotoDe, listasFotoDe;
         while (st.step()) {
-            if (!st.columnIsNull(8)) ++contentsDe[st.columnText(1)][st.columnText(8)];
-            if (!st.columnIsNull(9)) ++listasDe[st.columnText(1)][st.columnText(9)];
+            const bool foto = !st.columnIsNull(10) && st.columnInt(10) != 0;
+            if (!st.columnIsNull(8)) ++(foto ? contentsFotoDe : contentsDe)[st.columnText(1)][st.columnText(8)];
+            if (!st.columnIsNull(9)) ++(foto ? listasFotoDe : listasDe)[st.columnText(1)][st.columnText(9)];
             membros[st.columnText(1)].push_back(st.columnText(0));
             capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
             if (!st.columnIsNull(3)) origemDe[st.columnText(1)] = st.columnText(3);
@@ -5663,16 +5666,21 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             if (auto iit = iconeDe.find(nid); iit != iconeDe.end()) info.icone = iit->second;
             if (auto nmit = nomeDe.find(nid); nmit != nomeDe.end()) info.nome = nmit->second;
             if (auto tit = tipoDe.find(nid); tit != tipoDe.end()) info.tipo = tit->second;
-            if (auto cit = contentsDe.find(nid); cit != contentsDe.end()) {
+            // O mais frequente (empate: a ordem alfabética); sem nenhum membro que não seja foto, o das fotos.
+            auto maisFrequente = [&nid](const std::map<std::string, std::map<std::string, int>>& principal,
+                                        const std::map<std::string, std::map<std::string, int>>& fotos) {
+                const std::map<std::string, int>* contagem = nullptr;
+                if (auto it = principal.find(nid); it != principal.end()) contagem = &it->second;
+                else if (auto itf = fotos.find(nid); itf != fotos.end()) contagem = &itf->second;
+                if (contagem == nullptr) return std::string();
+                std::string valor;
                 int maior = 0;
-                for (const auto& [content, n] : cit->second)
-                    if (n > maior) { maior = n; info.content = content; }  // empate: a ordem alfabética
-            }
-            if (auto lit = listasDe.find(nid); lit != listasDe.end()) {
-                int maior = 0;
-                for (const auto& [lista, n] : lit->second)
-                    if (n > maior) { maior = n; info.lista = lista; }  // empate: a ordem alfabética
-            }
+                for (const auto& [v, n] : *contagem)
+                    if (n > maior) { maior = n; valor = v; }
+                return valor;
+            };
+            info.content = maisFrequente(contentsDe, contentsFotoDe);
+            info.lista = maisFrequente(listasDe, listasFotoDe);
             info.total = static_cast<int>(itens.size());
             for (const auto& id : itens) out[id] = info;
         }
