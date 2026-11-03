@@ -173,6 +173,8 @@ private:
     // aos outros três campos).
     void aplicarCreatorAosSelecionados(const juce::String& valor);
     void aplicarSubjectAosSelecionados(const juce::String& valor);
+    void aplicarListaAosSelecionados(const juce::String& valor);  // LIST (coluna item.lista), abaixo de SUBJECT
+    void mostrarEditorListaLote(juce::Rectangle<int> screenBounds);
     void mostrarEditorCreatorLote(juce::Rectangle<int> screenBounds);
     void mostrarEditorSubjectLote(juce::Rectangle<int> screenBounds);
     void mostrarEditorContentLote(juce::Rectangle<int> screenBounds);
@@ -319,6 +321,7 @@ private:
     std::unique_ptr<juce::TextButton> btnCreatorLote_;
     std::unique_ptr<juce::TextButton> btnContentLote_;
     std::unique_ptr<juce::TextButton> btnSubjectLote_;
+    std::unique_ptr<juce::TextButton> btnListaLote_;
     std::unique_ptr<juce::TextButton> btnEventDateLote_;
     std::unique_ptr<juce::TextButton> btnGeolocationLote_;
 

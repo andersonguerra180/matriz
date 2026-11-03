@@ -2314,6 +2314,12 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnSubjectLote_ = std::move(btnSubject);
     addAndMakeVisible(*btnSubjectLote_);
 
+    auto btnLista = criarBotaoLote(i18n::t("intake.btn_list_lote"), corDoNivelHierarquia(NH::Lista), [this] {
+        if (btnListaLote_) mostrarEditorListaLote(btnListaLote_->getScreenBounds());
+    });
+    btnListaLote_ = std::move(btnLista);
+    addAndMakeVisible(*btnListaLote_);
+
     // Item 2 (nova lista) — o default (herdar o ano de DATE CREATED) já
     // existe em FichaPanelComponent; este botão só dá ao operador um jeito
     // rápido de sobrescrever em lote no INTAKE, antes de mandar pra GRID.
@@ -3036,6 +3042,21 @@ void IntakeWorkspaceComponent::aplicarSubjectAosSelecionados(const juce::String&
     });
 }
 
+void IntakeWorkspaceComponent::aplicarListaAosSelecionados(const juce::String& valor) {
+    std::vector<std::string> ids;
+    for (int idx : indicesFiltrados_) {
+        if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+        if (todosItens_[static_cast<size_t>(idx)].selecionado)
+            ids.push_back(todosItens_[static_cast<size_t>(idx)].id);
+    }
+    if (ids.empty()) return;
+    ProjetoAberto* projeto = &projeto_;
+    std::string valorStd = valor.trim().toStdString();
+    poolMetadadoLote_.addJob([projeto, ids, valorStd, nests = containersDosIds(ids)] {
+        projeto->salvarMetadadoEmLote(comMembrosDosContainers(*projeto, ids, nests), {{"lista", valorStd}});
+    });
+}
+
 void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::String& valor) {
     juce::String v = valor.trim();
     if (v.isEmpty()) return;
@@ -3091,7 +3112,7 @@ std::vector<juce::String> IntakeWorkspaceComponent::valoresExistentesParaColuna(
     std::vector<juce::String> out;
     // CREATOR/SUBJECT: a mesma lista da ficha do Metadata (histórico + valores
     // gravados) — os dois lados sugerem o que o outro já usou.
-    if (coluna == "dc_creator" || coluna == "dc_subject") {
+    if (coluna == "dc_creator" || coluna == "dc_subject" || coluna == "lista") {
         try {
             for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projeto_.projeto().registro(), coluna))
                 out.push_back(juce::String::fromUTF8(v.c_str()));
@@ -3122,6 +3143,15 @@ void IntakeWorkspaceComponent::mostrarEditorSubjectLote(juce::Rectangle<int> scr
         valoresExistentesParaColuna("dc_subject"),
         corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia::Subject),
         [this](const juce::String& valor) { aplicarSubjectAosSelecionados(valor); });
+    juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
+}
+
+void IntakeWorkspaceComponent::mostrarEditorListaLote(juce::Rectangle<int> screenBounds) {
+    auto content = std::make_unique<AutocompleteLotePopupContent>(
+        i18n::t("intake.lote_lista_titulo"), i18n::t("intake.lote_lista_dica"),
+        valoresExistentesParaColuna("lista"),
+        corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia::Lista),
+        [this](const juce::String& valor) { aplicarListaAosSelecionados(valor); });
     juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
 }
 
@@ -4325,15 +4355,15 @@ void IntakeWorkspaceComponent::resized() {
     }
     barra_.finalizarCard();
 
-    // 4. BATCH ASSIGNMENT em duas colunas, com o quadradinho de cor; Source medium e Geo location na linha inteira.
+    // 4. BATCH ASSIGNMENT: Source medium na linha inteira e três pares iguais, na ordem CONTENT -> SUBJECT -> LIST.
     barra_.iniciarCard(i18n::t("intake.secao_batch"));
     btnSourceMediumLote_->setBounds(corpo.removeFromTop(kChipH));
     corpo.removeFromTop(kGap);
-    linhaDupla(btnCreatorLote_.get(), btnContentLote_.get(), kChipH);
+    linhaDupla(btnContentLote_.get(), btnSubjectLote_.get(), kChipH);
     corpo.removeFromTop(kGap);
-    linhaDupla(btnSubjectLote_.get(), btnEventDateLote_.get(), kChipH);
+    linhaDupla(btnListaLote_.get(), btnCreatorLote_.get(), kChipH);
     corpo.removeFromTop(kGap);
-    btnGeolocationLote_->setBounds(corpo.removeFromTop(kChipH));
+    linhaDupla(btnEventDateLote_.get(), btnGeolocationLote_.get(), kChipH);
     barra_.finalizarCard();
 
     // 5. ACTIONS: Approve selected | Approve all lado a lado, Reject marked embaixo; atalho R com o "?" (a frase longa
@@ -4741,7 +4771,7 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     // correspondente no Visual Editor (setada no construtor) — não passam
     // por updatePill, que zeraria essa cor a cada mudança de tema/locale.
     if (btnGeolocationLote_) {
-        btnGeolocationLote_->setButtonText("GEO LOCATION");
+        btnGeolocationLote_->setButtonText(i18n::t("intake.btn_geo_location_lote"));  // meia linha, ao lado de Event date
     }
     if (btnConfirmarSelecao_) {
         btnConfirmarSelecao_->setButtonText(i18n::t("intake.btn_enviar_selecionados"));
