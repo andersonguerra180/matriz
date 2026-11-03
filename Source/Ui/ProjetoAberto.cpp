@@ -4217,14 +4217,16 @@ std::vector<std::string> itensSoltosDoDiretorio(matriz::db::Database& db, const 
     std::vector<std::string> out;
     const std::string prefixo = dir + "/";
     const int len = comprimentoUtf8(prefixo);
+    // "Começa com dir/" como intervalo [dir/, dir0) ('0' é o byte seguinte a '/'): usa o índice do caminho de origem.
+    // substr(...) = ? varria os arquivos todos a cada pasta — "use all proposals" travava a tela minutos num HD.
     auto st = db.prepare(
-        std::string("SELECT a.item_id FROM arquivo a WHERE substr(a.caminho_absoluto_origem, 1, ?) = ? ") +
+        std::string("SELECT a.item_id FROM arquivo a WHERE a.caminho_absoluto_origem >= ? AND a.caminho_absoluto_origem < ? ") +
         (recursivo ? "" : "AND instr(substr(a.caminho_absoluto_origem, ?), '/') = 0 ") +
         "AND a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = a.item_id ORDER BY eh_master DESC, id LIMIT 1) "
         "AND a.item_id NOT IN (SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
     int k = 1;
-    st.bind(k++, matriz::db::Value::of(static_cast<int>(len)));
     st.bind(k++, matriz::db::Value::of(prefixo));
+    st.bind(k++, matriz::db::Value::of(dir + "0"));
     if (!recursivo) st.bind(k++, matriz::db::Value::of(static_cast<int>(len + 1)));
     st.bind(k++, matriz::db::Value::of(mapaId));
     while (st.step()) out.push_back(st.columnText(0));
@@ -4322,11 +4324,11 @@ int ProjetoAberto::gerarPropostasDeNovasPastas(const std::string& mapaId) {
             // Diretórios que contêm arquivos + ancestrais até a raiz.
             std::set<std::string> dirs{raiz.caminho};
             {
-                const std::string prefixo = raiz.caminho + "/";
-                const int len = comprimentoUtf8(prefixo);
-                auto st = db.prepare("SELECT DISTINCT a.caminho_absoluto_origem FROM arquivo a WHERE substr(a.caminho_absoluto_origem, 1, ?) = ?");
-                st.bind(1, Value::of(static_cast<int>(len)));
-                st.bind(2, Value::of(prefixo));
+                // Intervalo [raiz/, raiz0): usa o índice do caminho de origem (ver itensSoltosDoDiretorio).
+                auto st = db.prepare("SELECT DISTINCT a.caminho_absoluto_origem FROM arquivo a "
+                                     "WHERE a.caminho_absoluto_origem >= ? AND a.caminho_absoluto_origem < ?");
+                st.bind(1, Value::of(raiz.caminho + "/"));
+                st.bind(2, Value::of(raiz.caminho + "0"));
                 while (st.step()) {
                     juce::File d = juce::File(juce::String::fromUTF8(st.columnText(0).c_str())).getParentDirectory();
                     const juce::File r(juce::String::fromUTF8(raiz.caminho.c_str()));
