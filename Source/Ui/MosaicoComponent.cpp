@@ -2511,6 +2511,15 @@ void MosaicoComponent::mouseDoubleClick(const juce::MouseEvent& e) {
     }
 
     const auto& item = itensFiltrados_[static_cast<size_t>(indice)];
+    // PROJECT (produção, YouTube, vinil, fita, tipos sem player): a janela do container, com as pastas de origem.
+    // Antes do teste de offline: com a capa offline o duplo clique abria o relink só dela e o container nunca abria,
+    // sem como ver quais membros estão offline (lá dentro cada um tem o selo OFFLINE e o Locate Offline do menu).
+    if (agruparNests_ && item.nestTotal > 1 && abreNaJanelaDoContainer(juce::String(item.nestOrigem)) && aoAbrirJanelaDoContainer) {
+        aoAbrirJanelaDoContainer(item.nestId, item.nestNome.empty() ? juce::String::fromUTF8(item.titulo.c_str())
+                                                                    : juce::String::fromUTF8(item.nestNome.c_str()));
+        return;
+    }
+
     if (item.offline) {
         if (aoAbrirRelinkOffline) {
             aoAbrirRelinkOffline(item.id);
@@ -2520,12 +2529,6 @@ void MosaicoComponent::mouseDoubleClick(const juce::MouseEvent& e) {
 
     // Container com player próprio (DDP = player de CD): abre o player em vez do preview do 1º arquivo.
     if (agruparNests_ && item.nestTotal > 1 && !item.nestOrigem.empty() && abrirContainerPorTipo(projeto_, item.nestId, item.nestOrigem)) return;
-    // PROJECT (produção, YouTube, vinil, fita, tipos sem player): a janela do container, com as pastas de origem.
-    if (agruparNests_ && item.nestTotal > 1 && abreNaJanelaDoContainer(juce::String(item.nestOrigem)) && aoAbrirJanelaDoContainer) {
-        aoAbrirJanelaDoContainer(item.nestId, item.nestNome.empty() ? juce::String::fromUTF8(item.titulo.c_str())
-                                                                    : juce::String::fromUTF8(item.nestNome.c_str()));
-        return;
-    }
 
     if (aoAbrirPreview) aoAbrirPreview(item.id);
 }
