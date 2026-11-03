@@ -727,8 +727,28 @@ target_include_directories(matriz PRIVATE Source)
 if(APPLE)
     find_path(MATRIZ_LIBUSB_INCLUDE libusb.h PATH_SUFFIXES libusb-1.0 HINTS /opt/homebrew/opt/libusb/include /usr/local/opt/libusb/include)
     find_library(MATRIZ_LIBUSB_LIB NAMES usb-1.0 HINTS /opt/homebrew/opt/libusb/lib /usr/local/opt/libusb/lib)
+    # O app sai universal (CMAKE_OSX_ARCHITECTURES, topo do arquivo) e a libusb do Homebrew tem só a arquitetura
+    # da máquina (arm64 em /opt/homebrew, x86_64 em /usr/local): o link da libmatriz_mtp falhava na que faltava
+    # ("symbol(s) not found for architecture ..."), derrubando o build inteiro. Faltou arquitetura: Android USB
+    # desligado neste build, com aviso, em vez de quebrar.
+    set(MATRIZ_LIBUSB_ARCHS_OK FALSE)
+    if(MATRIZ_LIBUSB_LIB)
+        execute_process(COMMAND lipo -archs "${MATRIZ_LIBUSB_LIB}" OUTPUT_VARIABLE MATRIZ_LIBUSB_ARCHS
+                        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        set(MATRIZ_LIBUSB_ARCHS_OK TRUE)
+        foreach(_arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+            if(NOT " ${MATRIZ_LIBUSB_ARCHS} " MATCHES " ${_arch} ")
+                set(MATRIZ_LIBUSB_ARCHS_OK FALSE)
+            endif()
+        endforeach()
+        if(NOT MATRIZ_LIBUSB_ARCHS_OK)
+            message(WARNING "MATRIZ: a libusb em ${MATRIZ_LIBUSB_LIB} tem só '${MATRIZ_LIBUSB_ARCHS}', o build pede "
+                            "'${CMAKE_OSX_ARCHITECTURES}'. PHONE DUMP > ANDROID USB desligado neste build. Para ligar: "
+                            "libusb com essas arquiteturas, ou -DCMAKE_OSX_ARCHITECTURES=${MATRIZ_LIBUSB_ARCHS}.")
+        endif()
+    endif()
 endif()
-if(APPLE AND MATRIZ_LIBUSB_INCLUDE AND MATRIZ_LIBUSB_LIB)
+if(APPLE AND MATRIZ_LIBUSB_INCLUDE AND MATRIZ_LIBUSB_LIB AND MATRIZ_LIBUSB_ARCHS_OK)
     set(MATRIZ_LIBMTP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/libmtp-1.1.23")
     add_library(matriz_mtp SHARED
         "${MATRIZ_LIBMTP_DIR}/src/libmtp.c"
