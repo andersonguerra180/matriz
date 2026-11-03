@@ -898,6 +898,10 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // Tipo escolhido em "Group as Project Container" (ex.: "audio.album", "videos.youtube"). NULL = container do IMPORT de antes
     // desta coluna (vale o que `origem` diz) ou nest comum. Projetos antigos abrem iguais.
     garantirColuna(registro, "nest", "tipo_container", "TEXT");
+    // Mastering Package ganhou ícone próprio (reel-to-reel): troca o ícone padrão antigo nos que já existiam; um ícone
+    // escolhido na ficha fica como está.
+    registro.exec("UPDATE nest SET icone = 'ci_aud_mastering_reel_png' "
+                  "WHERE tipo_container = 'audio.mastering_package' AND icone = 'ci_aud_music_production_png'");
     garantirColuna(registro, "acervo_pasta", "proposta_id", "TEXT");
     garantirColuna(registro, "acervo_pasta", "origem_caminho", "TEXT");
     registro.exec(
