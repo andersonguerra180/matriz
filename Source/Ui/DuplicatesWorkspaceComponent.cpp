@@ -2768,20 +2768,10 @@ void DuplicatesWorkspaceComponent::run() {
         };
         static const int kLarg[11] = {6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5};
         // Critérios se somam (E), nunca um apaga o outro. Com SHA-256 marcado só valem pares de mesmo SHA (já gerados em
-        // B2): o pHash vira filtro sobre eles — sai o par com imagem que não gerou pHash (arquivo que não é imagem não é
-        // vetado, o pHash não se aplica) — e a busca por similaridade abaixo não gera par novo (par parecido mas de SHA
-        // diferente não cumpre o SHA).
+        // B2) e a busca por similaridade abaixo não gera par novo (par parecido mas de SHA diferente não cumpre o SHA).
+        // Par de mesmo SHA não é vetado por falta de pHash: bytes iguais já são a mesma imagem, e RAW/HEIC/PSD sem
+        // pHash sumiriam do resultado mesmo sendo cópias exatas.
         const bool shaLigado = activeFilters_.coincidirSha256;
-        if (shaLigado) {
-            std::unordered_set<std::string> imagemSemHash;
-            for (auto i : imagens)
-                if (!phashDe.count(items[i].arquivoId)) imagemSemHash.insert(items[i].itemId);
-            gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
-                [&](const DuplicateGroup& g) {
-                    return g.criterio == "IDENTICAL" && (imagemSemHash.count(g.original.itemId) || imagemSemHash.count(g.duplicata.itemId));
-                }), gruposDetectados_.end());
-            achadosScan_ = static_cast<int>(gruposDetectados_.size());
-        }
         for (int faixa = 0, desloc = 0; faixa < (shaLigado ? 0 : 11); desloc += kLarg[faixa], ++faixa) {
             if (threadShouldExit()) return;
             progressoScan_ = 0.9 + 0.1 * static_cast<double>(faixa) / 11.0;
