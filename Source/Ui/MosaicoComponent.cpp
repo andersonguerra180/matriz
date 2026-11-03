@@ -154,7 +154,7 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 auto it = nests.find(item.id);
                 if (it == nests.end()) {
                     item.nestId.clear(); item.nestCapaId.clear(); item.nestTotal = 0; item.nestCapa = false;
-                    item.nestOrigem.clear(); item.nestCapaImagem.clear(); item.nestIcone.clear(); item.nestContent.clear();
+                    item.nestOrigem.clear(); item.nestCapaImagem.clear(); item.nestIcone.clear(); item.nestContent.clear(); item.nestLista.clear();
                     continue;
                 }
                 item.nestId = it->second.nestId;
@@ -163,6 +163,7 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 item.nestCapa = (item.id == it->second.capaId);
                 item.nestOrigem = it->second.origem;  // container (com origem) continua container; sem origem é NEST
                 item.nestContent = it->second.content;
+                item.nestLista = it->second.lista;
                 item.nestCapaImagem = it->second.capaImagem.empty() ? std::string()
                                       : pastaDoProjeto.getChildFile(juce::String(it->second.capaImagem)).getFullPathName().toStdString();
                 item.nestIcone = it->second.icone;
@@ -3396,12 +3397,33 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             g.drawText(nomeExibicaoGrid, areaTexto.removeFromTop(textAreaH / 2),
                        juce::Justification::centredLeft, true);
 
-            // Subtitle: file type + folder
-            juce::String info2 = tx.subtituloGrade;
-            if (item.offline) info2 += "  |  OFFLINE";
-            g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
-            g.setFont(font95Normal);
-            g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
+            if (containerGrafico) {
+                // Container PROJECT: os arquivos dele têm vários formatos, então no lugar de "WAV | pasta" vai uma barra com o
+                // LIST do container (o OFFLINE da capa continua no selo sobre a miniatura).
+                const auto barra = bounds.toFloat().withTop(static_cast<float>(areaTexto.getY())).reduced(3.0f, 0.0f).withTrimmedBottom(3.0f);
+                juce::Path fundo;
+                fundo.addRoundedRectangle(barra.getX(), barra.getY(), barra.getWidth(), barra.getHeight(),
+                                          kRaioCardGrade - 3.0f, kRaioCardGrade - 3.0f, false, false, true, true);
+                g.setColour(tk.acento.withAlpha(0.16f));
+                g.fillPath(fundo);
+                auto areaBarra = barra.toNearestInt().reduced(7, 0);
+                const juce::String rotulo = i18n::t("catwork.painel_lista").toUpperCase();
+                g.setColour(tk.textoTerciario);
+                g.setFont(font9Bold);
+                g.drawText(rotulo, areaBarra.removeFromLeft(juce::GlyphArrangement::getStringWidthInt(font9Bold, rotulo) + 6),
+                           juce::Justification::centredLeft, false);
+                const juce::String lista = juce::String::fromUTF8(item.nestLista.c_str());
+                g.setColour(lista.isEmpty() ? tk.textoTerciario : tk.textoPrimario);
+                g.setFont(lista.isEmpty() ? font95Normal : font9Bold);
+                g.drawText(lista.isEmpty() ? juce::String::fromUTF8("\xe2\x80\x94") : lista, areaBarra, juce::Justification::centredLeft, true);
+            } else {
+                // Subtitle: file type + folder
+                juce::String info2 = tx.subtituloGrade;
+                if (item.offline) info2 += "  |  OFFLINE";
+                g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
+                g.setFont(font95Normal);
+                g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
+            }
         }
     }
 
