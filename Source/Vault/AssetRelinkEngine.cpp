@@ -38,7 +38,8 @@ bool relinkarConteudoIdentico(matriz::db::Database& db, const juce::File& pastaP
                                               "RELINKED",
                                               "Asset relocated with matching checksum",
                                               matriz::preservation::Outcome::Success,
-                                              newAbsPath, "Operator");
+                                              newAbsPath,
+                                              "");  // sem agente: "Operator" não existe em preservation_agent e a FK descartava o evento
 
         // Project Log
         juce::StringArray details;

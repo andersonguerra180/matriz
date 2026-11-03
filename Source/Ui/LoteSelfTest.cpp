@@ -250,6 +250,22 @@ void rodarTesteRelinkMesmoAssim(const Checar& checar) {
         checar(um("SELECT COUNT(*) FROM reconciliacao_em_curso WHERE ? IS NOT NULL", "x") == "0",
                "the master lock is back on (no reconciliation mark left)");
 
+        // Conteúdo igual também deixa o evento RELINKED (antes o agente "Operator" violava a FK e o evento sumia).
+        {
+            const auto orig4 = raiz.getChildFile("orig/foto4.jpg");
+            jpeg(orig4, 20);
+            const std::string item4 = novoItem("RLK-4", orig4);
+            const auto movido = raiz.getChildFile("movido/foto4.jpg");
+            movido.getParentDirectory().createDirectory();
+            orig4.moveFileTo(movido);
+            std::string mesmo;
+            juce::String erro4;
+            checar(AssetRelinkEngine::executarRelinkIndividual(reg, pa.projeto().pasta(), item4, movido, false, mesmo, erro4) &&
+                       um("SELECT COUNT(*) FROM preservation_event WHERE item_id = ? AND event_type = 'RELINKED' "
+                          "AND event_outcome = 'SUCCESS'", item4) == "1",
+                   "relink with the same content records the PREMIS event too (" + erro4 + ")");
+        }
+
         // Lote (Locate Offline -> Relink anyway (N)): um candidato só entra; dois com o mesmo nome ficam para o individual.
         const auto orig2 = raiz.getChildFile("orig/foto2.jpg");
         const auto orig3 = raiz.getChildFile("orig/foto3.jpg");
