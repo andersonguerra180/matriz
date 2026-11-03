@@ -5571,17 +5571,20 @@ void BackupWorkspaceComponent::completarPacoteExistente(const juce::File& pasta,
     for (auto& m : projeto_.listarFolderMaps()) mapas.push_back({m.id, m.nome});
     auto* projeto = &projeto_.projeto();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    poolExport_.addJob([safeThis, projeto, pasta, selecaoAtual, mapas, mapaPadrao, cancelado] {
+    auto feitoReportado = std::make_shared<std::atomic<int>>(-1);
+    poolExport_.addJob([safeThis, projeto, pasta, selecaoAtual, mapas, mapaPadrao, cancelado, feitoReportado] {
         pk::ResultadoCompletar rc;
         pk::ResultadoVerificacao depois;
         try {
             rc = pk::completarPacote(projeto->registro(), projeto->pasta(), pasta, selecaoAtual, mapas, mapaPadrao,
-                                     [cancelado](int feito, int total) {
-                                         juce::MessageManager::callAsync([feito, total] {
-                                             ProgressoGlobal::obterInstancia().atualizarFracao(
-                                                 "export", static_cast<double>(feito) / std::max(1, total),
-                                                 juce::String(feito) + " / " + juce::String(total));
-                                         });
+                                     [cancelado, feitoReportado](int feito, int total) {
+                                         // A conferência de hash chama a cada bloco lido: só posta quando o número muda.
+                                         if (feitoReportado->exchange(feito) != feito)
+                                             juce::MessageManager::callAsync([feito, total] {
+                                                 ProgressoGlobal::obterInstancia().atualizarFracao(
+                                                     "export", static_cast<double>(feito) / std::max(1, total),
+                                                     juce::String(feito) + " / " + juce::String(total));
+                                             });
                                          return !cancelado->load();
                                      });
             // O relatório que abre no fim é uma verificação nova: mostra o que de fato ficou no pacote.

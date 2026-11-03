@@ -760,7 +760,13 @@ ResultadoCompletar completarPacote(matriz::db::Database& registro, const juce::F
                                    const std::vector<std::pair<std::string, juce::String>>& mapas,
                                    const std::string& mapaPadrao, const AoProgredir& aoProgredir) {
     ResultadoCompletar rc;
-    auto v = verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, {}, true);
+    // A conferência por SHA-256 lê o pacote inteiro: mesmo progresso e mesmo Cancelar da cópia. Cancelada no meio, a lista de
+    // problemas está incompleta — nada é copiado nem regravado.
+    auto v = verificar(registro, pastaProjeto, pastaPacote, selecaoAtual, mapas, mapaPadrao, aoProgredir, true);
+    if (v.r.cancelado) {
+        rc.cancelado = true;
+        return rc;
+    }
     if (v.r.status != StatusLeitura::Ok) {
         rc.falhas.push_back(v.r.erro.isNotEmpty() ? v.r.erro.toStdString() : std::string("not a package"));
         return rc;
