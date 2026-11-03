@@ -2255,8 +2255,15 @@ void CatalogWorkspaceComponent::atualizarBotoesSidebar() {
 }
 
 void CatalogWorkspaceComponent::construirSubChipsProjetos() {
-    for (auto& b : botoesContentProjetos_) if (b) { b->setLookAndFeel(nullptr); removeChildComponent(b.get()); }
+    for (auto& b : botoesContentProjetos_) if (b) { b->setLookAndFeel(nullptr); subChipsContainer_.removeChildComponent(b.get()); }
     botoesContentProjetos_.clear();
+    if (!subChipsViewport_) {
+        subChipsViewport_ = std::make_unique<juce::Viewport>();
+        subChipsViewport_->setViewedComponent(&subChipsContainer_, false);
+        subChipsViewport_->setScrollBarsShown(true, false);
+        subChipsViewport_->setScrollBarThickness(6);
+        addChildComponent(*subChipsViewport_);
+    }
     const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
     for (const auto& [content, n] : contentsDeProjetos_) {
         const juce::String rotulo = content.empty() ? matriz::i18n::t("catwork.projects_sem_content")
@@ -2276,7 +2283,7 @@ void CatalogWorkspaceComponent::construirSubChipsProjetos() {
             aplicarFiltrosAdicionais();
             atualizarContagens();
         };
-        addChildComponent(*btn);
+        subChipsContainer_.addChildComponent(*btn);
         botoesContentProjetos_.push_back(std::move(btn));
     }
     atualizarSubChipsProjetos();
@@ -2293,6 +2300,11 @@ void CatalogWorkspaceComponent::atualizarSubChipsProjetos() {
         b.setColour(juce::TextButton::textColourOffId, ativo ? tema().textoPrimario : tema().textoSecundario);
         barra::definirAtivo(b, ativo);
         if (b.isVisible() != visiveis) { b.setVisible(visiveis); mudouVisibilidade = true; }
+    }
+    if (subChipsViewport_ && subChipsViewport_->isVisible() != visiveis) {
+        subChipsViewport_->setVisible(visiveis);
+        if (!visiveis) subChipsViewport_->setViewPosition(0, 0);
+        mudouVisibilidade = true;
     }
     if (mudouVisibilidade) resized();  // as linhas dos sub-chips entram/saem do card MEDIA TYPE
 }
@@ -2814,17 +2826,33 @@ void CatalogWorkspaceComponent::resized() {
         const bool comSubChips = !botoesContentProjetos_.empty() && botoesContentProjetos_.front()->isVisible();
         auto subChipsSe = [&](size_t a, size_t b) {
             if (!comSubChips || (categorias_[a].chave != "projects" && categorias_[b].chave != "projects")) return;
-            const int recuo = 12, meiaSub = (corpo.getWidth() - recuo - kGap) / 2;
-            for (size_t k = 0; k < botoesContentProjetos_.size(); ++k) {
-                auto linha = novaLinha().withTrimmedLeft(recuo);
-                const bool parCabe = k + 1 < botoesContentProjetos_.size() &&
-                                     larguraNecessariaDoChip(botoesContentProjetos_[k]->getButtonText(), true) <= meiaSub &&
-                                     larguraNecessariaDoChip(botoesContentProjetos_[k + 1]->getButtonText(), true) <= meiaSub;
-                if (!parCabe) { botoesContentProjetos_[k]->setBounds(linha); continue; }
-                botoesContentProjetos_[k]->setBounds(linha.removeFromLeft(meiaSub));
-                linha.removeFromLeft(kGap);
-                botoesContentProjetos_[++k]->setBounds(linha);
-            }
+            // Os sub-chips ficam numa caixa que rola sozinha passando de kMaxLinhas linhas (a barra lateral não rola).
+            constexpr int recuo = 12, kMaxLinhas = 6;
+            auto montar = [&](int largura, bool aplicar) {
+                const int meiaSub = (largura - kGap) / 2;
+                int linhas = 0;
+                for (size_t k = 0; k < botoesContentProjetos_.size(); ++k, ++linhas) {
+                    juce::Rectangle<int> linha(0, linhas * (kChipH + kGap), largura, kChipH);
+                    const bool parCabe = k + 1 < botoesContentProjetos_.size() &&
+                                         larguraNecessariaDoChip(botoesContentProjetos_[k]->getButtonText(), true) <= meiaSub &&
+                                         larguraNecessariaDoChip(botoesContentProjetos_[k + 1]->getButtonText(), true) <= meiaSub;
+                    if (!parCabe) { if (aplicar) botoesContentProjetos_[k]->setBounds(linha); continue; }
+                    if (aplicar) botoesContentProjetos_[k]->setBounds(linha.removeFromLeft(meiaSub));
+                    linha.removeFromLeft(kGap);
+                    ++k;
+                    if (aplicar) botoesContentProjetos_[k]->setBounds(linha);
+                }
+                return linhas;
+            };
+            const int largura = corpo.getWidth() - recuo;
+            int linhas = montar(largura, false);
+            const bool rola = linhas > kMaxLinhas;
+            const int larguraConteudo = rola ? largura - subChipsViewport_->getScrollBarThickness() - 2 : largura;
+            linhas = montar(larguraConteudo, true);
+            auto altura = [](int n) { return n > 0 ? n * kChipH + (n - 1) * kGap : 0; };
+            corpo.removeFromTop(kGap);
+            subChipsViewport_->setBounds(corpo.removeFromTop(altura(juce::jmin(linhas, kMaxLinhas))).withTrimmedLeft(recuo));
+            subChipsContainer_.setSize(larguraConteudo, altura(linhas));
         };
         for (size_t i = static_cast<size_t>(indiceInicioMediaType_); i < botoesCategorias_.size(); ++i) {
             const bool inteira = precisaLinhaInteira(i) || i + 1 >= botoesCategorias_.size() || precisaLinhaInteira(i + 1);

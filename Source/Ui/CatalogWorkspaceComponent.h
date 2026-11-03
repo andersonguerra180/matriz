@@ -319,6 +319,9 @@ private:
     // Escolha única; "" = os containers sem CONTENT. Desligar PROJECTS (ou Reset) solta a escolha.
     std::vector<std::pair<std::string, int>> contentsDeProjetos_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesContentProjetos_;
+    // Muitos CONTENTs: os sub-chips rolam numa caixa de altura limitada dentro do MEDIA TYPE (a barra lateral não rola).
+    juce::Component subChipsContainer_;
+    std::unique_ptr<juce::Viewport> subChipsViewport_;
     std::optional<std::string> contentProjetoSelecionado_;
     void construirSubChipsProjetos();
     void atualizarSubChipsProjetos();  // destaque e visibilidade
