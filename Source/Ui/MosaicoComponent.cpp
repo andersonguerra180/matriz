@@ -171,6 +171,8 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 if (item.nestCapa && !item.nestOrigem.empty()) {
                     item.titulo = !item.nestNome.empty() ? item.nestNome : matriz::i18n::t("intake.container_" + juce::String(item.nestOrigem)).toStdString();
                     item.nomeOriginalArquivo = item.titulo;
+                } else if (item.nestCapa && !item.nestNome.empty()) {
+                    item.titulo = item.nestNome;  // NEST renomeado (Rename na grade)
                 }
             }
         };
@@ -1244,7 +1246,7 @@ void MosaicoComponent::desenharCartaoExplorer(juce::Graphics& g, juce::Rectangle
 
     // Nome: o do arquivo (na janela do container a capa não vira o nome do container).
     juce::String nome = tx.nome;
-    if (!agruparNests_ && item.nestCapa && !item.nestOrigem.empty()) {
+    if (!agruparNests_ && item.nestCapa && (!item.nestOrigem.empty() || !item.nestNome.empty())) {
         const juce::String caminho = juce::String::fromUTF8((!item.caminhoAbsolutoOrigem.empty() ? item.caminhoAbsolutoOrigem
                                                                                                    : item.caminhoRelativoArquivo).c_str());
         const auto arquivo = caminho.fromLastOccurrenceOf("/", false, false).fromLastOccurrenceOf("\\", false, false);
@@ -2989,7 +2991,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.setColour(tk.textoPrimario);
                     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                     const bool emGrupo = agruparNests_ && item.nestTotal > 1;  // janela do container: cada arquivo é ele mesmo
-                    if (emGrupo && !item.nestOrigem.empty() && !item.nestNome.empty()) nome = juce::String::fromUTF8(item.nestNome.c_str());
+                    if (emGrupo && !item.nestNome.empty()) nome = juce::String::fromUTF8(item.nestNome.c_str());
                     if (emGrupo) {  // NEST / container: o nome ganha o número de arquivos do grupo
                         const juce::String tag = item.nestOrigem.empty()
                                                      ? "  [NEST " + juce::String(item.nestTotal) + "]"

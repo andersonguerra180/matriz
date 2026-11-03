@@ -224,9 +224,65 @@ void pedirNovoNome(ProjetoAberto& projeto, const std::vector<std::string>& itemI
 
 } // namespace
 
+namespace {
+
+// Células de NEST/CONTAINER na grade (todo nest com 2+ arquivos aparece só pela capa): saem de `itemIds`; devolve
+// nest -> nome atual. Rename nelas é do container, nunca dos arquivos lá dentro.
+std::map<std::string, std::string> separarNests(ProjetoAberto& projeto, std::vector<std::string>& itemIds) {
+    std::map<std::string, std::string> nests;
+    std::map<std::string, ProjetoAberto::NestInfo> mapa;
+    try { mapa = ProjetoAberto::mapaDeNests(projeto.projeto().registroLeitura()); } catch (...) { return nests; }
+    std::vector<std::string> soltos;
+    for (const auto& id : itemIds) {
+        const auto it = mapa.find(id);
+        if (it != mapa.end()) nests.emplace(it->second.nestId, it->second.nome);
+        else soltos.push_back(id);
+    }
+    itemIds = std::move(soltos);
+    return nests;
+}
+
+void pedirNomeDoContainer(ProjetoAberto& projeto, const std::map<std::string, std::string>& nests, std::function<void()> aoConcluir) {
+    auto janela = std::make_shared<juce::AlertWindow>(
+        matriz::i18n::t("acoes.renomear_container_titulo"),
+        nests.size() == 1 ? matriz::i18n::t("acoes.renomear_container_mensagem")
+                          : matriz::i18n::t("acoes.renomear_container_mensagem_lote").replace("{n}", juce::String(static_cast<int>(nests.size()))),
+        juce::MessageBoxIconType::NoIcon);
+    janela->addTextEditor("nome", nests.size() == 1 ? juce::String::fromUTF8(nests.begin()->second.c_str()) : juce::String());
+    janela->addButton(matriz::i18n::t("comum.ok"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    ProjetoAberto* p = &projeto;
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([janela, p, nests, aoConcluir](int resultado) {
+        retirarPeerDaTela(*janela); // §3
+        if (resultado != 1) return;
+        const juce::String novo = janela->getTextEditorContents("nome").trim();
+        if (novo.isEmpty()) return;
+        bool algum = false;
+        for (const auto& [nest, nomeAtual] : nests)
+            if (novo.toStdString() != nomeAtual && p->definirNomeDoContainer(nest, novo.toStdString())) algum = true;
+        if (!algum) return;
+        EventBus::obterInstancia().dispararItemAlterado({}, "nest");  // a grade relê o nome dos nests
+        if (aoConcluir) aoConcluir();
+    }));
+    if (auto* ed = janela->getTextEditor("nome")) {
+        juce::Component::SafePointer<juce::TextEditor> seguro(ed);
+        juce::MessageManager::callAsync([seguro] {
+            if (seguro == nullptr) return;
+            seguro->grabKeyboardFocus();
+            seguro->selectAll();
+        });
+    }
+}
+
+} // namespace
+
 void renomear(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
     if (itemIds.empty()) return;
-    pedirNovoNome(projeto, itemIds, ganchos.aoMudarDados);
+    // Na grade, NEST/CONTAINER: renomeia o container. Os arquivos de dentro só se renomeiam de dentro dele.
+    auto arquivos = itemIds;
+    const auto nests = ganchos.membrosIndividuais ? std::map<std::string, std::string>() : separarNests(projeto, arquivos);
+    if (!arquivos.empty()) pedirNovoNome(projeto, arquivos, ganchos.aoMudarDados);
+    else if (!nests.empty()) pedirNomeDoContainer(projeto, nests, ganchos.aoMudarDados);
 }
 
 namespace {
@@ -1011,7 +1067,7 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
     // A grade mostra só a capa de um NEST/CONTAINER: o que se faz nela vale para todos os arquivos dele (Remove from Backup e
     // os movimentos do Folder Map já expandem lá dentro). Rename, capa, arquivo, caminho e EXIF continuam sendo do arquivo clicado.
     if (!ganchos.membrosIndividuais &&
-        (resultado == kRemoverDaLista || resultado == kLimparMetadados || resultado == kRenomearEmLote || resultado == kCategorizar ||
+        (resultado == kRemoverDaLista || resultado == kLimparMetadados || resultado == kCategorizar ||
          resultado == kLocalizarOffline)) {
         try { itemIds = projeto.expandirCapasDeNest(itemIds); } catch (...) {}
     }
@@ -1034,7 +1090,9 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             break;
 
         case kRenomearEmLote:
-            renomearEmLote(projeto, itemIds, ganchos);
+            // Fora do container, os arquivos dele não se renomeiam (antes o lote abria os containers e renomeava tudo).
+            if (!ganchos.membrosIndividuais) separarNests(projeto, itemIds);
+            if (!itemIds.empty()) renomearEmLote(projeto, itemIds, ganchos);
             break;
 
         case kLimparMetadados:

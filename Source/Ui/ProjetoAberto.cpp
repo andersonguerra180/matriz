@@ -443,6 +443,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             r.nestNome = nit->second.nome;
             // A capa do container mostra o NOME DO CONTAINER (da ficha) ou, sem nome, o rótulo do tipo — nunca o nome de um arquivo.
             if (r.nestCapa && !r.nestOrigem.empty()) r.titulo = !r.nestNome.empty() ? r.nestNome : i18n::t("intake.container_" + juce::String(r.nestOrigem)).toStdString();
+            else if (r.nestCapa && !r.nestNome.empty()) r.titulo = r.nestNome;  // NEST renomeado (Rename na grade)
         }
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -1200,6 +1201,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                     r.nestIcone = nit->second.icone;
                     r.nestNome = nit->second.nome;
                     if (r.nestCapa && !r.nestOrigem.empty()) r.titulo = !r.nestNome.empty() ? r.nestNome : i18n::t("intake.container_" + juce::String(r.nestOrigem)).toStdString();
+                    else if (r.nestCapa && !r.nestNome.empty()) r.titulo = r.nestNome;  // NEST renomeado (Rename na grade)
                 }
                 out.push_back(std::move(r));
             }
