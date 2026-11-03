@@ -1369,6 +1369,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         registro.exec("CREATE INDEX IF NOT EXISTS idx_preservation_event_arquivo ON preservation_event(arquivo_id)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_derivada_de ON arquivo(derivada_de_arquivo_id)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_proveniencia_item ON proveniencia(item_id)");
+        // arquivo.vault_id ON DELETE SET NULL: o DELETE FROM vault da abertura (bloco vault_evento) varria os 41 mil
+        // arquivos do Bunker Analog a cada vez que apagava um vault (4 s com cache, 89 s com o HD frio).
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_vault ON arquivo(vault_id)");
     } catch (...) {}
     cronometro("indices_performance");
 }
