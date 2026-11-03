@@ -1323,29 +1323,36 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     //    agent_id = 'bkr-agent-sistema' (seed acima garante que existe).
     //    Não cria um evento por item — operação em lote, O(1) no banco.
     try {
-        std::string agora = agoraIso8601();
-        registro.run(
-            "INSERT OR IGNORE INTO preservation_event "
-            "(id, item_id, event_type, event_date_time, event_detail, "
-            " event_outcome, event_outcome_detail, agent_id, criado_em) "
-            "SELECT "
-            "  lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || "
-            "  lower(substr(hex(randomblob(2)),2)) || '-' || "
-            "  lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))), "
-            "  id, "
-            "  'MIGRATION', "
-            "  ?, "
-            "  'Persistent ID assigned during schema migration to preservation layer — batch operation', "
-            "  'SUCCESS', "
-            "  NULL, "
-            "  'bkr-agent-sistema', "
-            "  ? "
-            "FROM item "
-            "WHERE NOT EXISTS ("
-            "  SELECT 1 FROM preservation_event pe "
-            "  WHERE pe.item_id = item.id AND pe.event_type = 'MIGRATION'"
-            ")",
-            { db::Value::of(agora), db::Value::of(agora) });
+        // Já feito neste projeto: o NOT EXISTS abaixo varre todos os itens (~50 s a cada abertura num acervo grande em
+        // HD). O evento do lote tem este detalhe fixo; a consulta usa o índice de event_type.
+        auto feito = registro.prepare(
+            "SELECT 1 FROM preservation_event WHERE event_type = 'MIGRATION' AND event_detail = "
+            "'Persistent ID assigned during schema migration to preservation layer — batch operation' LIMIT 1");
+        if (!feito.step()) {
+            std::string agora = agoraIso8601();
+            registro.run(
+                "INSERT OR IGNORE INTO preservation_event "
+                "(id, item_id, event_type, event_date_time, event_detail, "
+                " event_outcome, event_outcome_detail, agent_id, criado_em) "
+                "SELECT "
+                "  lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || "
+                "  lower(substr(hex(randomblob(2)),2)) || '-' || "
+                "  lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))), "
+                "  id, "
+                "  'MIGRATION', "
+                "  ?, "
+                "  'Persistent ID assigned during schema migration to preservation layer — batch operation', "
+                "  'SUCCESS', "
+                "  NULL, "
+                "  'bkr-agent-sistema', "
+                "  ? "
+                "FROM item "
+                "WHERE NOT EXISTS ("
+                "  SELECT 1 FROM preservation_event pe "
+                "  WHERE pe.item_id = item.id AND pe.event_type = 'MIGRATION'"
+                ")",
+                { db::Value::of(agora), db::Value::of(agora) });
+        }
     } catch (...) {}
 
     cronometro("eventos_migration");
