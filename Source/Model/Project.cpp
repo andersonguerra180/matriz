@@ -1372,6 +1372,10 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         // arquivo.vault_id ON DELETE SET NULL: o DELETE FROM vault da abertura (bloco vault_evento) varria os 41 mil
         // arquivos do Bunker Analog a cada vez que apagava um vault (4 s com cache, 89 s com o HD frio).
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_vault ON arquivo(vault_id)");
+        // "Sem pasta no mapa" (itensSemPasta, propostas de árvore): o NOT IN (... WHERE mapa_id = ?) varria
+        // acervo_item_pasta e o filtro de estado lia a linha inteira de cada item; com estes dois, só índice.
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_acervo_item_pasta_mapa ON acervo_item_pasta(mapa_id, item_id)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_item_projeto_estado ON item(projeto_id, estado, id)");
     } catch (...) {}
     cronometro("indices_performance");
 }
