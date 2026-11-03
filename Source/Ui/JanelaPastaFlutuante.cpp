@@ -135,6 +135,7 @@ public:
             }
             atualizarPainelSemSelecao();
             atualizarLateral();
+            atualizarBotaoOffline();
             // Aberta pelo card NO FOLDER: chega com todos os arquivos selecionados — só depois que o snapshot chegou (o
             // definirFiltroItens de carregarGrade já avisa aqui, com a grade ainda vazia).
             if (selecionarTudo_ && !mosaico_->snapshotPendente() && mosaico_->totalItensCarregados() > 0) {
@@ -197,6 +198,11 @@ public:
             legendaR_ = std::make_unique<LegendaAtalhosIntake>(i18n::t("janela_pasta.rejeitar_marcados_dica"));  // "Shortcuts [R] Reject (?)", como no INTAKE
             addAndMakeVisible(*legendaR_);
         }
+
+        // Container: OFFLINE (N) junta os offline de todas as pastas numa grade/lista só (Locate Offline em lote pelo PATH).
+        btnOffline_.setTooltip(i18n::t("janela_pasta.offline_dica"));
+        btnOffline_.onClick = [this] { definirModoOffline(!modoOffline_); };
+        if (!nestId_.empty()) addChildComponent(btnOffline_);
 
         btnVoltar_.setButtonText(juce::String::fromUTF8("\xe2\x80\xb9  ") + i18n::t("janela_pasta.voltar_curto"));
         btnVoltar_.onClick = [this] { voltarUmaPasta(); };
@@ -316,6 +322,11 @@ public:
         nav.removeFromRight(12);
         seletorVisao_->setBounds(nav.removeFromRight(132).reduced(0, 1));
         nav.removeFromRight(12);
+        if (btnOffline_.isVisible()) {
+            const auto fonte = explorer::fonte(13.0f, true);
+            btnOffline_.setBounds(nav.removeFromRight(explorer::larguraDoTexto(fonte, btnOffline_.getButtonText()) + 32).reduced(0, 1));
+            nav.removeFromRight(12);
+        }
         if (btnRejeitar_.isVisible()) {
             btnRejeitar_.setBounds(nav.removeFromRight(210).reduced(0, 1));
             nav.removeFromRight(10);
@@ -918,6 +929,7 @@ private:
     }
 
     void mostrarPastaDoContainer() {
+        if (modoOffline_) pastaId_ = arvoreDoMapa_.id;  // OFFLINE: o container inteiro, sem pastas
         const auto* atual = acharNo(arvoreDoMapa_, pastaId_);
         if (atual == nullptr) { pastaId_ = arvoreDoMapa_.id; atual = &arvoreDoMapa_; }
         nome_ = atual->nome;
@@ -933,7 +945,15 @@ private:
         }
         // Sem subpastas a grade mostra todos os arquivos dela; com elas, só os que estão direto nesta pasta (as pastas viram cartões).
         ids_ = atual->filhos.empty() ? atual->itemIds : atual->itemIdsDiretos;
+        if (modoOffline_) {  // a grade filtra os offline
+            subpastas.clear();
+            ids_.clear();
+            coletarIdsRecursivos(arvoreDoMapa_, ids_);
+        }
+        mosaico_->alternarFiltroDisponibilidade(modoOffline_ ? MosaicoComponent::FiltroDisponibilidade::Offline
+                                                             : MosaicoComponent::FiltroDisponibilidade::All);
         atualizarNavegacao();
+        if (modoOffline_) nome_ = i18n::t("janela_pasta.offline_titulo");
         mosaico_->definirSubpastas(std::move(subpastas));
         coluna_->revelar(arvoreDoMapa_, pastaId_);
         coluna_->definirArvore(&arvoreDoMapa_, pastaId_);  // a árvore inteira do container, a pasta atual destacada
@@ -941,6 +961,34 @@ private:
         std::set<std::string> todos;
         coletarIdsRecursivos(arvoreDoMapa_, todos);
         carregarGrade(todos);  // o container inteiro fica carregado: navegar entre as pastas não relê o banco
+    }
+
+    void definirModoOffline(bool ligado) {
+        if (ligado == modoOffline_ || arvoreDoMapa_.id != nestId_) return;
+        modoOffline_ = ligado;
+        mostrarPastaDoContainer();
+        atualizarBotaoOffline();
+    }
+
+    // OFFLINE (N): conta os offline do container inteiro (a grade carrega o container todo). Aparece só se houver algum, ou
+    // ligado (depois do relink a contagem pode zerar e o usuário precisa poder voltar às pastas).
+    void atualizarBotaoOffline() {
+        if (nestId_.empty()) return;
+        int n = 0;
+        for (const auto& item : mosaico_->todosItensEmMemoria())
+            if (item.offline) ++n;
+        const bool pt = i18n::localeAtivo().startsWith("pt");
+        const auto texto = i18n::t("janela_pasta.offline_botao").replace("{n}", explorer::comMilhares(n, pt));
+        moldura::estilizarBotao(btnOffline_, modoOffline_);
+        if (!modoOffline_) {  // desligado: texto vermelho sobre o cartão; ligado: grafite
+            btnOffline_.setColour(juce::TextButton::buttonColourId, explorer::cores().cartao);
+            btnOffline_.setColour(juce::TextButton::textColourOffId, moldura::paleta().vermelho);
+        }
+        const bool visivel = n > 0 || modoOffline_;
+        if (texto == btnOffline_.getButtonText() && visivel == btnOffline_.isVisible()) return;
+        btnOffline_.setButtonText(texto);
+        btnOffline_.setVisible(visivel);
+        resized();
     }
 
     // REJECT MARKED (`_no folder`): os arquivos desta pasta marcados com R vão para o _trash do mapa (de lá, RESTORE os traz de
@@ -1020,6 +1068,7 @@ private:
         nome_ = nome;
         if (!nestId_.empty() && arvoreDoMapa_.id == nestId_) {  // container: a árvore já está carregada, só muda a pasta
             filtroArvoreId_.clear();
+            modoOffline_ = false;  // navegar pelas pastas sai do OFFLINE
             mostrarPastaDoContainer();
             return;
         }
@@ -1125,8 +1174,13 @@ private:
         const int sel = static_cast<int>(mosaico_->itensSelecionados().size());
         juce::StringArray partes;
         const auto* atual = acharNo(arvoreDoMapa_, pastaId_);
-        const int nPastas = (atual != nullptr && !nestId_.empty()) ? static_cast<int>(atual->filhos.size()) : 0;
-        if (nPastas > 0) {
+        const int nPastas = (atual != nullptr && !nestId_.empty() && !modoOffline_) ? static_cast<int>(atual->filhos.size()) : 0;
+        if (modoOffline_) {
+            int n = 0;
+            for (const auto& item : mosaico_->todosItensEmMemoria())
+                if (item.offline && ids_.count(item.id) != 0) ++n;
+            partes.add(contagemI18n("janela_pasta.n_offline", n));
+        } else if (nPastas > 0) {
             std::set<std::string> todos;
             coletarIdsRecursivos(*atual, todos);
             partes.add(contagemI18n("janela_pasta.n_pastas", nPastas));
@@ -1286,6 +1340,8 @@ private:
     std::unique_ptr<PainelOverlay> overlay_;
     juce::Viewport viewportGrade_, viewportLateral_;
     juce::TextButton btnVoltar_, btnRejeitar_;
+    juce::TextButton btnOffline_;  // container: OFFLINE (N) — todos os offline dele, sem as pastas
+    bool modoOffline_ = false;
     std::unique_ptr<LegendaAtalhosIntake> legendaR_;  // só no `_no folder`
     std::string nestId_;  // não vazio = janela de um CONTAINER (só os membros dele)
     bool semPasta_ = false;        // pasta virtual `_no folder` (pastaId == kPastaSemPasta)
