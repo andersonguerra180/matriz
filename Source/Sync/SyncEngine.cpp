@@ -986,7 +986,9 @@ PlanoSync SyncEngine::compararCloneDoMain(matriz::model::Project& projeto, const
         vazio.errosValidacao.push_back("Clone offline or not registered");
         return vazio;
     }
-    return escanearEComparar(matriz::model::normalizarParaRaizDestino(projeto.raiz()), cloneRaiz, true);
+    // Modo rápido: o completo calcula o SHA-256 de TODO arquivo dos dois lados (horas num MAIN grande, sem cancelar).
+    // O pareamento de MOVED já confere o SHA-256 real dos candidatos de mesmo tamanho.
+    return escanearEComparar(matriz::model::normalizarParaRaizDestino(projeto.raiz()), cloneRaiz, false);
 }
 
 ResultadoSync SyncEngine::sincronizarCloneDoMain(matriz::model::Project& projeto, const std::string& cloneId,
