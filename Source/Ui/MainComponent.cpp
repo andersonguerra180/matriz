@@ -2903,6 +2903,13 @@ void MainComponent::abrirDialogoRelinkOffline(const std::string& itemId) {
                 if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
                 if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
                 if (safeThis->fichaPanel_) safeThis->fichaPanel_->mostrarItem(novoItemId);
+            } else {  // antes a falha era muda: o relink "não aceitava" sem dizer por quê
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                                 .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                                 .withTitle(matriz::i18n::t("relink.divergencia_checksum_titulo"))
+                                                 .withMessage(err)
+                                                 .withButton(matriz::i18n::t("comum.ok")),
+                                             static_cast<juce::ModalComponentManager::Callback*>(nullptr));
             }
         });
 }

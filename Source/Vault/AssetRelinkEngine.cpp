@@ -57,6 +57,52 @@ bool relinkarConteudoIdentico(matriz::db::Database& db, const juce::File& pastaP
     }
 }
 
+// "Relinkar mesmo assim": o arquivo achado tem outro conteúdo (algum programa regravou tags/metadados, recompressão...).
+// O MESMO item passa a apontar para ele; tamanho e SHA-256 novos ficam no master e o SHA anterior vai para o PREMIS e o
+// Project Log. O gatilho arquivo_master_travado só deixa mudar checksum de master com a marca de reconciliacao_em_curso,
+// que entra e sai aqui dentro. Chamar dentro de uma transação (a marca nunca chega ao COMMIT).
+bool relinkarConteudoDiferente(matriz::db::Database& db, const juce::File& pastaProjeto, const std::string& itemId,
+                               const std::string& masterArqId, const std::string& camAbsOld, const std::string& newAbsPath,
+                               const std::string& shaAntigo, const std::string& shaNovo, juce::int64 tamanhoNovo,
+                               juce::String& outError, std::vector<matriz::model::ProjectLog::Entry>* logAdiado = nullptr) {
+    const std::string agoraIso = juce::Time::getCurrentTime().formatted("%Y-%m-%dT%H:%M:%SZ").toStdString();
+    try {
+        db.run("INSERT OR IGNORE INTO reconciliacao_em_curso (marca) VALUES (1)", {});
+        db.run("UPDATE arquivo SET caminho_absoluto_origem = ?, tamanho_bytes = ?, checksum_sha256 = ?, checksum_md5 = NULL, "
+               "checksum_gerado_em = ?, atualizado_em = ? WHERE id = ?",
+               {matriz::db::Value::of(newAbsPath), matriz::db::Value::of(static_cast<int64_t>(tamanhoNovo)),
+                matriz::db::Value::of(shaNovo), matriz::db::Value::of(agoraIso), matriz::db::Value::of(agoraIso),
+                matriz::db::Value::of(masterArqId)});
+        db.run("DELETE FROM reconciliacao_em_curso", {});
+        db.run("INSERT OR IGNORE INTO localizacao_conhecida (id, arquivo_id, caminho_absoluto, criado_em) VALUES (?, ?, ?, ?)",
+               {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(masterArqId),
+                matriz::db::Value::of(newAbsPath), matriz::db::Value::of(agoraIso)});
+
+        matriz::preservation::registrarEvento(db, itemId, masterArqId, "RELINKED",
+                                              "Asset relinked to a file with different content, accepted by the operator. "
+                                              "Previous SHA-256: " + (shaAntigo.empty() ? std::string("(none)") : shaAntigo) +
+                                                  "; new SHA-256: " + shaNovo,
+                                              matriz::preservation::Outcome::Warning, newAbsPath,
+                                              "");  // sem agente: "Operator" não existe em preservation_agent e a FK descartava o evento
+
+        juce::StringArray details;
+        details.add("Asset ID: " + juce::String(itemId));
+        details.add("Previous Path: " + juce::String(camAbsOld));
+        details.add("New Path: " + juce::String(newAbsPath));
+        details.add("Previous Checksum: " + juce::String(shaAntigo.empty() ? std::string("(none)") : shaAntigo));
+        details.add("New Checksum: " + juce::String(shaNovo) + " (CONTENT CHANGED, ACCEPTED BY OPERATOR)");
+        if (logAdiado != nullptr)
+            logAdiado->push_back({"Asset Relinked (Content Changed)", details});
+        else
+            matriz::model::ProjectLog(pastaProjeto).appendEntry("Asset Relinked (Content Changed)", details);
+        return true;
+    } catch (const std::exception& e) {
+        try { db.run("DELETE FROM reconciliacao_em_curso", {}); } catch (...) {}
+        outError = "Database error during relink: " + juce::String(e.what());
+        return false;
+    }
+}
+
 juce::String normalizarSeparadores(const juce::String& p) {
     return p.replaceCharacter('\\', '/');
 }
@@ -151,6 +197,12 @@ ResultadoRelinkLote AssetRelinkEngine::relinkarEmLotePorPasta(matriz::db::Databa
             }
         }
         if (!achou) (algumCandidato ? res.conteudoDiferente : res.naoAchados).push_back(p.itemId);
+        if (!achou && algumCandidato) {  // um só arquivo com o nome (ainda livre): pode ser aceito mesmo assim
+            std::vector<juce::File> livres;
+            for (const auto& f : it->second)
+                if (arquivosUsados.count(f.getFullPathName().toStdString()) == 0) livres.push_back(f);
+            if (livres.size() == 1) res.candidatoDiferente[p.itemId] = livres.front().getFullPathName().toStdString();
+        }
         if (progresso) progresso(++feitos, total);
     }
     if (achados.empty()) return res;
@@ -165,6 +217,72 @@ ResultadoRelinkLote AssetRelinkEngine::relinkarEmLotePorPasta(matriz::db::Databa
                                           a.arquivo.getFullPathName().toStdString(), a.pedido->sha, erro, &entradasLog))
                 throw std::runtime_error(erro.toStdString());
             res.relinkados.push_back(a.pedido->itemId);
+        }
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        res.relinkados.clear();
+        res.erro = e.what();
+        entradasLog.clear();
+    }
+    lock.unlock();
+    matriz::model::ProjectLog(pastaProjeto).appendEntries(entradasLog);
+    return res;
+}
+
+ResultadoRelinkLote AssetRelinkEngine::relinkarAceitandoDiferenca(matriz::db::Database& db,
+                                                                  std::recursive_mutex& escrita,
+                                                                  const juce::File& pastaProjeto,
+                                                                  const std::map<std::string, std::string>& itemParaArquivo,
+                                                                  std::function<bool()> cancelado,
+                                                                  std::function<void(int, int)> progresso) {
+    ResultadoRelinkLote res;
+    auto parar = [&] { return cancelado && cancelado(); };
+    struct Aceito {
+        std::string itemId, arquivoId, camAbsOld, shaAntigo, caminhoNovo, shaNovo;
+        juce::int64 tamanhoNovo = 0;
+    };
+    std::vector<Aceito> aceitos;
+    std::set<std::string> arquivosUsados;  // dois itens nunca apontam para o mesmo arquivo
+    const int total = static_cast<int>(itemParaArquivo.size());
+    int feitos = 0;
+    for (const auto& [itemId, caminho] : itemParaArquivo) {
+        if (parar()) { res.cancelado = true; return res; }
+        const juce::File f(juce::String::fromUTF8(caminho.c_str()));
+        if (!f.existsAsFile() || !arquivosUsados.insert(caminho).second) { res.naoAchados.push_back(itemId); continue; }
+        Aceito a;
+        a.itemId = itemId;
+        a.caminhoNovo = caminho;
+        try {
+            std::unique_lock<std::recursive_mutex> leitura(escrita);
+            auto st = db.prepare("SELECT id, COALESCE(caminho_absoluto_origem, caminho_relativo), COALESCE(checksum_sha256, '') "
+                                 "FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+            st.bind(1, matriz::db::Value::of(itemId));
+            if (!st.step()) { res.naoAchados.push_back(itemId); continue; }
+            a.arquivoId = st.columnText(0);
+            a.camAbsOld = st.columnText(1);
+            a.shaAntigo = st.columnText(2);
+        } catch (const std::exception& e) {
+            res.erro = e.what();
+            return res;
+        }
+        a.tamanhoNovo = f.getSize();
+        a.shaNovo = calcularSha256(f).toStdString();  // sem o lock: hash de vídeo leva tempo
+        aceitos.push_back(std::move(a));
+        if (progresso) progresso(++feitos, total);
+    }
+    if (aceitos.empty()) return res;
+
+    std::vector<matriz::model::ProjectLog::Entry> entradasLog;
+    std::unique_lock<std::recursive_mutex> lock(escrita);
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const auto& a : aceitos) {
+            juce::String erro;
+            if (!relinkarConteudoDiferente(db, pastaProjeto, a.itemId, a.arquivoId, a.camAbsOld, a.caminhoNovo, a.shaAntigo,
+                                           a.shaNovo, a.tamanhoNovo, erro, &entradasLog))
+                throw std::runtime_error(erro.toStdString());
+            res.relinkados.push_back(a.itemId);
         }
         db.exec("COMMIT");
     } catch (const std::exception& e) {
@@ -454,7 +572,7 @@ bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
                                                 const juce::File& pastaProjeto,
                                                 const std::string& oldItemId,
                                                 const juce::File& novoArquivo,
-                                                bool aceitarSubstituicaoComNovoId,
+                                                bool aceitarConteudoDiferente,
                                                 std::string& outNovoItemId,
                                                 juce::String& outError) {
     auto val = validarAsset(db, oldItemId, novoArquivo);
@@ -491,105 +609,27 @@ bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
     }
 
     if (val.isDifferentContent) {
-        if (!aceitarSubstituicaoComNovoId) {
-            outError = "File differs from original. Confirmation required to replace asset and assign new ID.";
+        if (!aceitarConteudoDiferente) {
+            outError = "File differs from original. Confirmation required to relink anyway.";
             return false;
         }
-
-        // Content mismatch replacement -> GENERATES NEW ASSET ID and records succession
+        // Mesmo item, outro conteúdo: antes criava um item novo (copiando quase nada da ficha) e, falhando no meio,
+        // deixava o original renomeado "_archived_" — sem transação e sem mensagem. Agora é o mesmo Asset ID.
         try {
-            std::string newItemId = matriz::model::novoUuid();
-            std::string newArqId = matriz::model::novoUuid();
-
-            // 1. Fetch old item info
-            auto sItem = db.prepare("SELECT projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena FROM item WHERE id = ?");
-            sItem.bind(1, matriz::db::Value::of(oldItemId));
-            if (!sItem.step()) {
-                outError = "Original item record missing.";
+            db.exec("BEGIN IMMEDIATE");
+            if (!relinkarConteudoDiferente(db, pastaProjeto, oldItemId, masterArqId, camAbsOld, newAbsPath, val.expectedSha,
+                                           val.actualSha, val.actualSize, outError)) {
+                db.exec("ROLLBACK");
                 return false;
             }
-
-            std::string projId = sItem.columnText(0);
-            std::string tipoMidia = sItem.columnText(1);
-            std::string codAcervo = sItem.columnText(2);
-            std::string estado = sItem.columnText(3);
-            std::string notas = sItem.columnIsNull(4) ? "" : sItem.columnText(4);
-            int quarentena = sItem.columnInt(5);
-
-            // Archive old item's codigo_acervo to avoid unique constraint conflict
-            std::string archivedCod = codAcervo + "_archived_" + std::to_string(juce::Time::getCurrentTime().toMilliseconds());
-            auto sArch = db.prepare("UPDATE item SET codigo_acervo = ?, estado = 'arquivado', atualizado_em = ? WHERE id = ?");
-            sArch.bind(1, matriz::db::Value::of(archivedCod));
-            sArch.bind(2, matriz::db::Value::of(agoraIso.toStdString()));
-            sArch.bind(3, matriz::db::Value::of(oldItemId));
-            sArch.step();
-
-            // 2. Insert new item with active codigo_acervo
-            auto sInsItem = db.prepare(
-                "INSERT INTO item (id, projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena, criado_em, atualizado_em) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            sInsItem.bind(1, matriz::db::Value::of(newItemId));
-            sInsItem.bind(2, matriz::db::Value::of(projId));
-            sInsItem.bind(3, matriz::db::Value::of(tipoMidia));
-            sInsItem.bind(4, matriz::db::Value::of(codAcervo));
-            sInsItem.bind(5, matriz::db::Value::of(estado));
-            sInsItem.bind(6, matriz::db::Value::of(notas));
-            sInsItem.bind(7, matriz::db::Value::of(static_cast<int64_t>(quarentena)));
-            sInsItem.bind(8, matriz::db::Value::of(agoraIso.toStdString()));
-            sInsItem.bind(9, matriz::db::Value::of(agoraIso.toStdString()));
-            sInsItem.step();
-
-            // 3. Clone descriptive metadata fields (item_campo)
-            auto sCloneCampos = db.prepare(
-                "INSERT INTO item_campo (id, item_id, campo_id, valor, indice_repeticao, criado_em, atualizado_em) "
-                "SELECT hex(randomblob(16)), ?, campo_id, valor, indice_repeticao, ?, ? FROM item_campo WHERE item_id = ?");
-            sCloneCampos.bind(1, matriz::db::Value::of(newItemId));
-            sCloneCampos.bind(2, matriz::db::Value::of(agoraIso.toStdString()));
-            sCloneCampos.bind(3, matriz::db::Value::of(agoraIso.toStdString()));
-            sCloneCampos.bind(4, matriz::db::Value::of(oldItemId));
-            sCloneCampos.step();
-
-            // 4. Insert new master file record
-            auto sInsArq = db.prepare(
-                "INSERT INTO arquivo (id, item_id, caminho_absoluto_origem, tamanho_bytes, checksum_sha256, eh_master, criado_em, atualizado_em) "
-                "VALUES (?, ?, ?, ?, ?, 1, ?, ?)");
-            sInsArq.bind(1, matriz::db::Value::of(newArqId));
-            sInsArq.bind(2, matriz::db::Value::of(newItemId));
-            sInsArq.bind(3, matriz::db::Value::of(newAbsPath));
-            sInsArq.bind(4, matriz::db::Value::of(static_cast<int64_t>(val.actualSize)));
-            sInsArq.bind(5, matriz::db::Value::of(val.actualSha));
-            sInsArq.bind(6, matriz::db::Value::of(agoraIso.toStdString()));
-            sInsArq.bind(7, matriz::db::Value::of(agoraIso.toStdString()));
-            sInsArq.step();
-
-            // 5. PREMIS ledger linking succession
-            matriz::preservation::registrarEvento(db, oldItemId, masterArqId,
-                                                  "RELINKED",
-                                                  "Superseded by replacement asset ID " + newItemId,
-                                                  "SUPERSEDED", newAbsPath, "Operator");
-
-            matriz::preservation::registrarEvento(db, newItemId, newArqId,
-                                                  "RELINKED",
-                                                  "Created via manual relink replacement superseding old Asset ID " + oldItemId,
-                                                  matriz::preservation::Outcome::Success,
-                                                  newAbsPath, "Operator");
-
-            // 6. Project Log
-            matriz::model::ProjectLog pLog(pastaProjeto);
-            juce::StringArray details;
-            details.add("Previous Asset ID: " + juce::String(oldItemId));
-            details.add("New Asset ID: " + juce::String(newItemId));
-            details.add("Previous Path: " + juce::String(camAbsOld));
-            details.add("New Path: " + juce::String(newAbsPath));
-            details.add("New Checksum: " + juce::String(val.actualSha) + " (CONTENT REPLACED)");
-            pLog.appendEntry("Asset Replaced (New Asset ID)", details);
-
-            outNovoItemId = newItemId;
-            return true;
+            db.exec("COMMIT");
         } catch (const std::exception& e) {
-            outError = "Database error during replacement: " + juce::String(e.what());
+            try { db.exec("ROLLBACK"); } catch (...) {}
+            outError = "Database error during relink: " + juce::String(e.what());
             return false;
         }
+        outNovoItemId = oldItemId;
+        return true;
     }
 
     outError = "Unknown validation disposition.";

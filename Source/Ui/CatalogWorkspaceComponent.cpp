@@ -2503,6 +2503,13 @@ void CatalogWorkspaceComponent::abrirRelinkOffline(const std::string& itemId) {
                 safeThis->projeto_.transferirMarcacoes(itemId, novoItemId);
                 safeThis->projeto_.salvar();
                 if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+            } else {  // antes a falha era muda: o relink "não aceitava" sem dizer por quê
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                                 .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                                 .withTitle(matriz::i18n::t("relink.divergencia_checksum_titulo"))
+                                                 .withMessage(err)
+                                                 .withButton(matriz::i18n::t("comum.ok")),
+                                             static_cast<juce::ModalComponentManager::Callback*>(nullptr));
             }
         });
 }

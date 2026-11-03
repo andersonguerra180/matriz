@@ -51,6 +51,7 @@
 #include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
+#include "../Vault/AssetRelinkEngine.h"
 #include "DuplicatesWorkspaceComponent.h"
 #include "LayoutArvoreFolderMap.h"
 #include "ConflitosMergeDialog.h"
@@ -169,6 +170,112 @@ void rodarTesteReloadArquivo(const Checar& checar) {
         conferir("again");
     } catch (const std::exception& e) {
         checar(false, juce::String("reload selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
+// "Relink anyway": arquivo achado com o mesmo nome e outro conteúdo (tags regravadas...). O MESMO item aponta para ele
+// (código, ficha e contagem de itens iguais), o SHA novo vai para o master e o antigo para o PREMIS. Antes o relink
+// individual criava um item novo, falhava no meio e deixava o original renomeado "_archived_".
+void rodarTesteRelinkMesmoAssim(const Checar& checar) {
+    using matriz::db::Value;
+    using matriz::vault::AssetRelinkEngine;
+    std::cout << "\n-- Relink anyway (same name, different content) --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_relink_anyway_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "RelinkAnyway";
+        params.prefixoNomenclatura = "RLK";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        auto jpeg = [](const juce::File& f, int w) {
+            f.deleteFile();
+            f.getParentDirectory().createDirectory();
+            juce::Image im(juce::Image::RGB, w, w, true);
+            juce::FileOutputStream o(f);
+            juce::JPEGImageFormat fmt;
+            fmt.writeImageToStream(im, o);
+        };
+        auto novoItem = [&](const std::string& codigo, const juce::File& f) {
+            const std::string item = inserirItem(reg, projetoId, codigo, false, ".jpg");
+            reg.run("DELETE FROM arquivo WHERE item_id = ?", {Value::of(item)});
+            matriz::ingest::ingerirArquivo(reg, pa.projeto().pasta(), item, f, "preservation_master", true);
+            reg.run("UPDATE item SET titulo = 'Titulo', lista = 'Minha Lista' WHERE id = ?", {Value::of(item)});
+            return item;
+        };
+        auto um = [&](const std::string& sql, const std::string& id) {
+            auto st = reg.prepare(sql);
+            st.bind(1, Value::of(id));
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        auto contarItens = [&] {
+            auto st = reg.prepare("SELECT COUNT(*) FROM item");
+            return st.step() ? st.columnInt(0) : -1;
+        };
+
+        // Individual (duplo clique no offline -> Relink anyway).
+        const auto orig1 = raiz.getChildFile("orig/foto1.jpg");
+        jpeg(orig1, 16);
+        const std::string item1 = novoItem("RLK-1", orig1);
+        const std::string shaAntigo = um("SELECT checksum_sha256 FROM arquivo WHERE item_id = ? AND eh_master = 1", item1);
+        orig1.deleteFile();
+        const auto achado1 = raiz.getChildFile("achados/foto1.jpg");
+        jpeg(achado1, 40);
+        const int itensAntes = contarItens();
+        auto val = AssetRelinkEngine::validarAsset(reg, item1, achado1);
+        checar(val.isValid && val.isDifferentContent && !shaAntigo.empty(), "the found file is flagged as different content");
+        std::string novoId;
+        juce::String erro;
+        checar(AssetRelinkEngine::executarRelinkIndividual(reg, pa.projeto().pasta(), item1, achado1, true, novoId, erro),
+               "Relink anyway succeeds (" + erro + ")");
+        checar(novoId == item1 && contarItens() == itensAntes, "same item: no new Asset ID, no item created");
+        checar(um("SELECT codigo_acervo FROM item WHERE id = ?", item1) == "RLK-1" &&
+                   um("SELECT lista FROM item WHERE id = ?", item1) == "Minha Lista",
+               "code and metadata stay (no _archived_ rename)");
+        checar(um("SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? AND eh_master = 1", item1) ==
+                       achado1.getFullPathName().toStdString() &&
+                   um("SELECT checksum_sha256 FROM arquivo WHERE item_id = ? AND eh_master = 1", item1) ==
+                       AssetRelinkEngine::calcularSha256(achado1).toStdString(),
+               "the master points to the found file with its new SHA-256");
+        {
+            auto st = reg.prepare("SELECT COUNT(*) FROM preservation_event WHERE item_id = ? AND event_type = 'RELINKED' "
+                                  "AND event_outcome = 'WARNING' AND instr(event_detail, ?) > 0");
+            st.bind(1, Value::of(item1));
+            st.bind(2, Value::of(shaAntigo));
+            checar(st.step() && st.columnInt(0) == 1, "PREMIS records the change, with the previous SHA-256");
+        }
+        checar(um("SELECT COUNT(*) FROM reconciliacao_em_curso WHERE ? IS NOT NULL", "x") == "0",
+               "the master lock is back on (no reconciliation mark left)");
+
+        // Lote (Locate Offline -> Relink anyway (N)): um candidato só entra; dois com o mesmo nome ficam para o individual.
+        const auto orig2 = raiz.getChildFile("orig/foto2.jpg");
+        const auto orig3 = raiz.getChildFile("orig/foto3.jpg");
+        jpeg(orig2, 16);
+        jpeg(orig3, 18);
+        const std::string item2 = novoItem("RLK-2", orig2);
+        const std::string item3 = novoItem("RLK-3", orig3);
+        orig2.deleteFile();
+        orig3.deleteFile();
+        const auto pasta = raiz.getChildFile("hd");
+        jpeg(pasta.getChildFile("foto2.jpg"), 44);
+        jpeg(pasta.getChildFile("a/foto3.jpg"), 46);
+        jpeg(pasta.getChildFile("b/foto3.jpg"), 48);
+        auto res = AssetRelinkEngine::relinkarEmLotePorPasta(reg, pa.projeto().writeMutex(), pa.projeto().pasta(), {item2, item3},
+                                                             pasta, nullptr, nullptr);
+        checar(res.conteudoDiferente.size() == 2 && res.candidatoDiferente.size() == 1 && res.candidatoDiferente.count(item2) == 1,
+               "batch: both differ; only the one with a single file of that name can be accepted at once");
+        auto aceito = AssetRelinkEngine::relinkarAceitandoDiferenca(reg, pa.projeto().writeMutex(), pa.projeto().pasta(),
+                                                                    res.candidatoDiferente, nullptr, nullptr);
+        checar(aceito.relinkados.size() == 1 && aceito.erro.isEmpty() &&
+                   um("SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? AND eh_master = 1", item2) ==
+                       pasta.getChildFile("foto2.jpg").getFullPathName().toStdString() &&
+                   um("SELECT codigo_acervo FROM item WHERE id = ?", item2) == "RLK-2",
+               "batch Relink anyway: same item points to the found file (" + aceito.erro + ")");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("relink anyway selftest: ") + e.what());
     }
     raiz.deleteRecursively();
 }
@@ -7456,6 +7563,7 @@ int rodarLoteSelfTest() {
     raizSetas.deleteRecursively();
 
     rodarTesteReloadArquivo(checar);
+    rodarTesteRelinkMesmoAssim(checar);
     rodarTestesUndoGeo(checar);
     rodarTestesGradeConsistente(checar);
     rodarTestesUndoAuditoria(checar);

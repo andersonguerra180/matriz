@@ -36,6 +36,9 @@ struct ResultadoRelinkLote {
     std::vector<std::string> relinkados;         // achados com o mesmo SHA-256: caminho trocado, mesmo Asset ID
     std::vector<std::string> naoAchados;         // nenhum arquivo com o nome na pasta escolhida
     std::vector<std::string> conteudoDiferente;  // achado com o nome, mas o conteúdo não bate (fica para o relink individual)
+    // Dos de conteúdo diferente, os que têm UM só arquivo com o nome na pasta: item -> esse arquivo. O operador pode
+    // aceitá-los de uma vez (relinkarAceitandoDiferenca); com mais de um candidato, só o relink individual.
+    std::map<std::string, std::string> candidatoDiferente;
     std::vector<std::string> jaOnline;           // o arquivo já está no caminho registrado
     bool cancelado = false;
     juce::String erro;
@@ -92,13 +95,14 @@ public:
 
     // Executes individual relink with smart checksum disposition:
     // - Checksum match: updates path in-place, preserves Asset ID, logs to project log and PREMIS.
-    // - Checksum mismatch: requires aceitarSubstituicaoComNovoId=true; generates new Asset ID,
-    //   inherits metadata, logs succession (supersedes) to PREMIS and project log.
+    // - Checksum mismatch: requires aceitarConteudoDiferente=true ("Relink anyway"); the SAME item (Asset ID, metadata,
+    //   folders, containers, tags) points to the chosen file, its size/SHA-256 are recorded, and the previous SHA-256
+    //   goes to PREMIS and the project log. outNovoItemId is always the same item.
     static bool executarRelinkIndividual(matriz::db::Database& db,
                                          const juce::File& pastaProjeto,
                                          const std::string& oldItemId,
                                          const juce::File& novoArquivo,
-                                         bool aceitarSubstituicaoComNovoId,
+                                         bool aceitarConteudoDiferente,
                                          std::string& outNovoItemId,
                                          juce::String& outError);
 
@@ -113,6 +117,16 @@ public:
                                                       const juce::File& pasta,
                                                       std::function<bool()> cancelado,
                                                       std::function<void(int feitos, int total)> progresso);
+
+    // "Relinkar mesmo assim" do Locate Offline em lote: cada item (item -> arquivo, de candidatoDiferente) passa a
+    // apontar para o arquivo, como o relink individual aceitando a diferença. Hashes sem o lock; gravações numa
+    // transação só. Fora da message thread.
+    static ResultadoRelinkLote relinkarAceitandoDiferenca(matriz::db::Database& db,
+                                                          std::recursive_mutex& escrita,
+                                                          const juce::File& pastaProjeto,
+                                                          const std::map<std::string, std::string>& itemParaArquivo,
+                                                          std::function<bool()> cancelado,
+                                                          std::function<void(int feitos, int total)> progresso);
 
     // Helper to compute SHA-256 for a file
     static juce::String calcularSha256(const juce::File& file);

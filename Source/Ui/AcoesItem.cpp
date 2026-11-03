@@ -669,6 +669,49 @@ void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds
     });
 }
 
+namespace {
+// "Relink anyway" do Locate Offline em lote: os de conteúdo diferente com um só arquivo do mesmo nome na pasta. Hashes e
+// gravação em segundo plano, como o lote normal; no fim, o resumo.
+void relinkarDiferentesEmLote(ProjetoAberto* p, std::weak_ptr<bool> vivo, std::map<std::string, std::string> pares, Ganchos ganchos) {
+    const int n = static_cast<int>(pares.size());
+    auto cancelar = std::make_shared<std::atomic<bool>>(false);
+    ProgressoGlobal::obterInstancia().iniciarTarefa("batch_relink_anyway", matriz::i18n::t("acoes.localizar_offline_progresso"), n,
+                                                    [cancelar] { cancelar->store(true); });
+    juce::Thread::launch([p, vivo, pares, cancelar, ganchos] {
+        if (vivo.expired()) return;
+        auto res = matriz::vault::AssetRelinkEngine::relinkarAceitandoDiferenca(
+            p->projeto().registro(), p->projeto().writeMutex(), p->projeto().pasta(), pares,
+            [cancelar] { return cancelar->load(); },
+            [](int feitos, int total) {
+                ProgressoGlobal::obterInstancia().atualizarProgresso(
+                    "batch_relink_anyway", feitos,
+                    matriz::i18n::t("acoes.localizar_offline_conferindo").replace("{a}", juce::String(feitos)).replace("{n}", juce::String(total)));
+            });
+        juce::MessageManager::callAsync([vivo, res, ganchos] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("batch_relink_anyway");
+            if (vivo.expired()) return;
+            if (!res.relinkados.empty()) {
+                EventBus::obterInstancia().dispararItensAlterados(res.relinkados, "miniatura");
+                EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+                if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+            }
+            if (res.cancelado) return;
+            juce::String msg = matriz::i18n::t("acoes.relinkar_mesmo_assim_resumo")
+                                   .replace("{ok}", juce::String(static_cast<int>(res.relinkados.size())))
+                                   .replace("{nao}", juce::String(static_cast<int>(res.naoAchados.size())));
+            if (res.erro.isNotEmpty()) msg << "\n\n" << res.erro;
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(res.erro.isNotEmpty() ? juce::MessageBoxIconType::WarningIcon
+                                                                                 : juce::MessageBoxIconType::InfoIcon)
+                                             .withTitle(matriz::i18n::t("acoes.localizar_offline_titulo"))
+                                             .withMessage(msg)
+                                             .withButton(matriz::i18n::t("comum.ok")),
+                                         static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+        });
+    });
+}
+} // namespace
+
 void localizarOfflineEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
     if (itemIds.empty()) return;
     if (projeto.somenteLeitura()) { projeto.avisarSomenteLeitura(); return; }
@@ -699,7 +742,7 @@ void localizarOfflineEmLote(ProjetoAberto& projeto, const std::vector<std::strin
                         "batch_locate_offline", feitos,
                         matriz::i18n::t("acoes.localizar_offline_conferindo").replace("{a}", juce::String(feitos)).replace("{n}", juce::String(total)));
                 });
-            juce::MessageManager::callAsync([vivo, res, ganchos] {
+            juce::MessageManager::callAsync([p, vivo, res, ganchos] {
                 ProgressoGlobal::obterInstancia().concluirTarefa("batch_locate_offline");
                 if (vivo.expired()) return;
                 if (!res.relinkados.empty()) {
@@ -714,15 +757,30 @@ void localizarOfflineEmLote(ProjetoAberto& projeto, const std::vector<std::strin
                                        .replace("{nao}", contagem(res.naoAchados))
                                        .replace("{dif}", contagem(res.conteudoDiferente))
                                        .replace("{on}", contagem(res.jaOnline));
-                if (!res.conteudoDiferente.empty()) msg << "\n\n" << matriz::i18n::t("acoes.localizar_offline_dica_diferente");
+                const int aceitaveis = static_cast<int>(res.candidatoDiferente.size());
+                const int soIndividual = static_cast<int>(res.conteudoDiferente.size()) - aceitaveis;
+                if (aceitaveis > 0)
+                    msg << "\n\n" << matriz::i18n::t("acoes.localizar_offline_dica_aceitar").replace("{n}", juce::String(aceitaveis));
+                if (soIndividual > 0)
+                    msg << "\n\n" << matriz::i18n::t("acoes.localizar_offline_dica_diferente").replace("{n}", juce::String(soIndividual));
                 if (res.erro.isNotEmpty()) msg << "\n\n" << res.erro;
-                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
-                                                 .withIconType(res.erro.isNotEmpty() ? juce::MessageBoxIconType::WarningIcon
-                                                                                     : juce::MessageBoxIconType::InfoIcon)
-                                                 .withTitle(matriz::i18n::t("acoes.localizar_offline_titulo"))
-                                                 .withMessage(msg)
-                                                 .withButton(matriz::i18n::t("comum.ok")),
-                                             static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+                auto opcoes = juce::MessageBoxOptions()
+                                  .withIconType(res.erro.isNotEmpty() ? juce::MessageBoxIconType::WarningIcon
+                                                                      : juce::MessageBoxIconType::InfoIcon)
+                                  .withTitle(matriz::i18n::t("acoes.localizar_offline_titulo"))
+                                  .withMessage(msg);
+                if (aceitaveis == 0) {
+                    juce::AlertWindow::showAsync(opcoes.withButton(matriz::i18n::t("comum.ok")),
+                                                 static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+                    return;
+                }
+                // Mesmo nome, outro conteúdo (tags/metadados regravados...): o operador aceita de uma vez.
+                juce::AlertWindow::showAsync(
+                    opcoes.withButton(matriz::i18n::t("acoes.relinkar_mesmo_assim").replace("{n}", juce::String(aceitaveis)))
+                          .withButton(matriz::i18n::t("comum.ok")),
+                    [p, vivo, pares = res.candidatoDiferente, ganchos](int botao) {
+                        if (botao == 1 && !vivo.expired()) relinkarDiferentesEmLote(p, vivo, pares, ganchos);
+                    });
             });
         });
     });
