@@ -384,7 +384,9 @@ std::set<std::string> itensComConflitoPendente(matriz::db::Database& registro) {
 int levarConflitosPresosAoMantido(matriz::db::Database& registro) {
     std::vector<std::string> presos;
     {
-        auto st = registro.prepare("SELECT DISTINCT h.item_id FROM item_historico h JOIN item i ON i.id = h.item_id "
+        // CROSS JOIN: começa pelo histórico (poucas linhas). Pelo índice de estado o SQLite lia a linha de cada duplicata
+        // (13 mil no Bunker Analog) a cada abertura — 21 s com o HD frio.
+        auto st = registro.prepare("SELECT DISTINCT h.item_id FROM item_historico h CROSS JOIN item i ON i.id = h.item_id "
                                    "WHERE h.modelo_origem = ? AND h.confianca_origem IS NULL AND i.estado = 'duplicata'");
         st.bind(1, Value::of(std::string(kModeloMerge)));
         while (st.step()) presos.push_back(st.columnText(0));
