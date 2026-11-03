@@ -973,7 +973,8 @@ private:
     // OFFLINE (N): conta os offline do container inteiro (a grade carrega o container todo). Aparece só se houver algum, ou
     // ligado (depois do relink a contagem pode zerar e o usuário precisa poder voltar às pastas).
     void atualizarBotaoOffline() {
-        if (nestId_.empty()) return;
+        // O mosaico já avisa durante a construção (definirAgruparNests), antes da barra de cima existir: resized() pegaria nulo.
+        if (nestId_.empty() || trilha_ == nullptr || seletorVisao_ == nullptr) return;
         int n = 0;
         for (const auto& item : mosaico_->todosItensEmMemoria())
             if (item.offline) ++n;
