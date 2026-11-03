@@ -1047,7 +1047,15 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // subconsulta correlacionada por item: num HD frio cada UPDATE era ~15 mil buscas aleatórias no índice
     // (14-25 s por abertura, mesmo sem nada a migrar). Só grava se houver o que migrar. Mesmas regras de antes:
     // preenche a coluna de `item` apenas quando está NULL e existe item_campo raiz/0 do campo.
+    // Ainda há quem grave esses campos só em item_campo (ingestão em lote: source_media/collection_type). Os gatilhos
+    // trg_item_campo_para_item_* fazem a mesma cópia na hora da gravação; com eles no banco a varredura (57 mil linhas,
+    // 84 s com o HD frio, a cada abertura) não precisa mais rodar — só uma vez, na abertura que os cria.
+    bool gatilhosItemCampoParaItem = false;
     try {
+        auto st = registro.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_item_campo_para_item_insert'");
+        gatilhosItemCampoParaItem = st.step();
+    } catch (...) {}
+    if (!gatilhosItemCampoParaItem) try {
         struct Migrar { std::string itemId; const char* coluna; std::string valor; };
         std::vector<Migrar> pendentes;
         {
@@ -1078,6 +1086,20 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
                 throw;
             }
         }
+        // Mesma regra da varredura: só os 5 campos raiz/0, valor não NULL, só preenche coluna NULL do item.
+        const std::string corpo =
+            "WHEN NEW.nivel = 'raiz' AND NEW.nivel_indice = 0 AND NEW.valor IS NOT NULL "
+            "AND NEW.campo_id IN ('ano', 'isrc', 'content_type', 'source_media', 'collection_type') BEGIN "
+            "UPDATE item SET "
+            "ano = CASE WHEN NEW.campo_id = 'ano' THEN NEW.valor ELSE ano END, "
+            "isrc = CASE WHEN NEW.campo_id = 'isrc' THEN NEW.valor ELSE isrc END, "
+            "content_type = CASE WHEN NEW.campo_id = 'content_type' THEN NEW.valor ELSE content_type END, "
+            "source_media = CASE WHEN NEW.campo_id = 'source_media' THEN NEW.valor ELSE source_media END, "
+            "collection_type = CASE WHEN NEW.campo_id = 'collection_type' THEN NEW.valor ELSE collection_type END "
+            "WHERE id = NEW.item_id AND CASE NEW.campo_id WHEN 'ano' THEN ano WHEN 'isrc' THEN isrc "
+            "WHEN 'content_type' THEN content_type WHEN 'source_media' THEN source_media ELSE collection_type END IS NULL; END";
+        registro.exec("CREATE TRIGGER IF NOT EXISTS trg_item_campo_para_item_update AFTER UPDATE OF valor ON item_campo FOR EACH ROW " + corpo);
+        registro.exec("CREATE TRIGGER IF NOT EXISTS trg_item_campo_para_item_insert AFTER INSERT ON item_campo FOR EACH ROW " + corpo);
     } catch (...) {
         // Migration from old campos is best-effort — may not exist
     }
