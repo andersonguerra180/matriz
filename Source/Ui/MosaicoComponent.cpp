@@ -3412,12 +3412,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                           kRaioCardGrade - 3.0f, kRaioCardGrade - 3.0f, false, false, true, true);
                 g.setColour(tk.acento.withAlpha(0.16f));
                 g.fillPath(fundo);
-                auto areaBarra = barra.toNearestInt().reduced(7, 0);
-                const juce::String rotulo = i18n::t("catwork.painel_lista").toUpperCase();
-                g.setColour(tk.textoTerciario);
-                g.setFont(font9Bold);
-                g.drawText(rotulo, areaBarra.removeFromLeft(juce::GlyphArrangement::getStringWidthInt(font9Bold, rotulo) + 6),
-                           juce::Justification::centredLeft, false);
+                const auto areaBarra = barra.toNearestInt().reduced(7, 0);
                 const juce::String lista = juce::String::fromUTF8(item.nestLista.c_str());
                 g.setColour(lista.isEmpty() ? tk.textoTerciario : tk.textoPrimario);
                 g.setFont(lista.isEmpty() ? font95Normal : font9Bold);
