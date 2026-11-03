@@ -1528,6 +1528,12 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
             // o ano vai zero-padded pra 4 dígitos ordenar de verdade.
             chave = item.ano ? ("0:" + juce::String(*item.ano).paddedLeft('0', 4))
                              : ("1:" + matriz::i18n::t("grade.sem_ano"));
+        } else if (agruparNests_ && item.nestTotal > 1 && ehContainerGrafico(juce::String(item.nestOrigem))) {
+            // Container PROJECT: a seção é o CONTENT dele (o da ficha, gravado nos arquivos), não o tipo do arquivo-capa
+            // (que jogava um container de áudio em "Digital video" só porque a capa era um vídeo).
+            const juce::String content = juce::String::fromUTF8(item.nestContent.c_str());
+            chave = "0:" + (content.isEmpty() ? matriz::i18n::t("catwork.projects_sem_content")
+                                              : (matriz::i18n::localeAtivo().startsWith("pt") ? traduzirContent(content, true) : content));
         } else if (item.tipoMidia.empty()) {
             chave = "2:" + matriz::i18n::t("grade.nao_classificado");
         } else {
