@@ -15,19 +15,23 @@ std::mutex& mutexDoLog() {
 }
 
 // Posições das entradas automáticas: "### [AAAA-MM-DD HH:MM:SS] " no começo de linha.
+// Uma passada só pelo UTF-8: substring(pos)/indexOf(pos)/texto[pos] andam do começo do texto a cada chamada, e num
+// log.md de MBs isso levava segundos por entrada (Locate Offline em lote parava "em 100%" gravando o log).
 std::vector<int> inicioDasEntradas(const juce::String& texto) {
     std::vector<int> posicoes;
-    auto ehEntrada = [&](int pos) {
-        if (!texto.substring(pos).startsWith("### [")) return false;
-        const juce::String ts = texto.substring(pos + 5, pos + 24);
-        return ts.length() == 19 && ts[4] == '-' && ts[7] == '-' && ts[10] == ' ' && ts[13] == ':' && ts[16] == ':' &&
-               texto[pos + 24] == ']';
+    auto ehEntrada = [](juce::CharPointer_UTF8 p) {
+        static const char* const molde = "### [0000-00-00 00:00:00]";  // '0' = qualquer caractere
+        for (int k = 0; molde[k] != 0; ++k) {
+            const juce::juce_wchar c = p.getAndAdvance();
+            if (molde[k] == '0' ? c == 0 : c != static_cast<juce::juce_wchar>(molde[k])) return false;
+        }
+        return true;
     };
-    if (ehEntrada(0)) posicoes.push_back(0);
-    int i = 0;
-    while ((i = texto.indexOf(i, "\n### [")) >= 0) {
-        ++i;
-        if (ehEntrada(i)) posicoes.push_back(i);
+    auto p = texto.getCharPointer();
+    bool inicioDeLinha = true;
+    for (int i = 0; !p.isEmpty(); ++i) {
+        if (inicioDeLinha && *p == '#' && ehEntrada(p)) posicoes.push_back(i);
+        inicioDeLinha = (p.getAndAdvance() == '\n');
     }
     return posicoes;
 }
