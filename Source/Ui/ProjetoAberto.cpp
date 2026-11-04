@@ -1633,7 +1633,9 @@ bool colunaDeMetadadoLegivel(const std::string& coluna) {
         // DATE ISSUED (item 11): quando o asset foi ingerido no BKR Matriz —
         // já existe como item.criado_em (setado uma vez, na criação da
         // linha), só somente-leitura aqui, nunca gravado via salvarMetadado.
-        "criado_em"
+        "criado_em",
+        // EVENT DATE em DD | MM | YYYY: o ano é a coluna "ano"; dia e mês só existem em item_campo.
+        "evento_mes", "evento_dia"
     };
     return kColunasPermitidas.count(coluna) > 0;
 }
@@ -2577,6 +2579,39 @@ bool ProjetoAberto::preencherAnoPadraoSeVazio(const std::string& itemId, const s
     } catch (...) {
         return false;
     }
+}
+
+void ProjetoAberto::salvarDataEvento(const std::vector<std::string>& itemIds, const matriz::ficha::DataEvento& data) {
+    salvarMetadadoEmLote(itemIds, {{"ano", data.ano}, {"evento_mes", data.mes}, {"evento_dia", data.dia}});
+}
+
+bool ProjetoAberto::preencherDataEventoPadrao(const std::string& itemId, const matriz::ficha::DataEvento& criada) {
+    if (!projeto_ || itemId.empty() || criada.ano.empty()) return false;
+    bool gravou = preencherAnoPadraoSeVazio(itemId, criada.ano);
+    if (criada.mes.empty()) return gravou;
+    try {
+        auto& db = projeto_->registro();
+        auto st = db.prepare("SELECT CAST(i.ano AS TEXT), "
+                             "(SELECT COUNT(*) FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
+                             "   AND c.campo_id IN ('evento_mes', 'evento_dia')) "
+                             "FROM item i WHERE i.id = ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        if (!st.step() || st.columnIsNull(0) || st.columnText(0) != criada.ano || st.columnInt(1) > 0) return gravou;
+        // Igual ao ingest (fonte leitura_tecnica): sem metadados_editados, sem Undo, sem evento.
+        const std::string agora = matriz::model::agoraIso8601();
+        std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
+        for (const auto& [campo, valor] : {std::pair<std::string, std::string>{"evento_mes", criada.mes},
+                                           std::pair<std::string, std::string>{"evento_dia", criada.dia}}) {
+            if (valor.empty()) continue;
+            db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, ?, ?, 'leitura_tecnica', ?) "
+                   "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO NOTHING",
+                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId), matriz::db::Value::of(campo),
+                    matriz::db::Value::of(valor), matriz::db::Value::of(agora)});
+            gravou = true;
+        }
+    } catch (...) {}
+    return gravou;
 }
 
 void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& itemIds) {

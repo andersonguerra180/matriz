@@ -271,6 +271,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Catalogo/CatalogoProxies.cpp
     Source/Ficha/FichaDefinition.cpp
     Source/Ficha/CatalogoDeFichas.cpp
+    Source/Ficha/DataEvento.cpp
     Source/Db/Database.cpp
     Source/Analytics/AssetGeolocation.cpp
     Source/Ui/OriginalSourceMedium.cpp
@@ -646,6 +647,7 @@ target_sources(matriz PRIVATE
     Source/Ficha/CatalogoDeFichas.cpp
     Source/Ficha/FichaI18n.cpp
     Source/Ficha/OrigemPadrao.cpp
+    Source/Ficha/DataEvento.cpp
     Source/Ficha/AutocompleteHistorico.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp

@@ -31,6 +31,9 @@ public:
     // normal), 2+ entra em modo lote de verdade.
     void mostrarSelecao(const std::vector<std::string>& itemIds);
 
+    // Self-test: o "Are you sure?" da troca de EVENT DATE confirma sozinho (sem diálogo).
+    static inline bool pularConfirmacaoDataEventoParaTeste = false;
+
     void setEditavel(bool editavel);
     bool isEditavel() const { return editavel_; }
     bool emLote() const { return modoLote_; }  // ficha mostrando N arquivos (edição em lote)

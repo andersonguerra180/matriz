@@ -1,5 +1,6 @@
 #include "IngestArquivo.h"
 #include "../Analytics/AssetGeolocation.h"
+#include "../Ficha/DataEvento.h"
 
 #include <sys/stat.h>
 #if defined(_WIN32) || defined(_MSC_VER)
@@ -295,6 +296,17 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
                 {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(campoId),
                  Value::of(valor), Value::of(agora)});
         };
+        // EVENT DATE = DATE CREATED (DD | MM | YYYY na ficha): além do ano (item.ano, gravado logo abaixo em cada ramo),
+        // dia e mês da mesma data — só se o ano do item é o dessa data (um ano posto pelo usuário não ganha dia/mês alheio).
+        auto preencherDiaMesDoEvento = [&](const std::string& data) {
+            const auto d = matriz::ficha::dataEventoDeTexto(data);
+            if (!d || d->mes.empty()) return;
+            auto st = registro.prepare("SELECT CAST(ano AS TEXT) FROM item WHERE id = ?");
+            st.bind(1, Value::of(itemId));
+            if (!st.step() || st.columnIsNull(0) || st.columnText(0) != d->ano) return;
+            gravarCampoNativo("evento_mes", d->mes);
+            gravarCampoNativo("evento_dia", d->dia);
+        };
 
         // EXIF data original / Data de criação
         if (analise.leitura.exifDataOriginal && !analise.leitura.exifDataOriginal->empty()) {
@@ -313,6 +325,7 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
                 registro.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
                              {Value::of(anoStr), Value::of(itemId)});
             }
+            preencherDiaMesDoEvento(dataOriginal);
         } else if (analise.leitura.metaDate && !analise.leitura.metaDate->empty()) {
             gravarCampoNativo("dc_created", *analise.leitura.metaDate);
             gravarCampoNativo("data_criacao", *analise.leitura.metaDate);
@@ -327,6 +340,7 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
                 registro.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
                              {Value::of(anoStr), Value::of(itemId)});
             }
+            preencherDiaMesDoEvento(*analise.leitura.metaDate);
         } else {
             // Terceiro fallback do EVENT DATE: sem EXIF e sem metaDate, usa a
             // data de CRIAÇÃO do arquivo em disco — a mesma última fonte que a
@@ -347,6 +361,7 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
                 if (anoStr.size() == 4)
                     registro.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
                                  {Value::of(anoStr), Value::of(itemId)});
+                preencherDiaMesDoEvento(criacao.formatted("%Y-%m-%d").toStdString());
                 // Sem tag de data no arquivo (foto sem EXIF, MOV/MP4 sem creation_time):
                 // sem data_criacao o Intake/Grid caíam em item.criado_em = hoje.
                 // Grava a data completa do arquivo (mesma regra "mais antiga").

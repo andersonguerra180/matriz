@@ -15,6 +15,7 @@
 #include "../Ficha/AutocompleteHistorico.h"
 #include "../Ficha/FichaI18n.h"
 #include "../Ficha/OrigemPadrao.h"
+#include "../Ficha/DataEvento.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/FluxoLote.h"
 #include "../Ingest/LeituraTecnica.h"
@@ -477,6 +478,135 @@ inline std::vector<std::string> opcoesContentPorCategoriaString(MediaCategory ca
 
 // Ícone de pasta (vetor, sem depender de emoji/fonte) ao lado do rótulo LIST: preenche o campo com o nome de uma
 // pasta do Folder Map. Filho do próprio rótulo, então some/aparece junto com a linha.
+// EVENT DATE em três caixas lado a lado, DD | MM | YYYY (só o ano basta). Tab/Enter/clique fora: aoSair é chamado quando
+// o foco sai do GRUPO (passar de DD para MM não grava nem pergunta nada). Digitar os 2 dígitos do dia/mês pula para a
+// caixa seguinte.
+class CampoDataEvento : public juce::Component {
+public:
+    std::function<void()> aoSair;   // o foco saiu das três caixas
+    std::function<void()> aoEnter;  // Enter em qualquer caixa
+    bool confirmando = false;       // "Are you sure?" aberto: perder o foco para o diálogo não grava de novo
+
+    CampoDataEvento() {
+        prepararCaixa(dia_, 2, "DD", &mes_);
+        prepararCaixa(mes_, 2, "MM", &ano_);
+        prepararCaixa(ano_, 4, "YYYY", nullptr);
+        for (auto* sep : {&sep1_, &sep2_}) {
+            sep->setText("-", juce::dontSendNotification);
+            sep->setJustificationType(juce::Justification::centred);
+            sep->setColour(juce::Label::textColourId, tema().textoSecundario);
+            sep->setInterceptsMouseClicks(false, false);
+            addAndMakeVisible(*sep);
+        }
+    }
+
+    void setFonte(const juce::Font& f) {
+        for (auto* ed : {&dia_, &mes_, &ano_}) { ed->setFont(f); ed->applyFontToAllText(f); }
+    }
+    void setBorda(juce::Colour c) {
+        for (auto* ed : {&dia_, &mes_, &ano_}) ed->setColour(juce::TextEditor::outlineColourId, c);
+    }
+
+    void definir(const matriz::ficha::DataEvento& d) {
+        dia_.setText(juce::String::fromUTF8(d.dia.c_str()), false);
+        mes_.setText(juce::String::fromUTF8(d.mes.c_str()), false);
+        ano_.setText(juce::String::fromUTF8(d.ano.c_str()), false);
+    }
+    // Lote com datas diferentes: caixas vazias com o aviso "valores múltiplos".
+    void mostrarValoresMultiplos(const juce::String& aviso) {
+        const juce::Colour cinza(0xff7d766c);
+        dia_.setTextToShowWhenEmpty("--", cinza);
+        mes_.setTextToShowWhenEmpty("--", cinza);
+        ano_.setTextToShowWhenEmpty("----", cinza);
+        setTooltipTodas(aviso);
+    }
+    juce::String diaTexto() const { return dia_.getText().trim(); }
+    juce::String mesTexto() const { return mes_.getText().trim(); }
+    juce::String anoTexto() const { return ano_.getText().trim(); }
+    // Texto cru das três (para saber se há algo digitado e não gravado).
+    juce::String textoCru() const { return diaTexto() + "|" + mesTexto() + "|" + anoTexto(); }
+
+    juce::TextEditor& caixaAno() { return ano_; }
+    juce::TextEditor* caixaComFoco() {
+        for (auto* ed : {&dia_, &mes_, &ano_}) if (ed->hasKeyboardFocus(false)) return ed;
+        return nullptr;
+    }
+
+    void resized() override {
+        auto r = getLocalBounds();
+        const int sepW = 12;
+        const int w2 = juce::jmax(30, (r.getWidth() - 2 * sepW) * 26 / 100);
+        dia_.setBounds(r.removeFromLeft(w2));
+        sep1_.setBounds(r.removeFromLeft(sepW));
+        mes_.setBounds(r.removeFromLeft(w2));
+        sep2_.setBounds(r.removeFromLeft(sepW));
+        ano_.setBounds(r);
+    }
+
+private:
+    void setTooltipTodas(const juce::String& t) { for (auto* ed : {&dia_, &mes_, &ano_}) ed->setTooltip(t); }
+
+    void prepararCaixa(juce::TextEditor& ed, int maxLen, const juce::String& dica, juce::TextEditor* proxima) {
+        ed.setInputRestrictions(maxLen, "0123456789");
+        ed.setJustification(juce::Justification::centred);
+        ed.setTextToShowWhenEmpty(dica, juce::Colour(0xff9a948a));
+        ed.setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        ed.setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+        ed.setColour(juce::TextEditor::outlineColourId, tema().borda);
+        ed.setSelectAllWhenFocused(true);
+        juce::Component::SafePointer<CampoDataEvento> seguro(this);
+        ed.onFocusLost = [seguro] {
+            // Async: só quando o foco já pousou no destino dá para saber se ele ficou numa das três caixas.
+            juce::MessageManager::callAsync([seguro] {
+                if (seguro == nullptr || seguro->confirmando || seguro->hasKeyboardFocus(true)) return;
+                if (seguro->aoSair) seguro->aoSair();
+            });
+        };
+        ed.onReturnKey = [seguro] { if (seguro != nullptr && seguro->aoEnter) seguro->aoEnter(); };
+        if (proxima != nullptr) {
+            auto* edPtr = &ed;
+            ed.onTextChange = [edPtr, proxima, maxLen] {
+                if (edPtr->hasKeyboardFocus(false) && edPtr->getTotalNumChars() >= maxLen) proxima->grabKeyboardFocus();
+            };
+        }
+        addAndMakeVisible(ed);
+    }
+
+    juce::TextEditor dia_, mes_, ano_;
+    juce::Label sep1_, sep2_;
+};
+
+// "Are you sure?" antes de trocar um EVENT DATE que já tinha valor (1 arquivo ou N).
+void confirmarTrocaDataEvento(int quantos, const matriz::ficha::DataEvento& antes, const matriz::ficha::DataEvento& depois,
+                              std::function<void()> aoConfirmar, std::function<void()> aoCancelar) {
+    if (FichaPanelComponent::pularConfirmacaoDataEventoParaTeste) {
+        if (aoConfirmar) aoConfirmar();
+        return;
+    }
+    auto exibir = [](const matriz::ficha::DataEvento& d) {
+        if (d.vazia()) return matriz::i18n::t("ficha.data_evento_vazia");
+        juce::StringArray partes;
+        if (!d.dia.empty()) partes.add(juce::String::fromUTF8(d.dia.c_str()));
+        if (!d.mes.empty()) partes.add(juce::String::fromUTF8(d.mes.c_str()));
+        partes.add(juce::String::fromUTF8(d.ano.c_str()));
+        return partes.joinIntoString("-");
+    };
+    juce::String msg = quantos > 1 ? matriz::i18n::t("ficha.data_evento_confirmar_lote").replace("{n}", juce::String(quantos))
+                                   : matriz::i18n::t("ficha.data_evento_confirmar")
+                                         .replace("{antes}", exibir(antes));
+    msg = msg.replace("{depois}", exibir(depois));
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                     .withTitle(matriz::i18n::t("ficha.data_evento_confirmar_titulo"))
+                                     .withMessage(msg)
+                                     .withButton(matriz::i18n::t("ficha.data_evento_confirmar_sim"))
+                                     .withButton(matriz::i18n::t("comum.cancelar")),
+                                 [aoConfirmar, aoCancelar](int r) {
+                                     if (r == 1) { if (aoConfirmar) aoConfirmar(); }
+                                     else if (aoCancelar) aoCancelar();
+                                 });
+}
+
 // Campo de uma linha que só serve de gatilho (NOTES recolhido: "Add a note…"):
 // aparência de campo de texto, clique expande o box.
 class EntradaGatilho : public juce::Label {
@@ -727,6 +857,8 @@ public:
                 }
             } else if (auto* ed = dynamic_cast<juce::TextEditor*>(linha->editor.get())) {
                 if (ed->getText() != linha->valorSeed) linha->onCommit();
+            } else if (auto* data = dynamic_cast<CampoDataEvento*>(linha->editor.get())) {
+                if (data->textoCru() != linha->valorSeed) linha->onCommit();
             }
         }
     }
@@ -2494,24 +2626,16 @@ private:
         // busca temporal (DATE CREATED/DATE ISSUED foram removidas desta
         // ficha por não deverem estar aqui; o Dublin Core acima fica
         // intocado).
-        juce::String valEventDate = projeto_.lerMetadado(itemId, "ano").value_or("");
-        // EVENT DATE nunca deve nascer vazio: se o item foi ingerido antes do
-        // fallback de data de criação existir (ou se nada pôde ser lido lá),
-        // herda o ano de DATE CREATED, que logo acima já foi resolvido em
-        // cascata (dc_created → EXIF → data de criação em disco).
-        //
-        // O valor entra como TEXTO EDITÁVEL de verdade no campo (addEditableText
-        // faz setText), não placeholder — dá pra apagar e sobrescrever. E é
-        // gravado de forma silenciosa (ver preencherAnoPadraoSeVazio) pra o
-        // mesmo ano valer na grade, nos filtros e na próxima sessão, sem
-        // marcar o item como editado e sem entrar no Undo.
-        if (valEventDate.isEmpty() && valDcCreated.length() >= 4) {
-            juce::String anoDerivado = valDcCreated.substring(0, 4);
-            if (anoDerivado.containsOnly("0123456789")) {
-                valEventDate = anoDerivado;
-                projeto_.preencherAnoPadraoSeVazio(itemId, anoDerivado.toStdString());
-            }
-        }
+        // EVENT DATE = DATE CREATED (DD | MM | YYYY): nunca nasce vazio. Item ingerido antes (só com o ano, ou sem
+        // nada) herda a data de DATE CREATED, já resolvida acima em cascata (dc_created → EXIF → criação em disco).
+        // Gravação silenciosa (preencherDataEventoPadrao: sem "editado", sem Undo); um ano posto pelo usuário que não é
+        // o de DATE CREATED não ganha dia/mês alheio.
+        if (const auto criada = matriz::ficha::dataEventoDeTexto(valDcCreated.toStdString()))
+            projeto_.preencherDataEventoPadrao(itemId, *criada);
+        matriz::ficha::DataEvento valEventDate;
+        valEventDate.ano = projeto_.lerMetadado(itemId, "ano").value_or("");
+        valEventDate.mes = projeto_.lerMetadado(itemId, "evento_mes").value_or("");
+        valEventDate.dia = projeto_.lerMetadado(itemId, "evento_dia").value_or("");
 
         juce::String valDcType = projeto_.lerMetadado(itemId, "dc_type").value_or("");
         if (valDcType.isEmpty()) {
@@ -2872,6 +2996,86 @@ private:
             linha->editor = std::move(ed);
             if (dbColuna == "lista") instalarBotaoPastaDaLista(*linhaRaw, itemId);
 
+            camposUnificados_.push_back(std::move(linha));
+        };
+
+        // EVENT DATE: três caixas DD | MM | YYYY (CampoDataEvento). Grava ano + evento_mes + evento_dia de uma vez quando o
+        // foco sai do grupo (ou Enter); trocar uma data que já existia pergunta antes ("Are you sure?").
+        auto addEventDate = [this, &tk, itemId](const juce::String& rotulo, const matriz::ficha::DataEvento& valor) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = "event_date";
+            linha->colunaDb = "ano";
+            linha->bloco = BlocoFicha::UserAsset;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText(juce::String(), juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto campo = std::make_unique<CampoDataEvento>();
+            campo->setFonte(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            campo->definir(valor);
+            linha->valorSeed = campo->textoCru();
+            auto* linhaRaw = linha.get();
+            auto salva = std::make_shared<matriz::ficha::DataEvento>(valor);  // o que está gravado no item
+            juce::Component::SafePointer<FichaConteudo> seguro(this);
+            juce::Component::SafePointer<CampoDataEvento> campoSeguro(campo.get());
+            // linhaRaw só é tocada com campoSeguro vivo: a linha é dona do campo.
+            linha->onCommit = [seguro, campoSeguro, linhaRaw, itemId, salva] {
+                if (seguro == nullptr || campoSeguro == nullptr || campoSeguro->confirmando) return;
+                const auto nova = matriz::ficha::validarDataEvento(campoSeguro->diaTexto().toStdString(),
+                                                                   campoSeguro->mesTexto().toStdString(),
+                                                                   campoSeguro->anoTexto().toStdString());
+                auto voltar = [campoSeguro, linhaRaw, salva] {
+                    if (campoSeguro == nullptr) return;
+                    campoSeguro->definir(*salva);
+                    linhaRaw->valorSeed = campoSeguro->textoCru();
+                };
+                if (!nova) {
+                    voltar();
+                    avisoRapidoNoRotulo(linhaRaw->badge.get(), matriz::i18n::t("ficha.data_evento_invalida"));
+                    return;
+                }
+                if (*nova == *salva) { voltar(); return; }  // nada mudou (só normaliza "5" -> "05")
+                auto gravar = [seguro, campoSeguro, linhaRaw, itemId, salva, nova = *nova] {
+                    if (seguro == nullptr) return;
+                    try {
+                        seguro->projeto_.salvarDataEvento({itemId}, nova);
+                    } catch (const std::exception& e) {
+                        juce::Logger::writeToLog("[ficha] FALHA ao salvar EVENT DATE item=" + juce::String(itemId) +
+                                                  " erro=" + juce::String(e.what()));
+                        return;
+                    }
+                    *salva = nova;
+                    if (campoSeguro != nullptr) {
+                        campoSeguro->definir(nova);
+                        linhaRaw->valorSeed = campoSeguro->textoCru();
+                        piscarBordaSalvo(&campoSeguro->caixaAno());
+                    }
+                    if (seguro->aoAplicarSucesso) seguro->aoAplicarSucesso(itemId);
+                    if (seguro->aoMudar) seguro->aoMudar();
+                };
+                if (salva->vazia()) { gravar(); return; }
+                campoSeguro->confirmando = true;
+                confirmarTrocaDataEvento(1, *salva, *nova,
+                    [campoSeguro, gravar] { if (campoSeguro != nullptr) campoSeguro->confirmando = false; gravar(); },
+                    [campoSeguro, voltar] { if (campoSeguro != nullptr) campoSeguro->confirmando = false; voltar(); });
+            };
+            campo->aoSair = linha->onCommit;
+            campo->aoEnter = [this, commit = linha->onCommit] {
+                if (commit) commit();
+                if (aoPedirFocoGrade) aoPedirFocoGrade();
+            };
+            addAndMakeVisible(*campo);
+            linha->editor = std::move(campo);
             camposUnificados_.push_back(std::move(linha));
         };
 
@@ -3260,7 +3464,7 @@ private:
             // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
             // nesta ficha — removidas daqui; EVENT DATE é o único campo de
             // data do card ASSET & USER METADATA.
-            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEventDate(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate);
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
@@ -3290,7 +3494,7 @@ private:
             // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
             // nesta ficha — removidas daqui; EVENT DATE é o único campo de
             // data do card ASSET & USER METADATA.
-            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEventDate(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate);
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
@@ -3319,7 +3523,7 @@ private:
             // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
             // nesta ficha — removidas daqui; EVENT DATE é o único campo de
             // data do card ASSET & USER METADATA.
-            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEventDate(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate);
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
@@ -3345,7 +3549,7 @@ private:
             // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
             // nesta ficha — removidas daqui; EVENT DATE é o único campo de
             // data do card ASSET & USER METADATA.
-            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEventDate(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate);
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
@@ -4568,6 +4772,8 @@ public:
                 }
             } else if (auto* ed = dynamic_cast<juce::TextEditor*>(linha->editor.get())) {
                 if (ed->getText() != linha->valorSeed) aplicarCampoAgora(linha);
+            } else if (auto* data = dynamic_cast<CampoDataEvento*>(linha->editor.get())) {
+                if (data->textoCru() != linha->valorSeed) aplicarDataEventoAgora(linha);
             }
         }
     }
@@ -4579,7 +4785,10 @@ public:
         if (campoId == "geo_state") return geoLote_.editorState.get();
         if (campoId == "geo_country") return geoLote_.editorCountry.get();
         for (auto* linha : linhas_) {
-            if (linha->campoId == campoId) return linha->editor.get();
+            if (linha->campoId == campoId) {
+                if (auto* data = dynamic_cast<CampoDataEvento*>(linha->editor.get())) return &data->caixaAno();
+                return linha->editor.get();
+            }
         }
         if (campoId == "maquina") {
             for (auto* linha : linhas_) {
@@ -4618,6 +4827,9 @@ private:
         bool ehOriginalSourceMedium = false;
         std::vector<std::string> opcoes;
         std::unique_ptr<juce::Component> btnPasta;  // LIST: ícone "preencher pelas pastas do Folder Map" (filho do rótulo)
+        // EVENT DATE (CampoDataEvento): a data comum dos itens, ou dataMista = eles têm datas diferentes.
+        matriz::ficha::DataEvento dataComum;
+        bool dataMista = false;
         // Último valor semeado/aplicado — usado pelo flush (comitarPendencias)
         // pra saber se há texto digitado e ainda não aplicado nesta linha.
         juce::String valorSeed;
@@ -4975,6 +5187,48 @@ private:
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
             if (dbColuna == "lista") instalarBotaoPastaDaListaLote(*linha);
+        };
+
+        // EVENT DATE em lote: as mesmas três caixas DD | MM | YYYY da ficha individual (ver aplicarDataEventoAgora).
+        auto addEventDateLote = [this, &tk](const juce::String& rotulo) {
+            auto* linha = linhas_.add(new LinhaLote());
+            linha->campoId = "year";
+            linha->colunaDb = "ano";
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText(juce::String(), juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto campo = std::make_unique<CampoDataEvento>();
+            campo->setFonte(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            // Uma consulta por parte para todos os itens; qualquer parte diferente = "valores múltiplos".
+            const auto ano = projeto_.valorComumEmLote(itemIds_, "ano");
+            const auto mes = projeto_.valorComumEmLote(itemIds_, "evento_mes");
+            const auto dia = projeto_.valorComumEmLote(itemIds_, "evento_dia");
+            linha->dataMista = !ano || !mes || !dia;
+            if (!linha->dataMista) {
+                linha->dataComum = {*dia, *mes, *ano};
+                campo->definir(linha->dataComum);
+            } else {
+                campo->mostrarValoresMultiplos(matriz::i18n::t("ficha.lote_valores_multiplos"));
+            }
+            linha->valorSeed = campo->textoCru();
+            campo->aoSair = [this, linha] { aplicarDataEventoAgora(linha); };
+            campo->aoEnter = [this, linha] {
+                aplicarDataEventoAgora(linha);
+                if (aoPedirFocoGrade) aoPedirFocoGrade();
+            };
+            addAndMakeVisible(*campo);
+            linha->editor = std::move(campo);
         };
 
         auto addDropdownLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, const std::vector<std::string>& opcoes) {
@@ -5592,7 +5846,7 @@ private:
                 // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
-                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEventDateLote(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"));
                 addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
@@ -5620,7 +5874,7 @@ private:
                 // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
-                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEventDateLote(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"));
                 addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
@@ -5647,7 +5901,7 @@ private:
                 // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
-                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEventDateLote(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"));
                 addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
@@ -5674,7 +5928,7 @@ private:
                 // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
-                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEventDateLote(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"));
                 addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
@@ -5702,7 +5956,7 @@ private:
                 // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
-                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEventDateLote(isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"));
                 addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
@@ -5887,6 +6141,55 @@ private:
         if (sucessos > 0) piscarBordaSalvo(dynamic_cast<juce::TextEditor*>(linha->editor.get()));
         atualizarResumoDublinCoreLote();
         if (aoAplicarEmLote) aoAplicarEmLote();
+    }
+
+    // EVENT DATE em lote: grava a data das três caixas em todos os selecionados (uma transação, um Undo). Se algum já
+    // tinha data, pergunta antes ("Are you sure?"). Caixas intocadas (inclusive "valores múltiplos") não gravam nada.
+    void aplicarDataEventoAgora(LinhaLote* linha) {
+        auto* campo = linha ? dynamic_cast<CampoDataEvento*>(linha->editor.get()) : nullptr;
+        if (campo == nullptr || campo->confirmando || itemIds_.empty()) return;
+        if (campo->textoCru() == linha->valorSeed) return;
+        auto voltar = [linha, campo] {
+            if (linha->dataMista) campo->definir({});
+            else campo->definir(linha->dataComum);
+            linha->valorSeed = campo->textoCru();
+        };
+        const auto nova = matriz::ficha::validarDataEvento(campo->diaTexto().toStdString(), campo->mesTexto().toStdString(),
+                                                           campo->anoTexto().toStdString());
+        if (!nova) {
+            voltar();
+            avisoRapidoNoRotulo(linha->badge.get(), matriz::i18n::t("ficha.data_evento_invalida"));
+            return;
+        }
+        if (!linha->dataMista && *nova == linha->dataComum) { voltar(); return; }
+
+        // Ids e data por valor: se a seleção mudar com o diálogo aberto, o "Yes" ainda vale para os arquivos perguntados.
+        const auto ids = itemIds_;
+        juce::Component::SafePointer<FichaLoteConteudo> seguro(this);
+        juce::Component::SafePointer<CampoDataEvento> campoSeguro(campo);
+        auto gravar = [seguro, campoSeguro, linha, ids, data = *nova] {
+            if (seguro == nullptr) return;
+            seguro->projeto_.salvarDataEvento(ids, data);
+            for (const auto& id : ids)
+                if (seguro->aoAplicarSucessoItem) seguro->aoAplicarSucessoItem(id);
+            if (campoSeguro != nullptr) {  // a linha é dona do campo: viva com ele
+                linha->dataComum = data;
+                linha->dataMista = false;
+                campoSeguro->definir(data);
+                linha->valorSeed = campoSeguro->textoCru();
+                piscarBordaSalvo(&campoSeguro->caixaAno());
+            }
+            if (seguro->resultado_)
+                seguro->resultado_->setText(matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String((int) ids.size())),
+                                            juce::dontSendNotification);
+            if (seguro->aoAplicarEmLote) seguro->aoAplicarEmLote();
+        };
+        const bool algumTemData = linha->dataMista || !linha->dataComum.vazia();
+        if (!algumTemData) { gravar(); return; }
+        campo->confirmando = true;
+        confirmarTrocaDataEvento(static_cast<int>(ids.size()), linha->dataComum, *nova,
+            [campoSeguro, gravar] { if (campoSeguro != nullptr) campoSeguro->confirmando = false; gravar(); },
+            [campoSeguro, voltar] { if (campoSeguro == nullptr) return; campoSeguro->confirmando = false; voltar(); });
     }
 
     void aplicarGeoAgora(bool trocaConfirmada = false) {

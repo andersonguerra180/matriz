@@ -1,4 +1,5 @@
 #include "FloatingPreviewWindow.h"
+#include "../Ficha/DataEvento.h"
 #include "FichasEmbutidas.h"
 #include "../Ficha/CatalogoDeFichas.h"
 #include "LoteSelfTest.h"
@@ -3811,9 +3812,31 @@ int rodarLoteSelfTest() {
             c = contar(false, "dc_subject", "Subject Lote");
             checar(c == kItensPorLado, "Catalog SUBJECT written to every selected item" + n(c));
 
+            // EVENT DATE (DD | MM | YYYY): o "Are you sure?" confirma sozinho aqui; o editor de teste é a caixa do ano.
+            FichaPanelComponent::pularConfirmacaoDataEventoParaTeste = true;
             checar(aplicarTexto("year", "1987"), "EVENT DATE editor exists in batch mode");
+            FichaPanelComponent::pularConfirmacaoDataEventoParaTeste = false;
             c = contar(false, "ano", "1987");
             checar(c == kItensPorLado, "Catalog EVENT DATE written to every selected item" + n(c));
+            {
+                using matriz::ficha::dataEventoDeTexto;
+                using matriz::ficha::validarDataEvento;
+                const auto exif = dataEventoDeTexto("2019:05:12 14:33:00");
+                checar(exif && exif->texto() == "2019-05-12", "EVENT DATE: EXIF date -> DD/MM/YYYY");
+                const auto iso = dataEventoDeTexto("2021-11-03T10:00:00Z");
+                checar(iso && iso->texto() == "2021-11-03", "EVENT DATE: ISO date -> DD/MM/YYYY");
+                const auto semRelogio = dataEventoDeTexto("2019:00:00 00:00:00");
+                checar(semRelogio && semRelogio->texto() == "2019", "EVENT DATE: impossible month/day keeps only the year");
+                checar(validarDataEvento("", "", "1987") && validarDataEvento("", "", "1987")->texto() == "1987",
+                       "EVENT DATE: year alone is valid");
+                checar(validarDataEvento("5", "3", "1987") && validarDataEvento("5", "3", "1987")->texto() == "1987-03-05",
+                       "EVENT DATE: day/month padded to 2 digits");
+                checar(!validarDataEvento("29", "02", "2023") && validarDataEvento("29", "02", "2024"),
+                       "EVENT DATE: Feb 29 only in leap years");
+                checar(!validarDataEvento("10", "", "1987") && !validarDataEvento("", "13", "1987") && !validarDataEvento("", "05", ""),
+                       "EVENT DATE: day without month, month 13 and month without year are invalid");
+                checar(validarDataEvento("", "", "") && validarDataEvento("", "", "")->vazia(), "EVENT DATE: all empty clears");
+            }
 
             auto* cb = dynamic_cast<juce::ComboBox*>(ficha->editorDoCampoLoteParaTeste("collection"));
             checar(cb != nullptr && cb->getNumItems() > 0, "CONTENT dropdown exists in batch mode");

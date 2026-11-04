@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include "../Ficha/DataEvento.h"
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -476,6 +478,13 @@ public:
     // normalização de dado que faltou na ingestão, não edição do usuário.
     // Retorna true se gravou. Mesma regra do ingest: só escreve se vazio.
     bool preencherAnoPadraoSeVazio(const std::string& itemId, const std::string& ano);
+    // EVENT DATE (DD | MM | YYYY): grava ano (item.ano) + evento_mes + evento_dia nos itens, numa transação e com um
+    // Undo só (via salvarMetadadoEmLote). Data vazia limpa as três partes.
+    void salvarDataEvento(const std::vector<std::string>& itemIds, const matriz::ficha::DataEvento& data);
+    // EVENT DATE = DATE CREATED em itens já ingeridos: completa o ano (se vazio) e dia/mês da data `criada`, em silêncio
+    // como preencherAnoPadraoSeVazio. Dia/mês só entram se o ano do item é o de `criada` e o item nunca teve dia/mês
+    // gravados (nem vazios: limpar na ficha grava "" e não volta a preencher). Retorna true se gravou algo.
+    bool preencherDataEventoPadrao(const std::string& itemId, const matriz::ficha::DataEvento& criada);
 
     // --- Clear / Reset Metadata to Original Intake State ---
     void redefinirMetadadosItens(const std::vector<std::string>& itemIds);
