@@ -3093,6 +3093,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
             juce::Colour corCat = corPorCategoria(item.tipoMidia);
             constexpr float kRaioCardGrade = 12.0f;  // card creme canto 12
+            const juce::Colour kCorBordaGrupo(0xff2f7df6);  // contorno de PROJECT CONTAINER e NEST: azul
 
             g.setColour(tk.painel);
             g.fillRoundedRectangle(bounds.toFloat(), kRaioCardGrade);
@@ -3140,7 +3141,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             // NEST: duas linhas "empilhadas" saindo do cartão (direita/baixo) e o selo com o número de arquivos.
             // (Container não: o ícone/capa dele já é o desenho de "vários arquivos juntos".)
             if (emGrupo && !containerGrafico) {
-                g.setColour(juce::Colour(0xffe11d48).withAlpha(0.85f));
+                g.setColour(kCorBordaGrupo.withAlpha(0.85f));
                 for (int off : {3, 6}) {
                     g.drawLine((float) bounds.getRight() + off, (float) bounds.getY() + off + 2,
                                (float) bounds.getRight() + off, (float) bounds.getBottom() + off - 2, 2.0f);
@@ -3249,9 +3250,9 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText("N", stampN, juce::Justification::centred);
             }
 
-            // Container x NEST x arquivo avulso: contorno + rótulo próprios (container = cor de destaque, NEST = rosa).
+            // Container x NEST x arquivo avulso: contorno + rótulo próprios (PROJECT CONTAINER e NEST = azul).
             if (emGrupo) {
-                const auto corGrupo = containerGrafico ? tk.acento : juce::Colour(0xffe11d48);
+                const auto corGrupo = kCorBordaGrupo;
                 g.setColour(corGrupo);
                 g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), kRaioCardGrade, 2.5f);
                 if (!containerGrafico && !modoQuarentena_) {
