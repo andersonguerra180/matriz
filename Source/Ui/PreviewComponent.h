@@ -49,6 +49,10 @@ private:
     static juce::File arquivoProxyVideo(const juce::File& origem);
     static bool proxyVideoFalhou(const juce::File& origem);
     void gerarProxyVideoAsync(const juce::File& origem, const juce::File& destino);
+    // Clique direito na tela do vídeo: "Use this frame as cover" (frame na posição atual vira a capa/miniatura do item).
+    void mostrarMenuDoVideo();
+    void usarFrameComoCapa(double segundos);
+    juce::File arquivoVideoOriginal_;  // o master (não o proxy) — o frame da capa sai dele
     void timerCallback() override;
 
     ProjetoAberto& projeto_;

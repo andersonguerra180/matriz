@@ -5,14 +5,38 @@
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
 
+struct VPState;
+
+// View do vídeo que entrega o clique direito / Ctrl+clique ao Matriz (menu "usar este frame como capa").
+@interface MatrizVPContainerView : NSView {
+@public
+    VPState* estado;  // zerado em vpDestroy/vpLoad antes de a view sair
+}
+@end
+
 struct VPState {
     AVPlayer* player;
     AVPlayerLayer* playerLayer;
-    NSView* containerView;
+    MatrizVPContainerView* containerView;
     NSTextField* timecodeField;
     double cachedDuration;
     bool timecodeVisible;
+    void (*rightClickCallback)(void*);
+    void* rightClickContext;
 };
+
+@implementation MatrizVPContainerView
+- (void)rightMouseDown:(NSEvent*)event {
+    if (estado && estado->rightClickCallback) estado->rightClickCallback(estado->rightClickContext);
+    else [super rightMouseDown:event];
+}
+- (void)mouseDown:(NSEvent*)event {
+    if ((event.modifierFlags & NSEventModifierFlagControl) && estado && estado->rightClickCallback)
+        estado->rightClickCallback(estado->rightClickContext);
+    else
+        [super mouseDown:event];
+}
+@end
 
 VPHandle vpCreate(void) {
     VPState* s = new VPState();
@@ -22,6 +46,8 @@ VPHandle vpCreate(void) {
     s->timecodeField = nil;
     s->cachedDuration = 0.0;
     s->timecodeVisible = false;
+    s->rightClickCallback = nullptr;
+    s->rightClickContext = nullptr;
     return static_cast<VPHandle>(s);
 }
 
@@ -33,6 +59,7 @@ void vpDestroy(VPHandle h) {
         s->player = nil;
     }
     s->timecodeField = nil;
+    if (s->containerView) s->containerView->estado = nullptr;
     s->containerView = nil;
     s->playerLayer = nil;
     delete s;
@@ -47,6 +74,7 @@ bool vpLoad(VPHandle h, const char* path) {
         s->player = nil;
     }
     s->timecodeField = nil;
+    if (s->containerView) s->containerView->estado = nullptr;
     s->containerView = nil;
     s->playerLayer = nil;
     s->cachedDuration = 0.0;
@@ -61,7 +89,8 @@ bool vpLoad(VPHandle h, const char* path) {
     s->player.volume = 0.0f;
     s->player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
 
-    s->containerView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 640, 360)];
+    s->containerView = [[MatrizVPContainerView alloc] initWithFrame:NSMakeRect(0, 0, 640, 360)];
+    s->containerView->estado = s;
     s->containerView.wantsLayer = YES;
 
     s->playerLayer = [AVPlayerLayer playerLayerWithPlayer:s->player];
@@ -193,6 +222,13 @@ void vpSetTimecodeText(VPHandle h, const char* text) {
     }
 }
 
+void vpSetRightClickCallback(VPHandle h, void (*callback)(void*), void* contexto) {
+    if (!h) return;
+    VPState* s = static_cast<VPState*>(h);
+    s->rightClickCallback = callback;
+    s->rightClickContext = contexto;
+}
+
 #else
 
 VPHandle vpCreate(void) { return nullptr; }
@@ -209,5 +245,6 @@ void* vpGetNSView(VPHandle) { return nullptr; }
 void vpResize(VPHandle, int, int) {}
 void vpSetTimecodeVisible(VPHandle, bool) {}
 void vpSetTimecodeText(VPHandle, const char*) {}
+void vpSetRightClickCallback(VPHandle, void (*)(void*), void*) {}
 
 #endif

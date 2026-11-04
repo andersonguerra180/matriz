@@ -23,6 +23,8 @@ public:
     void atualizarTimecodeTexto(const juce::String& timecodeStr);
 
     std::function<void(double posicaoSegundos)> aoPosicaoMudar;
+    // Clique direito / Ctrl+clique na tela do vídeo (a view nativa não repassa o evento ao JUCE).
+    std::function<void()> aoCliqueDireito;
 
     void paint(juce::Graphics&) override;
     void resized() override;

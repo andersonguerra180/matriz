@@ -22,6 +22,9 @@ void* vpGetNSView(VPHandle h);
 void vpResize(VPHandle h, int w, int h2);
 void vpSetTimecodeVisible(VPHandle h, bool visible);
 void vpSetTimecodeText(VPHandle h, const char* text);
+// Clique direito (ou Ctrl+clique) na tela do vídeo: o NSView nativo engole o evento, então avisa por aqui.
+// Chamado na message thread. Windows: o player ainda é stub (sem view), então não dispara.
+void vpSetRightClickCallback(VPHandle h, void (*callback)(void* contexto), void* contexto);
 
 #ifdef __cplusplus
 }

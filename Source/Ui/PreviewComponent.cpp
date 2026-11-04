@@ -6,6 +6,8 @@
 #include "VideoPlayerBridge.h"
 #include "LogosTipoArquivo.h"
 #include "ConversaWhatsappComponent.h"
+#include "EventBus.h"
+#include "../Model/NomesSeguros.h"
 #include "../Whatsapp/WhatsappIngestao.h"
 
 #include "../Ficha/FichaI18n.h"
@@ -300,6 +302,70 @@ void PreviewComponent::gerarProxyVideoAsync(const juce::File& origem, const juce
     });
 }
 
+void PreviewComponent::mostrarMenuDoVideo() {
+    if (!videoPlayer_ || itemId_.empty()) return;
+    const double segundos = videoPlayer_->posicaoAtual();  // a posição do clique, antes de o vídeo andar
+    juce::PopupMenu menu;
+    menu.addItem(1, matriz::i18n::t("preview.usar_frame_como_capa"));
+    juce::Component::SafePointer<PreviewComponent> safeThis(this);
+    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, segundos](int r) {
+        if (r == 1 && safeThis != nullptr) safeThis->usarFrameComoCapa(segundos);
+    });
+}
+
+void PreviewComponent::usarFrameComoCapa(double segundos) {
+    if (itemId_.empty()) return;
+    const juce::File origem = arquivoVideoOriginal_;
+    if (!origem.existsAsFile()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, matriz::i18n::t("preview.usar_frame_como_capa"),
+                                               matriz::i18n::t("preview.frame_capa_falhou"));
+        return;
+    }
+    // Nome do arquivo da capa (é copiado para dentro do projeto): "<vídeo>_frame_<hh-mm-ss>.jpg".
+    const int s = juce::jmax(0, static_cast<int>(segundos));
+    const juce::String marca = juce::String(s / 3600).paddedLeft('0', 2) + "-" + juce::String((s / 60) % 60).paddedLeft('0', 2) + "-" +
+                               juce::String(s % 60).paddedLeft('0', 2);
+    const juce::File pastaTemp = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                     .getChildFile("matriz_frame_capa_" + juce::String(matriz::model::novoUuid()));
+    const juce::File destino =
+        pastaTemp.getChildFile(matriz::nomes_seguros::sanitizarComponente(origem.getFileNameWithoutExtension() + "_frame_" + marca + ".jpg"));
+    juce::Component::SafePointer<PreviewComponent> safeThis(this);
+    const std::string itemId = itemId_;
+    // ffmpeg fora da message thread; a gravação da capa volta para ela (definirCapa é a mesma do "Use image as cover...").
+    juce::Thread::launch([safeThis, itemId, origem, segundos, pastaTemp, destino] {
+        bool ok = false;
+        if (pastaTemp.createDirectory()) {
+            // -ss antes do -i: busca rápida e, ao recodificar, exata no frame.
+            juce::StringArray args{"-nostdin", "-y", "-ss", juce::String(juce::jmax(0.0, segundos), 3), "-i", origem.getFullPathName(),
+                                   "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-pix_fmt", "yuvj420p", "-q:v", "2",
+                                   destino.getFullPathName()};
+            try {
+                matriz::ingest::rodarEsperandoSucesso("ffmpeg", args, 120000);
+                ok = juce::ImageFileFormat::loadFrom(destino).isValid();
+            } catch (...) {
+                ok = false;
+            }
+        }
+        juce::MessageManager::callAsync([safeThis, itemId, ok, pastaTemp, destino] {
+            int aplicadas = 0;
+            if (ok && safeThis != nullptr) {
+                try {
+                    aplicadas = safeThis->projeto_.definirCapa({itemId}, destino);
+                } catch (...) {
+                    aplicadas = 0;
+                }
+            }
+            pastaTemp.deleteRecursively();
+            if (safeThis == nullptr) return;
+            if (aplicadas > 0)
+                EventBus::obterInstancia().dispararItemAlterado(itemId, "miniatura");  // a grade troca a miniatura guardada
+            else if (!safeThis->projeto_.somenteLeitura())  // somente leitura: definirCapa já avisou
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, matriz::i18n::t("preview.usar_frame_como_capa"),
+                                                       matriz::i18n::t("preview.frame_capa_falhou"));
+        });
+    });
+}
+
 void PreviewComponent::construirParaItem() {
     timeline_.reset();
     videoPlayer_.reset();
@@ -411,6 +477,8 @@ void PreviewComponent::construirParaItem() {
             }
             videoPlayer_ = std::make_unique<VideoPlayerComponent>();
             addAndMakeVisible(*videoPlayer_);
+            arquivoVideoOriginal_ = arquivoFile;
+            videoPlayer_->aoCliqueDireito = [this] { mostrarMenuDoVideo(); };
             if (!videoPlayer_->carregar(arquivoParaTocar)) {
                 videoPlayer_.reset();
                 if (caminhoMiniatura) imagemPrincipal_ = juce::ImageFileFormat::loadFrom(juce::File(*caminhoMiniatura));

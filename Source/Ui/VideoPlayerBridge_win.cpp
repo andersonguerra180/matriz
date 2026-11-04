@@ -66,3 +66,5 @@ void* vpGetNSView(VPHandle /*h*/) {
 void vpResize(VPHandle /*h*/, int /*w*/, int /*h2*/) {}
 void vpSetTimecodeVisible(VPHandle /*h*/, bool /*visible*/) {}
 void vpSetTimecodeText(VPHandle /*h*/, const char* /*text*/) {}
+// Sem view nativa no Windows ainda (vpLoad devolve false): nada para clicar.
+void vpSetRightClickCallback(VPHandle /*h*/, void (* /*callback*/)(void*), void* /*contexto*/) {}

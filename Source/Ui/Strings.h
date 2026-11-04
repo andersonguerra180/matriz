@@ -841,6 +841,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"preview.sem_arquivo", "No file attached to this item yet."},
         {"preview.sem_visualizacao", "No preview available for this file type."},
         {"preview.tocar", "Play"},
+        {"preview.usar_frame_como_capa", "Use this frame as cover"},
+        {"preview.frame_capa_falhou", "Couldn't use this frame as the cover (the video file could not be read)."},
         {"preview.video_preparando", "Preparing video preview (converting for playback)..."},
         {"preview.video_sem_player", "Video playback isn't implemented yet  -  showing the keyframe and technical data."},
         {"selecao.contagem", "{n} files selected"},

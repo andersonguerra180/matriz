@@ -6,6 +6,11 @@ namespace matriz::ui {
 
 VideoPlayerComponent::VideoPlayerComponent() {
     bridge_ = vpCreate();
+    // O bridge morre no destrutor junto com este objeto, então `this` como contexto não sobrevive a ele.
+    vpSetRightClickCallback(static_cast<VPHandle>(bridge_), [](void* ctx) {
+        auto* self = static_cast<VideoPlayerComponent*>(ctx);
+        if (self->aoCliqueDireito) self->aoCliqueDireito();
+    }, this);
 }
 
 VideoPlayerComponent::~VideoPlayerComponent() {

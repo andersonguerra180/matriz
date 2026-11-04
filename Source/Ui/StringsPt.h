@@ -907,6 +907,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"preview.sem_arquivo", "Este item ainda não tem arquivo associado."},
         {"preview.sem_visualizacao", "Sem prévia disponível para este tipo de arquivo."},
         {"preview.tocar", "Tocar"},
+        {"preview.usar_frame_como_capa", "Usar este frame como capa"},
+        {"preview.frame_capa_falhou", "Não foi possível usar este frame como capa (o arquivo de vídeo não pôde ser lido)."},
         {"preview.video_preparando", "Preparando a prévia do vídeo (convertendo para reprodução)..."},
         {"preview.video_sem_player", "Reprodução de vídeo ainda não implementada — mostrando o keyframe e os dados técnicos."},
         {"renomear_lote.adicionar_antes", "Antes do Nome"},
