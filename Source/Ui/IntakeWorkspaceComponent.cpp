@@ -1937,7 +1937,7 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
             "Raw Footage", "Home Video", "Music Video", "Film",
             "Documentary", "Corporate Video", "Commercial", "Live Performance",
             "NLE Project", "Social Media Video",
-            "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial", "CCTV (Security Camera)", "Podcast"
+            "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial", "CCTV (Security Camera)", "DVD", "Blu-ray", "LaserDisc", "Podcast"
         }},
         { "IMAGE", {
             "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional",

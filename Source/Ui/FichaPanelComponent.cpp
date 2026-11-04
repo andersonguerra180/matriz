@@ -366,6 +366,9 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Making Of", juce::String::fromUTF8("Making Of")},
         {"Tutorial", "Tutorial"},
         {"CCTV (Security Camera)", juce::String::fromUTF8("CFTV (Câmera de Segurança)")},
+        {"DVD", "DVD"},
+        {"Blu-ray", "Blu-ray"},
+        {"LaserDisc", "LaserDisc"},
         // Image
         {"Photo", "Foto"},
         {"Artwork", juce::String::fromUTF8("Arte / Ilustração")},
@@ -441,7 +444,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                 "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
-                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial", "CCTV (Security Camera)", "Podcast"};
+                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial", "CCTV (Security Camera)", "DVD", "Blu-ray", "LaserDisc", "Podcast"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
                 "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "360 Photo", "Technical Photography", "Document"};
