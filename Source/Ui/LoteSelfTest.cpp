@@ -3415,10 +3415,35 @@ int rodarDuplicatasResultadosSelfTest() {
             resolucao.criterio = "SIMILAR";
             resolucao.original.largura = 1920; resolucao.original.altura = 1080;
             resolucao.duplicata.largura = 640; resolucao.duplicata.altura = 360;
+            // Card com SUBJECT/LIST, Code e caminho longo (layout dos cards): um lado preenchido, o outro vazio ("—").
+            visivel.original.titulo = "IMG_6983 (2)";
+            visivel.original.codigoAcervo = "BA-34413";
+            visivel.original.subject = "Anderson Guerra";
+            visivel.original.lista = juce::String::fromUTF8("Aniversário").toStdString();
+            visivel.original.fullPath = "BACKUP/BACKUP BUNKER ANALOG/PRODUZIDOS NO BUNKER/Singles - EPs/2016/IMG_6983 (2).JPG";
+            visivel.original.ext = "jpg";
+            visivel.duplicata.titulo = "IMG_6983";
+            visivel.duplicata.codigoAcervo = "BA-13323";
+            visivel.duplicata.fullPath = juce::String::fromUTF8("para Bunker Analog/Extras/bunker!!!!/2016/banda arthur/gravação 0609/IMG_6983.JPG").toStdString();
+            visivel.duplicata.ext = "jpg";
             filtros.gruposDetectados_ = {escondido, visivel, resolucao};
             filtros.estado_ = D::State::Results;
             filtros.setSize(1280, 800);
             filtros.atualizarListaEStatusAposResolucao();
+            {
+                auto& lista = *filtros.viewport_->getViewedComponent();
+                checar(lista.getNumChildComponents() == 3 && lista.getChildComponent(1)->getHeight() > 0 &&
+                           lista.getChildComponent(1)->getBottom() <= lista.getHeight(),
+                       "result cards: every card fits inside the list height");
+                juce::PNGImageFormat png;
+                auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output");
+                dir.createDirectory();
+                juce::FileOutputStream out(dir.getChildFile("duplicatas_cards.png"));
+                if (out.openedOk()) {
+                    out.setPosition(0); out.truncate();
+                    png.writeImageToStream(lista.createComponentSnapshot(lista.getLocalBounds()), out);
+                }
+            }
             checar(filtros.quantidadeResultadosVisiveis() == 3, "result filters: ALL includes every pair");
             filtros.filtrosResultados_[2]->onClick();
             checar(filtros.quantidadeResultadosVisiveis() == 1 && filtros.passaFiltroResultado(escondido),

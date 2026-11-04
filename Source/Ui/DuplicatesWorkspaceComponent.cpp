@@ -15,6 +15,7 @@
 #include "DuplicateResolutionDialog.h"
 #include "../Model/ProjectLog.h"
 #include "EventBus.h"
+#include "MatrizLookAndFeel.h"
 #include <unordered_map>
 #include <unordered_set>
 #include "ConflitosMergeDialog.h"
@@ -122,11 +123,54 @@ namespace {
         juce::TextButton btnVoltar_;
     };
 
-    // Closed: top margin (10) + subcard height (130) + bottom margin (12).
-    // Sub-card maior (miniatura ocupando a altura toda — item 2).
-    constexpr int kAlturaSubCard = 196;  // cabe título + 5 linhas (Código, Match, Formato, Dimensões, Tamanho) + caminho sem sobrepor
-    constexpr int kAlturaFechado = kAlturaSubCard + 22;
-    constexpr int kAlturaAberto = kAlturaSubCard + 360;
+    // Card de um par: dois cards de arquivo (FILE 1 / FILE 2) da mesma altura — a do maior, que cresce com o texto
+    // (nome, SUBJECT/LIST, dados e caminho inteiros, sem "…") — e a coluna de ações à direita.
+    constexpr int kMargemPar = 14;      // borda do par até os cards
+    constexpr int kTopoPar = 12;
+    constexpr int kEntrePares = 12;     // espaço entre um par e o próximo
+    constexpr int kRaioPar = 10;
+    constexpr int kColunaAcoes = 168;
+    constexpr int kThumbW = 144, kThumbH = 168;  // área fixa: a orientação da foto não muda a altura do card
+    constexpr int kFaixa = 24;          // faixa azul/verde/âmbar do topo do card de arquivo
+    constexpr int kPadCard = 10;
+    constexpr int kRotuloDados = 70;    // coluna dos rótulos Format/Duration/...
+    constexpr int kAlturaPreviews = 338;  // par aberto (duplo clique): os dois players embaixo
+
+    // Cores do layout no tema claro; no escuro, derivadas dos tokens.
+    struct PaletaCard { juce::Colour blocoFundo, blocoBorda, rotulo, thumbFundo, tagFundo; };
+    PaletaCard paletaCard() {
+        const auto& tk = tema();
+        if (tk.fundo.getBrightness() > 0.5f)
+            return {juce::Colour(0xffede8e0), juce::Colour(0xffd8d1c6), juce::Colour(0xff5e5850), juce::Colour(0xffe4ded4), juce::Colour(0xffe4ded4)};
+        return {tk.painelAlt, tk.borda, tk.textoTerciario, tk.painelAlt.darker(0.25f), tk.painelAlt.brighter(0.15f)};
+    }
+
+    // Texto com quebra de linha em `largura` (nunca corta): mede e desenha com a mesma TextLayout.
+    juce::TextLayout textoQuebrado(const juce::String& texto, const juce::Font& fonte, juce::Colour cor, float largura) {
+        juce::AttributedString as;
+        as.setWordWrap(juce::AttributedString::byWord);
+        as.append(texto, fonte, cor);
+        juce::TextLayout tl;
+        tl.createLayout(as, juce::jmax(10.0f, largura));
+        return tl;
+    }
+    int alturaDe(const juce::TextLayout& tl) { return static_cast<int>(std::ceil(tl.getHeight())); }
+
+    // Botões da coluna de ações (168 px): fonte um pouco menor e, no botão colorido do tema claro, o texto começa depois
+    // do quadradinho de cor (que o MatrizLookAndFeel desenha em x 12..20) em vez de passar por cima dele.
+    class EstiloBotoesDoPar final : public MatrizLookAndFeel {
+    public:
+        juce::Font getTextButtonFont(juce::TextButton& b, int) override { return MatrizLookAndFeel::getTextButtonFont(b, 30); }
+        void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool destacado, bool pressionado) override {
+            const auto bg = b.findColour(juce::TextButton::buttonColourId);
+            const bool comPonto = tema().fundo.getBrightness() > 0.5f && b.isEnabled() && !b.getToggleState() &&
+                                  bg.getSaturation() > 0.28f && bg.getBrightness() > 0.25f && bg.getAlpha() > 100;
+            if (!comPonto) { MatrizLookAndFeel::drawButtonText(g, b, destacado, pressionado); return; }
+            juce::Graphics::ScopedSaveState salvo(g);
+            g.setOrigin(14, 0);  // a área do texto (recuo 14 dos dois lados) passa a ir de 28 até a borda direita
+            MatrizLookAndFeel::drawButtonText(g, b, destacado, pressionado);
+        }
+    };
 
     // PROBABLE/SIMILAR (pHash) nunca entram em decisão em lote: só um a um, olhando.
     template <class G> bool ehPrevisto(const G& g) { return g.criterio == "PROBABLE" || g.criterio == "SIMILAR"; }
@@ -563,15 +607,16 @@ public:
     }
 
     void resized() override {
-        auto area = getLocalBounds();
         int y = 10;
-        
         for (auto* card : cards_) {
             if (!card->isVisible()) continue;
-            int cardHeight = card->isExpanded() ? kAlturaAberto : kAlturaFechado;
+            const int cardHeight = card->alturaPara(getWidth() - 20);
             card->setBounds(10, y, getWidth() - 20, cardHeight);
-            y += cardHeight + 10;
+            y += cardHeight + kEntrePares;
         }
+        // A altura dos cards depende da largura (texto quebrando): a lista acompanha quando a janela muda de largura.
+        const int total = alturaTotal();
+        if (total != getHeight()) setSize(getWidth(), total);
     }
 
     void updateList(const std::vector<DuplicateGroup>& grupos) {
@@ -622,15 +667,19 @@ public:
 
     std::function<void()> onSelectionChanged;
 
-    void recalculateHeight() {
-        int totalHeight = 20;
+    int alturaTotal() {
+        int totalHeight = 10;
         bool temVisivel = false;
         for (auto* card : cards_) {
             if (!card->isVisible()) continue;
             temVisivel = true;
-            totalHeight += (card->isExpanded() ? kAlturaAberto : kAlturaFechado) + 10;
+            totalHeight += card->alturaPara(getWidth() - 20) + kEntrePares;
         }
-        setSize(getWidth(), temVisivel ? totalHeight : 80);
+        return temVisivel ? totalHeight : 80;
+    }
+
+    void recalculateHeight() {
+        setSize(getWidth(), alturaTotal());
         resized();
         repaint();
     }
@@ -649,6 +698,7 @@ private:
             btnValidate_->onClick = [this] {
                 owner_.resolverDuplicata(static_cast<int>(index_), true);
             };
+            btnValidate_->setLookAndFeel(&estiloBotoes_);
             addAndMakeVisible(*btnValidate_);
 
             btnDismiss_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_dismiss"));
@@ -657,9 +707,10 @@ private:
             btnDismiss_->onClick = [this] {
                 owner_.resolverDuplicata(static_cast<int>(index_), false);
             };
+            btnDismiss_->setLookAndFeel(&estiloBotoes_);
             addAndMakeVisible(*btnDismiss_);
 
-            chkSelecionar_ = std::make_unique<juce::ToggleButton>();
+            chkSelecionar_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("duplicatas.selecionar_par"));
             chkSelecionar_->onClick = [this] { parent_.notifySelectionChanged(); };
             addAndMakeVisible(*chkSelecionar_);
 
@@ -711,22 +762,20 @@ private:
         void updateButtonsI18n() {
             if (btnValidate_) btnValidate_->setButtonText(matriz::i18n::t("duplicatas.btn_validate"));
             if (btnDismiss_) btnDismiss_->setButtonText(matriz::i18n::t("duplicatas.btn_dismiss"));
+            if (chkSelecionar_) chkSelecionar_->setButtonText(matriz::i18n::t("duplicatas.selecionar_par"));
         }
 
         void mouseDown(const juce::MouseEvent& e) override {
             if (e.mods.isPopupMenu()) {
-                int w = getWidth();
-                int btnW = 160;
-                int rightPanelW = btnW + 20;
-                int subCardsAreaW = w - rightPanelW - 20;
-                int subW = std::max(120, (subCardsAreaW - 14) / 2);
-                int origX = 14;
-                int dupX = 14 + subW + 14;
+                const int subW = larguraSubCard(getWidth());
+                const int origX = kMargemPar;
+                const int dupX = kMargemPar + subW + kMargemPar;
+                const bool naAltura = e.y >= kTopoPar && e.y <= kTopoPar + alturaSubCards_;
 
                 std::string targetItemId;
-                if (e.x >= origX && e.x < origX + subW && e.y >= 10 && e.y <= 140) {
+                if (naAltura && e.x >= origX && e.x < origX + subW) {
                     targetItemId = grupo_.original.itemId;
-                } else if (e.x >= dupX && e.x < dupX + subW && e.y >= 10 && e.y <= 140) {
+                } else if (naAltura && e.x >= dupX && e.x < dupX + subW) {
                     targetItemId = grupo_.duplicata.itemId;
                 }
 
@@ -778,85 +827,103 @@ private:
             toggleExpanded();
         }
 
-        void paint(juce::Graphics& g) override {
+        // Largura de cada card de arquivo: os dois dividem o que sobra da coluna de ações.
+        static int larguraSubCard(int larguraPar) {
+            const int area = larguraPar - kMargemPar - kMargemPar - kColunaAcoes - kMargemPar;
+            return std::max(kThumbW + 140, (area - kMargemPar) / 2);
+        }
+
+        // Altura do par para esta largura (e guarda a altura comum dos dois cards de arquivo para o paint).
+        int alturaPara(int larguraPar) {
+            if (larguraPar != larguraMedida_) {
+                larguraMedida_ = larguraPar;
+                const int subW = larguraSubCard(larguraPar);
+                alturaSubCards_ = std::max({subCard(nullptr, 0, 0, subW, 0, grupo_.original, grupo_.duplicata, false, thumbOriginal_),
+                                            subCard(nullptr, 0, 0, subW, 0, grupo_.duplicata, grupo_.original, true, thumbDuplicata_),
+                                            alturaColunaAcoes()});
+            }
+            const int fechado = kTopoPar + alturaSubCards_ + kTopoPar;
+            return isExpanded_ ? fechado + kAlturaPreviews : fechado;
+        }
+
+        // Coluna de ações: Select pair, os dois botões e a nota de risco embaixo.
+        static constexpr int kAlturaChk = 24, kAlturaBotaoAcao = 36, kGapAcoes = 8;
+        int topoNota() const { return kAlturaChk + kGapAcoes + kAlturaBotaoAcao + kGapAcoes + kAlturaBotaoAcao + 12; }
+
+        // Nota de risco (âmbar = decida olhando, verde = byte a byte igual). Vazia = sem nota.
+        void textoNota(juce::String& titulo, juce::String& corpo) const {
+            if (grupo_.criterio == "PROBABLE" || grupo_.criterio == "SIMILAR") {
+                titulo = juce::String::fromUTF8("⚠ NOT BYTE-IDENTICAL");
+                corpo = grupo_.criterio == "SIMILAR" ? "Looks alike but may be a different shot. Compare both before choosing."
+                                                     : "Looks alike but may be an edit or a different file. Compare both before choosing.";
+            } else if (grupo_.criterio == "IDENTICAL") {
+                titulo = juce::String::fromUTF8("✓ IDENTICAL FILES");
+                corpo = "Same SHA-256: safe to validate.";
+                if (grupo_.pastaArquivos > 0)
+                    corpo << "\n" << matriz::i18n::t(grupo_.pastaMesmoConteudo ? "duplicatas.pasta_mesmo_conteudo" : "duplicatas.pasta_inteira")
+                                         .replace("{n}", juce::String(grupo_.pastaArquivos))
+                                         .replace("{a}", juce::String::fromUTF8(grupo_.pastaNome.c_str()))
+                                         .replace("{b}", juce::String::fromUTF8(grupo_.pastaEmNome.c_str()));
+            }
+        }
+        juce::TextLayout layoutNota(const juce::String& corpo) const {
+            return textoQuebrado(corpo, juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)), tema().textoSecundario,
+                                 static_cast<float>(kColunaAcoes - 14));
+        }
+        int alturaColunaAcoes() const {
+            juce::String titulo, corpo;
+            textoNota(titulo, corpo);
+            if (titulo.isEmpty()) return topoNota() - 12;
+            return topoNota() + 5 + 16 + alturaDe(layoutNota(corpo)) + 7;
+        }
+
+        // Desenha (g != nullptr) ou só mede (g == nullptr) um card de arquivo. Devolve a altura natural dele.
+        int subCard(juce::Graphics* g, int x, int y, int subWidth, int subHeight, const DuplicateMatch& m, const DuplicateMatch& other,
+                    bool isDup, const juce::Image& thumb) const {
             const auto& tk = tema();
-            
-            // Outer container box
-            // Risco visível: par "parecido" (pHash) ganha borda e fundo âmbar; idêntico (SHA-256) borda verde.
+            const auto pal = paletaCard();
             const bool ehPrevisto = grupo_.criterio == "PROBABLE" || grupo_.criterio == "SIMILAR";
             const juce::Colour corAmbar = grupo_.criterio == "PROBABLE" ? juce::Colour(0xffffa000) : juce::Colour(0xff32bced);
             const juce::Colour corSeguro(0xff1ec45b);
             const auto corCriterio = grupo_.criterio == "IDENTICAL" ? corSeguro : corAmbar;
-            g.setColour(tk.painel);
-            g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
-            if (ehPrevisto) {
-                g.setColour(corAmbar.withAlpha(0.07f));
-                g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
-                g.setColour(corAmbar);
-                g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
-            } else if (grupo_.criterio == "IDENTICAL") {
-                g.setColour(corSeguro.withAlpha(0.75f));
-                g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
-            } else {
-                g.setColour(tk.borda);
-                g.drawRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio, 1.0f);
-            }
+            juce::ignoreUnused(ehPrevisto);
 
-            int w = getWidth();
-            int btnW = 160;
-            int rightPanelW = btnW + 20;
-            int subCardsAreaW = w - rightPanelW - 20;
-            int subW = std::max(120, (subCardsAreaW - 14) / 2);
-            int subH = kAlturaSubCard;
+            if (g != nullptr) {
+                juce::Rectangle<float> cardRect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(subWidth),
+                                                static_cast<float>(subHeight));
+                g->setColour(tk.painelAlt.withAlpha(0.35f));
+                g->fillRoundedRectangle(cardRect, 6.0f);
+                g->setColour(tk.borda.withAlpha(0.70f));
+                g->drawRoundedRectangle(cardRect, 6.0f, 1.0f);
 
-            auto drawSubCard = [&](juce::Graphics& g, int x, int y, int subWidth, int subHeight,
-                                   const DuplicateMatch& m, const DuplicateMatch& other, bool isDup, const juce::Image& thumb) {
-                juce::Rectangle<float> cardRect(static_cast<float>(x), static_cast<float>(y),
-                                                static_cast<float>(subWidth), static_cast<float>(subHeight));
+                // Faixa do topo (cor do critério) com FILE 1/2 e a etiqueta de ingestão.
+                g->saveState();
+                g->reduceClipRegion(cardRect.toNearestInt().withHeight(kFaixa));
+                g->setColour(corCriterio);
+                g->fillRoundedRectangle(static_cast<float>(x), static_cast<float>(y), static_cast<float>(subWidth), static_cast<float>(kFaixa), 6.0f);
+                g->fillRect(static_cast<float>(x), static_cast<float>(y) + 12.0f, static_cast<float>(subWidth), static_cast<float>(kFaixa - 12));
+                g->restoreState();
+                g->setColour(tk.borda.withAlpha(0.40f));
+                g->drawHorizontalLine(y + kFaixa, static_cast<float>(x), static_cast<float>(x + subWidth));
 
-                // 1. Sub-card background fill (HD Storage card style)
-                g.setColour(tk.painelAlt.withAlpha(0.35f));
-                g.fillRoundedRectangle(cardRect, 6.0f);
-
-                // 2. Sub-card border
-                g.setColour(tk.borda.withAlpha(0.70f));
-                g.drawRoundedRectangle(cardRect, 6.0f, 1.0f);
-
-                // 3. Top Banner strip (Storage card style header)
-                g.saveState();
-                g.reduceClipRegion(cardRect.toNearestInt().withHeight(24));
-                g.setColour(corCriterio);
-                g.fillRoundedRectangle(static_cast<float>(x), static_cast<float>(y), static_cast<float>(subWidth), 24.0f, 6.0f);
-                g.fillRect(static_cast<float>(x), static_cast<float>(y) + 12.0f, static_cast<float>(subWidth), 12.0f);
-                g.restoreState();
-
-                // Banner divider line
-                g.setColour(tk.borda.withAlpha(0.40f));
-                g.drawHorizontalLine(y + 24, static_cast<float>(x), static_cast<float>(x + subWidth));
-
-                // Badge / Header text
-                g.setColour(juce::Colours::black);
-                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 // Esquerda = ARQUIVO 1, direita = ARQUIVO 2, sempre (é o que MANTER ARQUIVO 1/2 age). A ordem de ingestão
                 // dentro do conjunto de relacionados (#2/3) é outra coisa e vai como etiqueta menor, depois.
                 const juce::String rotuloLado = matriz::i18n::t(isDup ? "duplicatas.lado_arquivo2" : "duplicatas.lado_arquivo1");
-                const juce::Font fonteLado(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold));
+                const juce::Font fonteLado(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold));
                 const int larguraLado = juce::GlyphArrangement::getStringWidthInt(fonteLado, rotuloLado) + 14;
-                g.setColour(juce::Colours::black);
-                g.fillRoundedRectangle(static_cast<float>(x + 6), static_cast<float>(y + 3), static_cast<float>(larguraLado), 18.0f, 4.0f);
-                g.setColour(juce::Colours::white);
-                g.setFont(fonteLado);
-                g.drawText(rotuloLado, x + 6, y + 3, larguraLado, 18, juce::Justification::centred);
-                g.setColour(juce::Colours::black);
-                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+                g->setColour(juce::Colours::black);
+                g->fillRoundedRectangle(static_cast<float>(x + 6), static_cast<float>(y + 3), static_cast<float>(larguraLado), 18.0f, 4.0f);
+                g->setColour(juce::Colours::white);
+                g->setFont(fonteLado);
+                g->drawText(rotuloLado, x + 6, y + 3, larguraLado, 18, juce::Justification::centred);
+                g->setColour(juce::Colours::black);
+                g->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
                 juce::String headerTag = matriz::i18n::t("duplicatas.ordem_ingestao")
                                              .replace("{a}", juce::String(m.ordemChegada)).replace("{b}", juce::String(m.totalRelacionados));
-                if (!m.collectionNome.empty()) {
-                    headerTag << " \u00B7 " << juce::String(m.collectionNome).toUpperCase();
-                }
-                if (grupo_.criterio == "IDENTICAL") headerTag << " \u00B7 IDENTICAL";
-                else if (grupo_.criterio == "PROBABLE") headerTag << " \u00B7 PROBABLE \u00B7 REVIEW";
-                else headerTag << " \u00B7 POSSIBLE \u00B7 REVIEW";
+                if (!m.collectionNome.empty()) headerTag << " · " << juce::String(m.collectionNome).toUpperCase();
+                if (grupo_.criterio == "IDENTICAL") headerTag << " · IDENTICAL";
+                else if (grupo_.criterio == "PROBABLE") headerTag << " · PROBABLE · REVIEW";
+                else headerTag << " · POSSIBLE · REVIEW";
                 // Versão de resolução menor (ex.: foto recuperada de HD com problema): marca qual lado tem menos qualidade.
                 int larguraSelo = 0;
                 if (m.largura > 0 && m.altura > 0 && other.largura > 0 && other.altura > 0) {
@@ -865,183 +932,260 @@ private:
                     if (areaM != areaO) {
                         const bool menor = areaM < areaO;
                         const juce::String rotulo = menor ? "LOWER RESOLUTION" : "HIGHER RESOLUTION";
-                        const juce::Font fonteSelo(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
+                        const juce::Font fonteSelo(juce::FontOptions(tk.tamanhoFonteMicro, juce::Font::bold));
                         larguraSelo = juce::GlyphArrangement::getStringWidthInt(fonteSelo, rotulo) + 14;
                         juce::Rectangle<int> selo(x + subWidth - larguraSelo - 6, y + 4, larguraSelo, 16);
-                        g.setColour(menor ? juce::Colour(0xffef4444) : juce::Colour(0xff22c55e));
-                        g.fillRoundedRectangle(selo.toFloat(), 8.0f);
-                        g.setColour(juce::Colours::white);
-                        g.setFont(fonteSelo);
-                        g.drawText(rotulo, selo, juce::Justification::centred);
-                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-                        g.setColour(isDup ? tk.alerta : tk.acento);
+                        g->setColour(menor ? juce::Colour(0xffef4444) : juce::Colour(0xff22c55e));
+                        g->fillRoundedRectangle(selo.toFloat(), 8.0f);
+                        g->setColour(juce::Colours::white);
+                        g->setFont(fonteSelo);
+                        g->drawText(rotulo, selo, juce::Justification::centred);
+                        g->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+                        g->setColour(juce::Colours::black);
                         larguraSelo += 6;
                     }
                 }
-                g.drawText(headerTag, x + 6 + larguraLado + 8, y + 2, subWidth - 14 - larguraLado - 8 - larguraSelo, 20, juce::Justification::centredLeft, true);
+                g->drawText(headerTag, x + 6 + larguraLado + 8, y + 2, subWidth - 14 - larguraLado - 8 - larguraSelo, 20,
+                            juce::Justification::centredLeft, true);
+            }
 
-                // 4. Miniatura grande: ocupa toda a altura do sub-card abaixo
-                // da faixa do cabeçalho, colada à esquerda; as informações
-                // ficam à direita, em linhas com respiro.
-                const int topoConteudo = y + 25;
-                const int alturaConteudo = subHeight - 26;
-                const int thumbW = juce::jmin(alturaConteudo + 24, subWidth * 2 / 5);
-                juce::Rectangle<int> thumbRect(x + 1, topoConteudo, thumbW, alturaConteudo);
+            const int topo = y + kFaixa + kPadCard;
 
-                g.saveState();
-                {
-                    juce::Path clip;
-                    clip.addRoundedRectangle(static_cast<float>(thumbRect.getX()), static_cast<float>(thumbRect.getY()),
-                                             static_cast<float>(thumbRect.getWidth()), static_cast<float>(thumbRect.getHeight()),
-                                             5.0f, 5.0f, false, false, true, false);
-                    g.reduceClipRegion(clip);
-                    g.setColour(juce::Colours::black.withAlpha(0.35f));
-                    g.fillRect(thumbRect);
-                    if (thumb.isValid()) {
-                        g.setOpacity(1.0f);  // a cor acima tem alfa 0.35 e a imagem herdava isso (miniatura opaca)
-                        g.drawImageWithin(thumb, thumbRect.getX() + 4, thumbRect.getY() + 4, thumbRect.getWidth() - 8,
-                                          thumbRect.getHeight() - 8, juce::RectanglePlacement::centred, false);
-                    } else {
-                        g.setColour(tk.textoTerciario);
-                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
-                        g.drawText(juce::String(m.ext).toUpperCase(), thumbRect, juce::Justification::centred);
-                    }
-                }
-                g.restoreState();
-                g.setColour(tk.borda.withAlpha(0.50f));
-                g.drawVerticalLine(thumbRect.getRight(), static_cast<float>(thumbRect.getY()), static_cast<float>(thumbRect.getBottom()));
-
-                const int metaX = thumbRect.getRight() + 12;
-                const int metaW = x + subWidth - metaX - 10;
-                int linhaY = topoConteudo + 6;
-
-                // Título
-                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo + 1.0f, juce::Font::bold)));
-                g.setColour(m.nomeCoincide ? juce::Colour(0xffef4444) : tk.textoPrimario);
-                g.drawText(m.titulo.empty() ? juce::String(m.caminhoRelativo) : juce::String(m.titulo),
-                           metaX, linhaY, metaW, 18, juce::Justification::centredLeft, true);
-                linhaY += 22;
-
-                auto linhaInfo = [&](const juce::String& rotulo, const juce::String& valor, juce::Colour corValor) {
-                    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-                    g.setColour(tk.textoTerciario);
-                    const int rotuloW = 78;
-                    g.drawText(rotulo, metaX, linhaY, rotuloW, 16, juce::Justification::centredLeft, true);
-                    g.setColour(corValor);
-                    g.drawText(valor, metaX + rotuloW, linhaY, metaW - rotuloW, 16, juce::Justification::centredLeft, true);
-                    linhaY += 17;
-                };
-
-                linhaInfo(matriz::i18n::t("duplicatas.code"), m.codigoAcervo.empty() ? juce::String("N/A") : juce::String(m.codigoAcervo),
-                          tk.textoSecundario);
-                if (grupo_.criterio == "IDENTICAL")
-                    linhaInfo("Match", "same SHA-256", juce::Colour(0xffef4444));          // coincidência (vermelho, como os outros)
-                else if (grupo_.criterio == "PROBABLE")
-                    linhaInfo("Match", "looks identical (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
-                else if (grupo_.criterio == "SIMILAR")
-                    linhaInfo("Match", "similar shot, seconds apart (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
-                linhaInfo(matriz::i18n::t("duplicatas.format"), juce::String(m.ext).toUpperCase(), tk.textoSecundario);
-
-                if (m.duracao > 0.0) {
-                    int min = static_cast<int>(m.duracao) / 60;
-                    int sec = static_cast<int>(m.duracao) % 60;
-                    juce::String dur = juce::String::formatted("%02d:%02d", min, sec);
-                    if (m.lufs != 0.0) dur += juce::String::fromUTF8("  \u00B7  LUFS ") + juce::String::formatted("%.1f", m.lufs);
-                    linhaInfo(matriz::i18n::t("duplicatas.duration"), dur, tk.textoSecundario);
-                } else if (m.largura > 0 && m.altura > 0) {
-                    juce::String dim = juce::String(m.largura) + " x " + juce::String(m.altura);
-                    if (!m.orientation.empty() || !m.colorSpace.empty())
-                        dim += juce::String::fromUTF8("  \u00B7  ") + juce::String(m.orientation) + " " + juce::String(m.colorSpace);
-                    linhaInfo(matriz::i18n::t("duplicatas.dimensions"), dim.trim(), tk.textoSecundario);
-                }
-
-                const double kb = static_cast<double>(m.tamanhoBytes) / 1024.0;
-                const juce::String tamanho = kb >= 1024.0 ? juce::String::formatted("%.1f MB", kb / 1024.0)
-                                                          : juce::String::formatted("%.1f KB", kb);
-                linhaInfo(matriz::i18n::t("duplicatas.file_size"), tamanho,
-                          m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
-
-                if (m.outrosPares > 0)
-                    linhaInfo(matriz::i18n::t("duplicatas.tambem_em"),
-                              matriz::i18n::t("duplicatas.outros_pares").replace("{n}", juce::String(m.outrosPares)),
-                              juce::Colour(0xfff59e0b));
-
-                // Caminho no rodapé, até 2 linhas.
-                const int rodapeY = y + subHeight - 36;
-                g.setColour(tk.borda.withAlpha(0.35f));
-                g.drawHorizontalLine(rodapeY - 3, static_cast<float>(metaX), static_cast<float>(x + subWidth - 8));
-                g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-                juce::String displayPath = m.fullPath.empty() ? m.caminhoRelativo : m.fullPath;
-                g.drawFittedText(displayPath, metaX, rodapeY, metaW, 30, juce::Justification::topLeft, 2, 1.0f);
-            };
-
-            // Draw Original sub-card
-            drawSubCard(g, 14, 10, subW, subH, grupo_.original, grupo_.duplicata, false, thumbOriginal_);
-
-            // Draw Duplicate sub-card
-            drawSubCard(g, 14 + subW + 14, 10, subW, subH, grupo_.duplicata, grupo_.original, true, thumbDuplicata_);
-            
-            // Nota de risco sob os botões (painel direito): âmbar = decida olhando, verde = byte a byte igual.
-            {
-                const juce::Rectangle<int> nota(w - btnW - 14, 105, btnW, subH - 95);
-                if (ehPrevisto) {
-                    g.setColour(corAmbar.withAlpha(0.16f));
-                    g.fillRoundedRectangle(nota.toFloat(), 5.0f);
-                    g.setColour(corAmbar);
-                    g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
-                    auto in = nota.reduced(7, 5);
-                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
-                    g.drawText(juce::String::fromUTF8("\u26A0 NOT BYTE-IDENTICAL"), in.removeFromTop(14), juce::Justification::centredLeft, true);
-                    g.setColour(tk.textoSecundario);
-                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-                    g.drawFittedText(grupo_.criterio == "SIMILAR"
-                                         ? "Looks alike but may be a different shot. Compare both before choosing."
-                                         : "Looks alike but may be an edit or a different file. Compare both before choosing.",
-                                     in, juce::Justification::topLeft, 4, 1.0f);
-                } else if (grupo_.criterio == "IDENTICAL") {
-                    g.setColour(corSeguro.withAlpha(0.14f));
-                    g.fillRoundedRectangle(nota.toFloat(), 5.0f);
-                    g.setColour(corSeguro);
-                    g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
-                    auto in = nota.reduced(7, 5);
-                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
-                    g.drawText(juce::String::fromUTF8("\u2713 IDENTICAL FILES"), in.removeFromTop(14), juce::Justification::centredLeft, true);
-                    g.setColour(tk.textoSecundario);
-                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-                    juce::String textoNota("Same SHA-256: safe to validate.");
-                    if (grupo_.pastaArquivos > 0)
-                        textoNota << "\n" << matriz::i18n::t(grupo_.pastaMesmoConteudo ? "duplicatas.pasta_mesmo_conteudo"
-                                                                                       : "duplicatas.pasta_inteira")
-                                                 .replace("{n}", juce::String(grupo_.pastaArquivos))
-                                                 .replace("{a}", juce::String::fromUTF8(grupo_.pastaNome.c_str()))
-                                                 .replace("{b}", juce::String::fromUTF8(grupo_.pastaEmNome.c_str()));
-                    g.drawFittedText(textoNota, in, juce::Justification::topLeft, grupo_.pastaArquivos > 0 ? 6 : 3, 1.0f);
+            // Miniatura: área fixa 144 x 168; a imagem inteira, centralizada, sem cortar (deitada ocupa a largura,
+            // em pé ocupa a altura), com o fundo aparecendo em volta.
+            const juce::Rectangle<int> thumbRect(x + kPadCard, topo, kThumbW, kThumbH);
+            if (g != nullptr) {
+                g->setColour(pal.thumbFundo);
+                g->fillRoundedRectangle(thumbRect.toFloat(), 6.0f);
+                if (thumb.isValid()) {
+                    g->setOpacity(1.0f);
+                    g->drawImageWithin(thumb, thumbRect.getX() + 6, thumbRect.getY() + 6, thumbRect.getWidth() - 12,
+                                       thumbRect.getHeight() - 12, juce::RectanglePlacement::centred, false);
+                } else {
+                    g->setColour(tk.textoTerciario);
+                    g->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+                    g->drawText(juce::String(m.ext).toUpperCase(), thumbRect, juce::Justification::centred);
                 }
             }
 
-            // Draw horizontal dividing line if expanded
+            const int metaX = thumbRect.getRight() + 12;
+            const int metaW = std::max(60, x + subWidth - kPadCard - metaX);
+            int cursor = topo;
+
+            // Nome do arquivo: inteiro, quebrando linha.
+            {
+                const auto tl = textoQuebrado(m.titulo.empty() ? juce::String(m.caminhoRelativo) : juce::String(m.titulo),
+                                              juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo + 2.0f, juce::Font::bold)),
+                                              m.nomeCoincide ? juce::Colour(0xffef4444) : tk.textoPrimario, static_cast<float>(metaW));
+                if (g != nullptr) tl.draw(*g, juce::Rectangle<float>(static_cast<float>(metaX), static_cast<float>(cursor),
+                                                                     static_cast<float>(metaW), tl.getHeight()));
+                cursor += alturaDe(tl) + 8;
+            }
+
+            // SUBJECT / LIST em destaque (bloco sempre presente: os dois lados ficam alinhados; vazio = "—").
+            {
+                const juce::Font fonteRotulo = juce::Font(juce::FontOptions(tk.tamanhoFonteMicro - 1.0f, juce::Font::bold)).withExtraKerningFactor(0.08f);
+                const juce::Font fonteValor(juce::FontOptions(13.5f, juce::Font::bold));
+                const juce::String rotulos[2] = {matriz::i18n::t("duplicatas.subject"), matriz::i18n::t("duplicatas.lista")};
+                const std::string* valores[2] = {&m.subject, &m.lista};
+                const int rotuloW = std::max(juce::GlyphArrangement::getStringWidthInt(fonteRotulo, rotulos[0]),
+                                             juce::GlyphArrangement::getStringWidthInt(fonteRotulo, rotulos[1])) + 14;
+                const int padH = 10, padV = 7, entre = 4;
+                const int valorW = metaW - padH * 2 - rotuloW;
+                const int alturaLinhaMin = static_cast<int>(std::ceil(fonteValor.getHeight()));
+                juce::TextLayout layouts[2];
+                int alturas[2];
+                for (int i = 0; i < 2; ++i) {
+                    const bool vazio = juce::String::fromUTF8(valores[i]->c_str()).trim().isEmpty();
+                    layouts[i] = textoQuebrado(vazio ? juce::String::fromUTF8("—") : juce::String::fromUTF8(valores[i]->c_str()).trim(),
+                                               vazio ? juce::Font(juce::FontOptions(13.5f)) : fonteValor,
+                                               vazio ? pal.rotulo : tk.textoPrimario, static_cast<float>(valorW));
+                    alturas[i] = std::max(alturaLinhaMin, alturaDe(layouts[i]));
+                }
+                const int alturaBloco = padV + alturas[0] + entre + alturas[1] + padV;
+                if (g != nullptr) {
+                    const juce::Rectangle<float> bloco(static_cast<float>(metaX), static_cast<float>(cursor), static_cast<float>(metaW),
+                                                       static_cast<float>(alturaBloco));
+                    g->setColour(pal.blocoFundo);
+                    g->fillRoundedRectangle(bloco, 7.0f);
+                    g->setColour(pal.blocoBorda);
+                    g->drawRoundedRectangle(bloco.reduced(0.5f), 7.0f, 1.0f);
+                    int ly = cursor + padV;
+                    for (int i = 0; i < 2; ++i) {
+                        g->setColour(pal.rotulo);
+                        g->setFont(fonteRotulo);
+                        g->drawText(rotulos[i], metaX + padH, ly, rotuloW, alturaLinhaMin, juce::Justification::centredLeft, false);
+                        layouts[i].draw(*g, juce::Rectangle<float>(static_cast<float>(metaX + padH + rotuloW), static_cast<float>(ly),
+                                                                   static_cast<float>(valorW), layouts[i].getHeight()));
+                        ly += alturas[i] + entre;
+                    }
+                }
+                cursor += alturaBloco + 8;
+            }
+
+            // Dados técnicos: rótulos numa coluna de 70 px, valores alinhados na segunda (quebram se não couberem).
+            auto linhaInfo = [&](const juce::String& rotulo, const juce::String& valor, juce::Colour corValor) {
+                const juce::Font fonte(juce::FontOptions(tk.tamanhoFontePequena));
+                const auto tl = textoQuebrado(valor, fonte, corValor, static_cast<float>(metaW - kRotuloDados));
+                const int h = std::max(17, alturaDe(tl) + 2);
+                if (g != nullptr) {
+                    g->setFont(fonte);
+                    g->setColour(tk.textoTerciario);
+                    g->drawText(rotulo, metaX, cursor, kRotuloDados, 17, juce::Justification::centredLeft, false);
+                    tl.draw(*g, juce::Rectangle<float>(static_cast<float>(metaX + kRotuloDados), static_cast<float>(cursor + 1),
+                                                       static_cast<float>(metaW - kRotuloDados), tl.getHeight()));
+                }
+                cursor += h;
+            };
+
+            if (grupo_.criterio == "IDENTICAL")
+                linhaInfo("Match", "same SHA-256", juce::Colour(0xffef4444));
+            else if (grupo_.criterio == "PROBABLE")
+                linhaInfo("Match", "looks identical (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
+            else if (grupo_.criterio == "SIMILAR")
+                linhaInfo("Match", "similar shot, seconds apart (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
+            linhaInfo(matriz::i18n::t("duplicatas.format"), juce::String(m.ext).toUpperCase(), tk.textoSecundario);
+
+            if (m.duracao > 0.0) {
+                int min = static_cast<int>(m.duracao) / 60;
+                int sec = static_cast<int>(m.duracao) % 60;
+                juce::String dur = juce::String::formatted("%02d:%02d", min, sec);
+                if (m.lufs != 0.0) dur += juce::String::fromUTF8("  ·  LUFS ") + juce::String::formatted("%.1f", m.lufs);
+                linhaInfo(matriz::i18n::t("duplicatas.duration"), dur, tk.textoSecundario);
+            } else if (m.largura > 0 && m.altura > 0) {
+                juce::String dim = juce::String(m.largura) + " x " + juce::String(m.altura);
+                if (!m.orientation.empty() || !m.colorSpace.empty())
+                    dim += juce::String::fromUTF8("  ·  ") + juce::String(m.orientation) + " " + juce::String(m.colorSpace);
+                linhaInfo(matriz::i18n::t("duplicatas.dimensions"), dim.trim(), tk.textoSecundario);
+            }
+
+            const double kb = static_cast<double>(m.tamanhoBytes) / 1024.0;
+            const juce::String tamanho = kb >= 1024.0 ? juce::String::formatted("%.1f MB", kb / 1024.0) : juce::String::formatted("%.1f KB", kb);
+            linhaInfo(matriz::i18n::t("duplicatas.file_size"), tamanho, m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
+
+            if (m.outrosPares > 0)
+                linhaInfo(matriz::i18n::t("duplicatas.tambem_em"),
+                          matriz::i18n::t("duplicatas.outros_pares").replace("{n}", juce::String(m.outrosPares)), juce::Colour(0xfff59e0b));
+
+            // Caminho: inteiro, em quantas linhas precisar, depois de uma linha fina; o Code vai no começo, como etiqueta.
+            const int fimConteudo = std::max(thumbRect.getBottom(), cursor);
+            const int linhaY = fimConteudo + 10;
+            const int caminhoY = linhaY + 9;
+            const int caminhoX = x + kPadCard;
+            const int caminhoW = subWidth - kPadCard * 2;
+            const juce::String codigo = juce::String::fromUTF8(m.codigoAcervo.c_str()).trim();
+            const juce::String caminho = juce::String::fromUTF8((m.fullPath.empty() ? m.caminhoRelativo : m.fullPath).c_str());
+            juce::AttributedString as;
+            as.setWordWrap(juce::AttributedString::byWord);
+            const juce::String tag = codigo.isEmpty() ? juce::String() : juce::String::fromUTF8(" ") + codigo + juce::String::fromUTF8(" ");
+            if (tag.isNotEmpty()) {
+                as.append(tag, juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)), tk.textoPrimario);
+                as.append("  ", juce::Font(juce::FontOptions(tk.tamanhoFontePequena)), tk.textoSecundario);
+            }
+            as.append(caminho, juce::Font(juce::FontOptions(tk.tamanhoFontePequena)), tk.textoSecundario);
+            juce::TextLayout tlCaminho;
+            tlCaminho.createLayout(as, static_cast<float>(caminhoW));
+            if (g != nullptr) {
+                g->setColour(tk.borda.withAlpha(0.45f));
+                g->drawHorizontalLine(linhaY, static_cast<float>(caminhoX), static_cast<float>(caminhoX + caminhoW));
+                // Fundo da etiqueta do Code: atrás dos glifos do trecho do código (primeira linha).
+                if (tag.isNotEmpty() && tlCaminho.getNumLines() > 0) {
+                    const auto& linha = tlCaminho.getLine(0);
+                    juce::Range<float> faixaX;
+                    bool achou = false;
+                    for (auto* run : linha.runs) {
+                        if (run->stringRange.getStart() >= tag.length()) continue;
+                        const auto r = run->getRunBoundsX();
+                        faixaX = achou ? faixaX.getUnionWith(r) : r;
+                        achou = true;
+                    }
+                    if (achou) {
+                        const auto lb = linha.getLineBounds();
+                        const juce::Rectangle<float> etiqueta(static_cast<float>(caminhoX) + faixaX.getStart(),
+                                                              static_cast<float>(caminhoY) + lb.getY() - 1.0f, faixaX.getLength(), lb.getHeight() + 2.0f);
+                        g->setColour(pal.tagFundo);
+                        g->fillRoundedRectangle(etiqueta, 4.0f);
+                    }
+                }
+                tlCaminho.draw(*g, juce::Rectangle<float>(static_cast<float>(caminhoX), static_cast<float>(caminhoY),
+                                                          static_cast<float>(caminhoW), tlCaminho.getHeight()));
+            }
+            return caminhoY + alturaDe(tlCaminho) + kPadCard - y;
+        }
+
+        void paint(juce::Graphics& g) override {
+            const auto& tk = tema();
+            if (larguraMedida_ != getWidth()) alturaPara(getWidth());
+
+            // Fundo do par (claro, cantos de 10 px).
+            // Risco visível: par "parecido" (pHash) ganha borda e fundo âmbar; idêntico (SHA-256) borda verde.
+            const bool ehPrevisto = grupo_.criterio == "PROBABLE" || grupo_.criterio == "SIMILAR";
+            const juce::Colour corAmbar = grupo_.criterio == "PROBABLE" ? juce::Colour(0xffffa000) : juce::Colour(0xff32bced);
+            const juce::Colour corSeguro(0xff1ec45b);
+            const auto fundo = getLocalBounds().toFloat();
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(fundo, static_cast<float>(kRaioPar));
+            if (ehPrevisto) {
+                g.setColour(corAmbar.withAlpha(0.07f));
+                g.fillRoundedRectangle(fundo, static_cast<float>(kRaioPar));
+                g.setColour(corAmbar);
+                g.drawRoundedRectangle(fundo.reduced(1.0f), static_cast<float>(kRaioPar), 2.0f);
+            } else if (grupo_.criterio == "IDENTICAL") {
+                g.setColour(corSeguro.withAlpha(0.75f));
+                g.drawRoundedRectangle(fundo.reduced(1.0f), static_cast<float>(kRaioPar), 2.0f);
+            } else {
+                g.setColour(tk.borda);
+                g.drawRoundedRectangle(fundo.reduced(0.5f), static_cast<float>(kRaioPar), 1.0f);
+            }
+
+            // Os dois cards de arquivo com a mesma altura (a do maior).
+            const int subW = larguraSubCard(getWidth());
+            subCard(&g, kMargemPar, kTopoPar, subW, alturaSubCards_, grupo_.original, grupo_.duplicata, false, thumbOriginal_);
+            subCard(&g, kMargemPar + subW + kMargemPar, kTopoPar, subW, alturaSubCards_, grupo_.duplicata, grupo_.original, true, thumbDuplicata_);
+
+            // Nota de risco sob os botões.
+            juce::String titulo, corpo;
+            textoNota(titulo, corpo);
+            if (titulo.isNotEmpty()) {
+                const auto cor = ehPrevisto ? corAmbar : corSeguro;
+                const auto tl = layoutNota(corpo);
+                const juce::Rectangle<int> nota(getWidth() - kMargemPar - kColunaAcoes, kTopoPar + topoNota(), kColunaAcoes,
+                                                5 + 16 + alturaDe(tl) + 7);
+                g.setColour(cor.withAlpha(ehPrevisto ? 0.16f : 0.14f));
+                g.fillRoundedRectangle(nota.toFloat(), 5.0f);
+                g.setColour(cor);
+                g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
+                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro, juce::Font::bold)));
+                g.drawText(titulo, nota.getX() + 7, nota.getY() + 5, nota.getWidth() - 14, 14, juce::Justification::centredLeft, false);
+                tl.draw(g, juce::Rectangle<float>(static_cast<float>(nota.getX() + 7), static_cast<float>(nota.getY() + 21),
+                                                  static_cast<float>(nota.getWidth() - 14), tl.getHeight()));
+            }
+
             if (isExpanded_) {
                 g.setColour(tk.borda);
-                g.drawHorizontalLine(10 + kAlturaSubCard + 10, 10.0f, static_cast<float>(getWidth() - 10));
+                g.drawHorizontalLine(kTopoPar + alturaSubCards_ + 10, 10.0f, static_cast<float>(getWidth() - 10));
             }
         }
 
         void resized() override {
-            int w = getWidth();
-            int btnW = 160;
-            chkSelecionar_->setBounds(w - btnW - 14, 2, btnW, 20);
-            btnValidate_->setBounds(w - btnW - 14, 25, btnW, 32);
-            btnDismiss_->setBounds(w - btnW - 14, 65, btnW, 32);
+            const int w = getWidth();
+            alturaPara(w);
+            const int colX = w - kMargemPar - kColunaAcoes;
+            int yAcoes = kTopoPar;
+            chkSelecionar_->setBounds(colX, yAcoes, kColunaAcoes, kAlturaChk);
+            yAcoes += kAlturaChk + kGapAcoes;
+            btnValidate_->setBounds(colX, yAcoes, kColunaAcoes, kAlturaBotaoAcao);
+            yAcoes += kAlturaBotaoAcao + kGapAcoes;
+            btnDismiss_->setBounds(colX, yAcoes, kColunaAcoes, kAlturaBotaoAcao);
 
             if (isExpanded_) {
                 int previewW = w / 2 - 25;
-                const int previewY = 10 + kAlturaSubCard + 55;
+                const int previewY = kTopoPar + alturaSubCards_ + 45;
                 if (previewOriginal_) previewOriginal_->setBounds(15, previewY, previewW, 280);
                 if (previewDuplicata_) previewDuplicata_->setBounds(w / 2 + 10, previewY, previewW, 280);
             }
         }
-        
+
         bool isExpanded() const { return isExpanded_; }
         bool isSelected() const { return chkSelecionar_->getToggleState(); }
         void definirSelecionado(bool s) { chkSelecionar_->setToggleState(s, juce::dontSendNotification); }
@@ -1078,7 +1222,10 @@ private:
         DuplicateGroup grupo_;
         ListaResultadosComponent& parent_;
         bool isExpanded_ = false;
-        
+        int alturaSubCards_ = 0;      // altura dos dois cards de arquivo (a do maior), para a largura atual
+        int larguraMedida_ = -1;
+
+        EstiloBotoesDoPar estiloBotoes_;  // antes dos botões: é destruído depois deles
         std::unique_ptr<juce::TextButton> btnValidate_;
         std::unique_ptr<juce::TextButton> btnDismiss_;
         std::unique_ptr<juce::ToggleButton> chkSelecionar_;
@@ -2086,8 +2233,16 @@ void DuplicatesWorkspaceComponent::run() {
         std::string camera;        // EXIF Model (ou Make), para a regra de sequência
     };
     std::vector<ItemInfo> items;
+    // SUBJECT / LIST de cada item (chave = collectionCaminho + "\n" + itemId), só os que têm algum dos dois.
+    // Lidos à parte: um registro de collection antigo sem a coluna `lista` não pode derrubar a leitura dos itens.
+    std::map<std::string, std::pair<std::string, std::string>> subjectLista;
 
     auto carregarItensDeDb = [&](matriz::db::Database& database, const juce::File& pastaProjeto, const std::string& colNome, const std::string& colCaminho) {
+        try {
+            auto st = database.prepare("SELECT id, COALESCE(dc_subject, ''), COALESCE(lista, '') FROM item "
+                                       "WHERE COALESCE(dc_subject, '') != '' OR COALESCE(lista, '') != ''");
+            while (st.step()) subjectLista[colCaminho + "\n" + st.columnText(0)] = {st.columnText(1), st.columnText(2)};
+        } catch (...) {}
         try {
             auto stmt = database.prepare(
                 "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes, a.caminho_absoluto_origem, i.ano, "
@@ -2931,6 +3086,13 @@ void DuplicatesWorkspaceComponent::run() {
             if (st.step()) m->criadoEm = st.columnText(0);
         }
     }
+    auto preencherSubjectLista = [&](DuplicateMatch& m) {
+        const auto sl = subjectLista.find(m.collectionCaminho + "\n" + m.itemId);
+        if (sl != subjectLista.end()) { m.subject = sl->second.first; m.lista = sl->second.second; }
+    };
+    for (auto& grupo : gruposDetectados_) for (auto* m : {&grupo.original, &grupo.duplicata}) preencherSubjectLista(*m);
+    // Os pares das rajadas voltam para a lista principal com "é duplicata sim" (aba SEQUENCES).
+    for (auto& seq : sequenciasDetectadas_) for (auto& par : seq.pares) for (auto* m : {&par.original, &par.duplicata}) preencherSubjectLista(*m);
     std::map<std::string, std::string> raiz;
     auto chaveMembro = [](const DuplicateMatch& m) { return m.collectionCaminho + "\n" + m.itemId; };
     auto achar = [&](std::string id) {

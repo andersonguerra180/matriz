@@ -70,6 +70,8 @@ private:
         std::string collectionCaminho;
         std::string dataOriginal;  // EXIF DateTimeOriginal (aba SEQUENCES)
         std::string camera;        // EXIF Model (ou Make)
+        std::string subject;       // item.dc_subject (SUBJECT do card; vazio = "—")
+        std::string lista;         // item.lista (LIST do card)
 
         // Match flags
         bool nomeCoincide = false;
