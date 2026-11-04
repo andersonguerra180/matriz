@@ -2369,6 +2369,68 @@ private:
         linha.rotulo->addAndMakeVisible(*botao);
         linha.btnPasta = std::move(botao);
     }
+
+    // TAGS a partir do Folder Map (item único), mesmo ícone do LIST. Clique: acrescenta a tag com o nome da pasta do
+    // item; novo clique em até 2 s troca essa tag pela da pasta de cima; Option-clique (ou botão direito) escolhe o
+    // nível. Grava pelo aoMudar do próprio TagChipsEditor (mesmo caminho de digitar a tag).
+    struct EstadoCliquePastaTags { int nivel = -1; juce::int64 quando = 0; std::string tagAdicionada; };
+    void instalarBotaoPastaDasTags(LinhaUnificada& linha, const std::string& itemId) {
+        if (!linha.rotulo) return;
+        auto* chips = dynamic_cast<TagChipsEditor*>(linha.editor.get());
+        if (chips == nullptr) return;
+        auto botao = std::make_unique<BotaoPastaIcone>();
+        botao->setTooltip(matriz::i18n::t("ficha.tags_pasta_dica"));
+        botao->setBounds(46, 0, 22, 16);
+        auto estado = std::make_shared<EstadoCliquePastaTags>();
+        juce::Component::SafePointer<TagChipsEditor> chipsSeguro(chips);
+        juce::Label* badge = linha.badge.get();
+        auto aplicar = [chipsSeguro, badge, estado](const std::vector<std::string>& cadeia, int nivel, bool trocarAnterior) {
+            if (chipsSeguro == nullptr || nivel < 0 || static_cast<size_t>(nivel) >= cadeia.size()) return;
+            const std::string valor = cadeia[static_cast<size_t>(nivel)];
+            auto tags = chipsSeguro->getTags();
+            // Clique seguido: tira a tag que o clique anterior acrescentou (nunca uma que o arquivo já tinha).
+            if (trocarAnterior && !estado->tagAdicionada.empty()) {
+                const auto chaveAnterior = matriz::model::nomes::chave(estado->tagAdicionada);
+                tags.erase(std::remove_if(tags.begin(), tags.end(),
+                                          [&](const std::string& t) { return matriz::model::nomes::chave(t) == chaveAnterior; }),
+                           tags.end());
+            }
+            const auto chaveNova = matriz::model::nomes::chave(valor);
+            const bool jaTem = std::any_of(tags.begin(), tags.end(),
+                                           [&](const std::string& t) { return matriz::model::nomes::chave(t) == chaveNova; });
+            if (!jaTem) tags.push_back(valor);
+            estado->tagAdicionada = jaTem ? std::string() : valor;
+            estado->nivel = nivel;
+            estado->quando = juce::Time::currentTimeMillis();
+            chipsSeguro->setTags(tags);
+            if (chipsSeguro->aoMudar) chipsSeguro->aoMudar();
+            avisoRapidoNoRotulo(badge, matriz::i18n::t("ficha.lista_pasta_nivel").replace("{n}", juce::String(nivel + 1)));
+        };
+        auto* botaoRaw = botao.get();
+        botao->onClick = [this, itemId, badge, estado, aplicar, botaoRaw] {
+            const auto cadeia = projeto_.cadeiaDePastasDoItem(itemId);
+            if (cadeia.empty()) {
+                avisoRapidoNoRotulo(badge, matriz::i18n::t("ficha.lista_pasta_sem_pasta"));
+                return;
+            }
+            if (juce::ModifierKeys::currentModifiers.isAltDown() || juce::ModifierKeys::currentModifiers.isPopupMenu()) {
+                juce::PopupMenu menu;
+                for (size_t i = 0; i < cadeia.size(); ++i)
+                    menu.addItem(static_cast<int>(i) + 1, juce::String(static_cast<int>(i) + 1) + " - " + juce::String::fromUTF8(cadeia[i].c_str()));
+                menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(botaoRaw), [aplicar, cadeia](int escolha) {
+                    if (escolha > 0) aplicar(cadeia, escolha - 1, false);
+                });
+                return;
+            }
+            const auto agora = juce::Time::currentTimeMillis();
+            const bool seguido = estado->nivel >= 0 && agora - estado->quando < 2000;
+            int nivel = seguido ? estado->nivel + 1 : 0;
+            if (static_cast<size_t>(nivel) >= cadeia.size()) nivel = 0;  // passou do topo da hierarquia: volta à pasta do item
+            aplicar(cadeia, nivel, seguido);
+        };
+        linha.rotulo->addAndMakeVisible(*botao);
+        linha.btnPasta = std::move(botao);
+    }
     std::unique_ptr<juce::Label> dcResumo_;  // "N preenchidos" no cabeçalho do Dublin Core recolhido
 
     void atualizarResumoDublinCore() {
@@ -3406,6 +3468,7 @@ private:
             };
             addAndMakeVisible(*chips);
             linha->editor = std::move(chips);
+            instalarBotaoPastaDasTags(*linha, itemId);
 
             camposUnificados_.push_back(std::move(linha));
         };
@@ -4926,6 +4989,139 @@ private:
         linha.btnPasta = std::move(botao);
     }
 
+    // TAGS a partir do Folder Map, em lote: cada arquivo GANHA a tag com o nome da pasta DELE no nível escolhido
+    // (1 = pasta imediata); as tags que ele já tem ficam. Prévia + confirmação, uma transação e um Undo para o lote.
+    // Se todos ganham a mesma tag, vai pelo próprio chip (aparece na lista de tags comuns).
+    void instalarBotaoPastaDasTagsLote(LinhaLote& linha) {
+        if (!linha.rotulo || !linha.editor) return;
+        auto botao = std::make_unique<BotaoPastaIcone>();
+        botao->setTooltip(matriz::i18n::t("ficha.tags_pasta_dica_lote"));
+        botao->setBounds(46, 0, 22, 16);
+        juce::Component::SafePointer<FichaLoteConteudo> seguro(this);
+        LinhaLote* linhaPtr = &linha;
+        auto* botaoRaw = botao.get();
+        botao->onClick = [this, seguro, linhaPtr, botaoRaw] {
+            if (itemIds_.empty()) return;
+            std::vector<std::string> exemplos(5);
+            size_t niveis = 0;
+            for (const auto& id : itemIds_) {
+                const auto cadeia = projeto_.cadeiaDePastasDoItem(id);
+                niveis = std::max(niveis, std::min<size_t>(cadeia.size(), 5));
+                for (size_t n = 0; n < std::min<size_t>(cadeia.size(), 5); ++n)
+                    if (exemplos[n].empty()) exemplos[n] = cadeia[n];
+            }
+            if (niveis == 0) {
+                if (resultado_) resultado_->setText(matriz::i18n::t("ficha.lista_pasta_lote_sem_pasta"), juce::dontSendNotification);
+                return;
+            }
+            juce::PopupMenu menu;
+            for (size_t n = 0; n < niveis; ++n)
+                menu.addItem(static_cast<int>(n) + 1, matriz::i18n::t("ficha.lista_pasta_lote_nivel")
+                                                          .replace("{n}", juce::String(static_cast<int>(n) + 1))
+                                                          .replace("{ex}", juce::String::fromUTF8(exemplos[n].c_str())));
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(botaoRaw), [this, seguro, linhaPtr](int escolha) {
+                if (escolha <= 0 || seguro == nullptr) return;
+                const size_t nivel = static_cast<size_t>(escolha - 1);
+                struct Previa {
+                    std::vector<std::pair<std::string, std::string>> itemEValor;
+                    std::set<std::string> valoresDistintos;
+                    int jaTinham = 0, semPasta = 0, semNivel = 0;
+                };
+                auto previa = std::make_shared<Previa>();
+                for (const auto& id : itemIds_) {
+                    const auto cadeia = projeto_.cadeiaDePastasDoItem(id);
+                    if (cadeia.empty()) { ++previa->semPasta; continue; }
+                    if (cadeia.size() <= nivel) { ++previa->semNivel; continue; }
+                    const auto& valor = cadeia[nivel];
+                    const auto chave = matriz::model::nomes::chave(valor);
+                    bool jaTem = false;
+                    for (const auto& t : projeto_.lerTags(id))
+                        if (matriz::model::nomes::chave(t) == chave) { jaTem = true; break; }
+                    if (jaTem) { ++previa->jaTinham; continue; }
+                    previa->itemEValor.emplace_back(id, valor);
+                    previa->valoresDistintos.insert(valor);
+                }
+                juce::String msg;
+                if (previa->itemEValor.empty()) {
+                    msg << matriz::i18n::t("ficha.lista_pasta_lote_nada");
+                } else {
+                    msg << matriz::i18n::t("ficha.tags_pasta_lote_conf")
+                               .replace("{a}", juce::String(static_cast<int>(previa->itemEValor.size())))
+                               .replace("{v}", juce::String(static_cast<int>(previa->valoresDistintos.size())))
+                               .replace("{ex}", juce::String::fromUTF8(previa->valoresDistintos.begin()->c_str()));
+                }
+                auto linhaExtra = [&](int n, const char* chave) {
+                    if (n > 0) msg << "\n- " << matriz::i18n::t(chave).replace("{n}", juce::String(n));
+                };
+                linhaExtra(previa->jaTinham, "ficha.tags_pasta_lote_ja_tinha");
+                linhaExtra(previa->semPasta, "ficha.lista_pasta_lote_sem_pasta_n");
+                linhaExtra(previa->semNivel, "ficha.lista_pasta_lote_sem_nivel");
+                if (previa->itemEValor.empty()) {
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("ficha.tags_pasta_lote_titulo"), msg, {},
+                                                           nullptr, juce::ModalCallbackFunction::create([](int) {}));
+                    return;
+                }
+                msg << "\n\n" << matriz::i18n::t("ficha.lista_pasta_lote_aplicar_pergunta");
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::QuestionIcon, matriz::i18n::t("ficha.tags_pasta_lote_titulo"), msg,
+                    matriz::i18n::t("ficha.lista_pasta_lote_aplicar"), matriz::i18n::t("comum.cancelar"), nullptr,
+                    juce::ModalCallbackFunction::create([this, seguro, linhaPtr, previa](int ok) {
+                        if (ok == 0 || seguro == nullptr) return;
+                        // Todos terminam com a mesma tag: o chip comum faz a gravação (e o Undo) e passa a aparecer.
+                        if (previa->valoresDistintos.size() == 1 && previa->semPasta == 0 && previa->semNivel == 0) {
+                            if (auto* chips = dynamic_cast<TagChipsEditor*>(linhaPtr->editor.get())) {
+                                chips->addTag(juce::String::fromUTF8(previa->valoresDistintos.begin()->c_str()));
+                                if (resultado_)
+                                    resultado_->setText(matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(static_cast<int>(previa->itemEValor.size()))),
+                                                        juce::dontSendNotification);
+                                return;
+                            }
+                        }
+                        projeto_.iniciarGrupoUndo("Batch edit: tags (from Folder Map)");
+                        int sucessos = 0;
+                        {
+                            EscopoLoteAtualizacao escopoLote(*this);
+                            auto& db = projeto_.projeto().registro();
+                            std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
+                            bool emTransacao = false;
+                            try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+                            struct LoteEventos {
+                                bool ativo = true;
+                                LoteEventos() { EventBus::obterInstancia().iniciarLote(); }
+                                void fim() { if (ativo) { ativo = false; EventBus::obterInstancia().finalizarLote(); } }
+                                ~LoteEventos() { fim(); }
+                            } loteEventos;
+                            std::map<std::string, std::string> canonica;  // grafia do projeto, resolvida uma vez por valor
+                            std::vector<std::string> ids;
+                            for (const auto& [id, valor] : previa->itemEValor) {
+                                try {
+                                    auto& c = canonica[valor];
+                                    if (c.empty()) c = matriz::model::nomes::tagCanonica(db, valor);
+                                    projeto_.adicionarTag(id, c);
+                                    ids.push_back(id);
+                                    ++sucessos;
+                                    if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
+                                } catch (const std::exception& e) {
+                                    juce::Logger::writeToLog("[ficha-lote] FALHA ao gravar tag da pasta item=" + juce::String(id) +
+                                                             " erro=" + juce::String(e.what()));
+                                }
+                            }
+                            if (emTransacao && !commitOuReverter(db, ids)) sucessos = 0;
+                            writeLock.unlock();
+                            loteEventos.fim();
+                        }
+                        projeto_.finalizarGrupoUndo();
+                        if (resultado_)
+                            resultado_->setText(matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(sucessos)),
+                                                juce::dontSendNotification);
+                        if (aoAplicarEmLote) aoAplicarEmLote();
+                    }));
+            });
+        };
+        linha.rotulo->addAndMakeVisible(*botao);
+        linha.btnPasta = std::move(botao);
+    }
+
     struct SecaoGeoLote {
         bool confirmandoTroca = false;  // diálogo de troca do GPS do arquivo aberto
         std::unique_ptr<juce::ToggleButton> overrideGeo;
@@ -5427,6 +5623,7 @@ private:
             chips->aoRedimensionar = [this] { relayoutEExibir(); };
             addAndMakeVisible(*chips);
             linha->editor = std::move(chips);
+            instalarBotaoPastaDasTagsLote(*linha);
         };
 
         // Item "Ficha ASSET & USER METADATA em seleção múltipla": NOTES em
