@@ -362,7 +362,13 @@ public:
     static constexpr int kAlturaCabecalhoGrupo = 26;
     // Lista (igual à do INTAKE): cabeçalho de colunas sob o título do grupo.
     static constexpr int kAlturaCabecalhoColunas = 26;
-    static std::vector<std::pair<int, int>> colunasDaLista(int largura);  // x, largura por coluna
+    std::vector<std::pair<int, int>> colunasDaLista(int largura) const;  // x, largura por coluna
+    // Colunas da LISTA redimensionáveis como na tabela do INTAKE: arrastar a borda direita de uma coluna no
+    // cabeçalho. Larguras valem para a sessão. PATH (6) absorve a sobra; o valor guardado dele é o mínimo.
+    int largurasLista_[10] = {36, 80, 220, 110, 150, 80, 120, 150, 200, 80};
+    int colunaRedimensionandoLista_ = -1;
+    int larguraInicialRedimensionamento_ = 0;
+    int bordaDeColunaDaListaEm(juce::Point<int> p) const;  // coluna cuja borda direita está sob p no cabeçalho, ou -1
     static juce::String categoriaDaLista(const std::string& extensao);
     static juce::Colour corCategoriaDaLista(const juce::String& categoria);
     static juce::String formatarBytesDaLista(juce::int64 bytes);

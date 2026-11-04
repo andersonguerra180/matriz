@@ -956,20 +956,33 @@ int MosaicoComponent::compararPorColunaDaLista(const ItemResumo& a, const ItemRe
     }
 }
 
-std::vector<std::pair<int, int>> MosaicoComponent::colunasDaLista(int largura) {
-    // Larguras padrão das colunas da tabela do INTAKE; PATH absorve a sobra.
-    static const int kLarg[] = {36, 80, 220, 110, 150, 80, 250, 150, 200, 80};
+std::vector<std::pair<int, int>> MosaicoComponent::colunasDaLista(int largura) const {
+    // Larguras das colunas (começam nas da tabela do INTAKE; o usuário arrasta as bordas no cabeçalho);
+    // PATH absorve a sobra, sem ficar menor que a largura guardada dele.
     int fixas = 0;
-    for (int c = 0; c < 10; ++c) if (c != 6) fixas += kLarg[c];
-    const int path = juce::jmax(120, largura - fixas);
+    for (int c = 0; c < 10; ++c) if (c != 6) fixas += largurasLista_[c];
+    const int path = juce::jmax(largurasLista_[6], largura - fixas);
     std::vector<std::pair<int, int>> out;
     int x = 0;
     for (int c = 0; c < 10; ++c) {
-        const int w = c == 6 ? path : kLarg[c];
+        const int w = c == 6 ? path : largurasLista_[c];
         out.push_back({x, w});
         x += w;
     }
     return out;
+}
+
+int MosaicoComponent::bordaDeColunaDaListaEm(juce::Point<int> p) const {
+    if (modoVisao_ != ModoVisao::Lista) return -1;
+    for (const auto& grupo : grupos_) {
+        const int y0 = grupo.yTopo + kAlturaCabecalhoGrupo;
+        if (p.y < y0 || p.y >= y0 + kAlturaCabecalhoColunas) continue;
+        const auto cols = colunasDaLista(getWidth());
+        for (size_t c = 1; c < cols.size(); ++c)  // a coluna 0 (seleção) tem largura fixa
+            if (std::abs(p.x - (cols[c].first + cols[c].second)) <= 4) return static_cast<int>(c);
+        return -1;
+    }
+    return -1;
 }
 
 juce::String MosaicoComponent::categoriaDaLista(const std::string& extensao) {
@@ -1675,6 +1688,8 @@ void MosaicoComponent::definirSelecao(const std::set<std::string>& itemIds) {
 }
 
 void MosaicoComponent::mouseMove(const juce::MouseEvent& e) {
+    setMouseCursor(bordaDeColunaDaListaEm(e.getPosition()) >= 0 ? juce::MouseCursor::LeftRightResizeCursor
+                                                                 : juce::MouseCursor::NormalCursor);
     int indice = indiceNaPosicao(e.getPosition());
     if (indice == indiceHover_) return;
     const int anterior = indiceHover_;
@@ -1821,6 +1836,15 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
     if (subpastaSelecionada_ >= 0) { subpastaSelecionada_ = -1; repaint(); }
+
+    // Borda de coluna no cabeçalho da LISTA: começa a redimensionar (não ordena).
+    if (!e.mods.isPopupMenu()) {
+        if (const int col = bordaDeColunaDaListaEm(e.getPosition()); col >= 0) {
+            colunaRedimensionandoLista_ = col;
+            larguraInicialRedimensionamento_ = colunasDaLista(getWidth())[static_cast<size_t>(col)].second;
+            return;
+        }
+    }
 
     // Clique no cabeçalho de colunas da LISTA: ordena por aquela coluna
     // (de novo na mesma coluna inverte), como na tabela do INTAKE.
@@ -1973,6 +1997,14 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
 }
 
 void MosaicoComponent::mouseDrag(const juce::MouseEvent& e) {
+    if (colunaRedimensionandoLista_ >= 0) {
+        // Mínimos da tabela do INTAKE (TYPE, NAME, ORIGIN, DATE, SIZE, PATH, COLLECTION, SOURCE MEDIA, ACTION).
+        static const int kMin[] = {36, 70, 140, 90, 110, 60, 120, 100, 130, 70};
+        const int c = colunaRedimensionandoLista_;
+        largurasLista_[c] = juce::jlimit(kMin[c], 2000, larguraInicialRedimensionamento_ + e.getDistanceFromDragStartX());
+        repaint();
+        return;
+    }
     if (lacoAtivo_) {
         if (e.getDistanceFromDragStart() < 5) return;  // tremida do clique não é laço
         if (lacoRecomecaAoArrastar_) {
@@ -2043,6 +2075,10 @@ void MosaicoComponent::atualizarSelecaoDoLaco(const juce::MouseEvent& e) {
 }
 
 void MosaicoComponent::mouseUp(const juce::MouseEvent&) {
+    if (colunaRedimensionandoLista_ >= 0) {
+        colunaRedimensionandoLista_ = -1;
+        return;
+    }
     if (lacoAtivo_) {
         lacoAtivo_ = false;
         selecaoAntesDoLaco_.clear();
