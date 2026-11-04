@@ -11,6 +11,7 @@
 #include "../Ingest/ProcessoExterno.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/CacheArquivo.h"
+#include "../Vault/AssetRelinkEngine.h"
 #include "../Vault/Reconciliacao.h"
 #include "../Model/NotasEstruturadas.h"
 #include "../Vault/Resolucao.h"
@@ -2932,8 +2933,20 @@ bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, con
     // miniatura do master (checksums e caminho continuam travados — arquivo_master_travado).
     // Mesmo critério do UNIQUE (o caminho relativo que gravarArquivoAnalisado gravaria), não comparação de caminho
     // absoluto (/var x /private/var, volume remontado...); ou o arquivo que o master resolve hoje (MAIN/CLONE).
-    const bool noLugar = matriz::vault::caminhoRelativoAoVolume(novoCaminho) == masterCaminhoRelativo ||
-                         matriz::vault::caminhoEsperadoArquivo(db, masterId, projeto_->pasta()) == novoCaminho;
+    const juce::File masterAtual = matriz::vault::caminhoEsperadoArquivo(db, masterId, projeto_->pasta());
+    bool noLugar = matriz::vault::caminhoRelativoAoVolume(novoCaminho) == masterCaminhoRelativo || masterAtual == novoCaminho;
+    // Replace com o master OFFLINE (ex.: apontava para a cópia temporária do Intake, que sumiu): uma derivada deixava o
+    // item offline do mesmo jeito. O próprio master passa a apontar para o arquivo escolhido — o relink individual
+    // aceitando a diferença (mesmo Asset ID; SHA-256 anterior no PREMIS e no Project Log) — e daí segue como Reload.
+    if (!noLugar && !masterAtual.existsAsFile()) {
+        std::string mesmoItem;
+        if (!matriz::vault::AssetRelinkEngine::executarRelinkIndividual(db, projeto_->pasta(), itemId, novoCaminho,
+                                                                         /*aceitarConteudoDiferente=*/true, mesmoItem, erro))
+            return false;
+        auto offline = obterItensOffline();
+        if (offline.erase(itemId) > 0) definirItensOffline(offline);
+        noLugar = true;
+    }
     registrarUndoDeArquivoAtual(*this, noLugar ? "Reload File" : "Replace File", itemId, masterId);
 
     try {
