@@ -69,7 +69,7 @@ std::string removerOutraMetadataDasNotas(const std::string& notas, bool* mudou) 
     return out;
 }
 
-ResultadoCompactacao compactarRegistro(const juce::File& pastaProject) {
+ResultadoCompactacao compactarRegistro(const juce::File& pastaProject, bool limparNotas) {
     ResultadoCompactacao r;
     const juce::File original = pastaProject.getChildFile("registro.sqlite");
     const juce::File copia = pastaProject.getChildFile("registro.compactando.sqlite");
@@ -124,7 +124,7 @@ ResultadoCompactacao compactarRegistro(const juce::File& pastaProject) {
             }
 
             // Notas: sai a seção automática [OTHER METADATA] inteira.
-            {
+            if (limparNotas) {
                 std::vector<std::pair<std::string, std::string>> novas;
                 auto st = db.prepare("SELECT id, notas_livres FROM item WHERE notas_livres LIKE ?");
                 st.bind(1, Value::of(std::string("%[") + kOutraMetadataTitulo + "]%"));
@@ -160,6 +160,60 @@ ResultadoCompactacao compactarRegistro(const juce::File& pastaProject) {
         // 5) Troca: o original fica guardado ao lado, intacto.
         r.copiaOriginal = pastaProject.getChildFile(
             "registro.antes-compactacao-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".sqlite");
+        if (!original.moveFileTo(r.copiaOriginal)) throw std::runtime_error("could not rename the original");
+        for (const char* sufixo : {"-wal", "-shm"}) {
+            juce::File aux(original.getFullPathName() + sufixo);
+            if (aux.existsAsFile()) aux.moveFileTo(juce::File(r.copiaOriginal.getFullPathName() + sufixo));
+        }
+        if (!final_.moveFileTo(original)) {
+            r.copiaOriginal.moveFileTo(original);  // desfaz: volta o original
+            throw std::runtime_error("could not put the compacted file in place");
+        }
+        r.bytesDepois = original.getSize();
+        r.ok = true;
+    } catch (const std::exception& e) {
+        r.erro = e.what();
+        for (const auto& f : {copia, final_}) { f.deleteFile(); apagarAuxiliares(f); }
+    }
+    return r;
+}
+
+ResultadoCompactacao compactarIndice(const juce::File& pastaProject) {
+    ResultadoCompactacao r;
+    const juce::File original = pastaProject.getChildFile("indice.sqlite");
+    const juce::File copia = pastaProject.getChildFile("indice.compactando.sqlite");
+    const juce::File final_ = pastaProject.getChildFile("indice.compactado.sqlite");
+    if (!original.existsAsFile()) {
+        r.erro = "indice.sqlite not found in " + pastaProject.getFullPathName().toStdString();
+        return r;
+    }
+    r.bytesAntes = original.getSize();
+    for (const auto& f : {copia, final_}) { f.deleteFile(); apagarAuxiliares(f); }
+
+    try {
+        // Mesmo caminho do registro: cópia sequencial (o original nem é aberto), VACUUM INTO, conferência, troca.
+        if (juce::File(original.getFullPathName() + "-wal").getSize() > 0)
+            throw std::runtime_error("indice.sqlite-wal is not empty (project open or not closed cleanly)");
+        if (!original.copyFileTo(copia)) throw std::runtime_error("could not copy indice.sqlite");
+        juce::int64 miniaturasAntes = 0;
+        {
+            matriz::db::Database db(copia.getFullPathName().toStdString());
+            miniaturasAntes = contar(db, "miniatura");
+            db.exec("VACUUM INTO " + literalSql(final_));
+        }
+        copia.deleteFile();
+        apagarAuxiliares(copia);
+        {
+            matriz::db::Database db(final_.getFullPathName().toStdString());
+            const std::string integ = integridade(db);
+            if (integ != "ok") throw std::runtime_error("integrity_check: " + integ);
+            if (contar(db, "miniatura") != miniaturasAntes) throw std::runtime_error("thumbnail counts differ after compaction");
+            db.exec("PRAGMA journal_mode=DELETE");
+        }
+        apagarAuxiliares(final_);
+
+        r.copiaOriginal = pastaProject.getChildFile(
+            "indice.antes-compactacao-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".sqlite");
         if (!original.moveFileTo(r.copiaOriginal)) throw std::runtime_error("could not rename the original");
         for (const char* sufixo : {"-wal", "-shm"}) {
             juce::File aux(original.getFullPathName() + sufixo);

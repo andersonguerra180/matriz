@@ -6676,6 +6676,45 @@ int rodarLoteSelfTest() {
             checar(false, juce::String("compaction selftest: ") + e.what());
         }
         raizC.deleteRecursively();
+
+        // Tools > Optimize Database: notas só com a caixa marcada; o indice.sqlite é reescrito sem perder nada.
+        juce::File raizO = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_otimizar_" + juce::Uuid().toDashedString());
+        try {
+            raizO.createDirectory();
+            matriz::model::NovoProjetoParams params;
+            params.nome = "Otimizar";
+            params.prefixoNomenclatura = "OTM";
+            auto projeto = matriz::model::Project::criar(raizO.getChildFile("projeto"), params);
+            const juce::File pastaProject = projeto->pasta();
+            const std::string itemId = inserirItem(projeto->registro(), projeto->projetoId(), "OTM-1", false, ".jpg");
+            projeto->registro().run("UPDATE item SET notas_livres = ? WHERE id = ?", {Value::of(notas), Value::of(itemId)});
+            projeto->indice().run("INSERT INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, gerado_em) "
+                                  "VALUES ('m1', ?, 'a1', 'miniatura', '.miniaturas/m1.jpg', 'x')", {Value::of(itemId)});
+            projeto.reset();
+            auto rReg = matriz::model::compactarRegistro(pastaProject, false);
+            auto rIdx = matriz::model::compactarIndice(pastaProject);
+            std::string notasDepois;
+            {
+                matriz::db::Database db(pastaProject.getChildFile("registro.sqlite").getFullPathName().toStdString());
+                auto st = db.prepare("SELECT notas_livres FROM item WHERE id = ?");
+                st.bind(1, Value::of(itemId));
+                if (st.step()) notasDepois = st.columnText(0);
+            }
+            checar(rReg.ok && rReg.notasLimpas == 0 && notasDepois == notas,
+                   "Optimize Database without the notes box: notes stay exactly as they were (" + juce::String(rReg.erro) + ")");
+            int miniaturas = -1;
+            {
+                matriz::db::Database db(pastaProject.getChildFile("indice.sqlite").getFullPathName().toStdString());
+                auto st = db.prepare("SELECT COUNT(*) FROM miniatura");
+                if (st.step()) miniaturas = static_cast<int>(st.columnInt(0));
+            }
+            checar(rIdx.ok && rIdx.copiaOriginal.existsAsFile() && miniaturas == 1,
+                   "index rewritten, nothing lost, original kept aside (" + juce::String(rIdx.erro) + ")");
+        } catch (const std::exception& e) {
+            checar(false, juce::String("optimize selftest: ") + e.what());
+        }
+        raizO.deleteRecursively();
     }
 
     std::cout << "\n-- PDF page count: no infinite loop --\n";

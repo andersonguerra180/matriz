@@ -31,7 +31,13 @@ struct ResultadoCompactacao {
     juce::File copiaOriginal;
 };
 
-ResultadoCompactacao compactarRegistro(const juce::File& pastaProject);
+// `limparNotas` = false: as notas ficam como estão (Tools > Optimize Database deixa a limpeza das notas opcional).
+ResultadoCompactacao compactarRegistro(const juce::File& pastaProject, bool limparNotas = true);
+
+// indice.sqlite (miniaturas, pré-visualizações): não apaga nada, só reescreve o arquivo contínuo (VACUUM INTO) — mesma
+// segurança do registro: cópia, integrity_check e contagem iguais antes de trocar; o original fica ao lado como
+// indice.antes-compactacao-<data>.sqlite. Projeto fechado.
+ResultadoCompactacao compactarIndice(const juce::File& pastaProject);
 
 // Remove a seção automática [OTHER METADATA] (cabeçalho + conteúdo até a
 // próxima seção) de um texto de notas; o resto fica byte a byte igual.

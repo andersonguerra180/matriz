@@ -14,6 +14,7 @@
 #include "ConsolidacaoDialogo.h"
 #include "ProjectLogViewerDialog.h"
 #include "../Model/ProjectLog.h"
+#include "../Model/CompactacaoRegistro.h"
 #include "NovoProjetoDialogo.h"
 #include "Tokens.h"
 #include "ModalMitigacao.h"
@@ -53,6 +54,7 @@ enum ComandoMenu {
     kCmdScanInbox,
     kCmdMainEditModo,
     kCmdMainEditor,
+    kCmdOtimizarBanco,
     kCmdLangPt,
     kCmdLangEn,
     kCmdThemeDark,
@@ -250,6 +252,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
                      temColecao);
         menu.addSeparator();
         menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
+        menu.addItem(kCmdOtimizarBanco, matriz::i18n::t("otimizar.menu"),
+                     temColecao && !conteudo_->ingestEmAndamento() && !conteudo_->projetoAberto()->somenteLeitura());
         // MAIN EDIT MODE mora aqui (e não como botão no BACKUP) pra não ser acionado sem querer.
         menu.addSeparator();
         const bool editandoMain = temColecao && conteudo_->editandoMain();
@@ -322,6 +326,7 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
             if (conteudo_ && conteudo_->temProjetoAberto() && conteudo_->projetoAberto())
                 ImportarGeoFavoritosDialogo::iniciar(*conteudo_->projetoAberto(), this);
             break;
+        case kCmdOtimizarBanco: pedirOtimizarBanco(); break;
         case kCmdProjectLog:
             if (conteudo_->temProjetoAberto()) {
                 matriz::model::ProjectLog pLog(conteudo_->pastaProjeto());
@@ -846,6 +851,82 @@ void MainWindow::pedirIngerirArquivos() {
 
 void MainWindow::mostrarAboutDialogo() {
     AboutDialog::exibirModal();
+}
+
+void MainWindow::pedirOtimizarBanco() {
+    if (!conteudo_ || !conteudo_->temProjetoAberto() || conteudo_->ingestEmAndamento()) return;
+    const juce::File pasta = conteudo_->pastaProjeto();
+    const juce::File registro = pasta.getChildFile("registro.sqlite"), indice = pasta.getChildFile("indice.sqlite");
+    auto mb = [](juce::int64 b) { return juce::String(static_cast<int>(b / 1048576)); };
+
+    auto janela = std::make_shared<juce::AlertWindow>(matriz::i18n::t("otimizar.titulo"),
+                                                      matriz::i18n::t("otimizar.mensagem")
+                                                          .replace("{r}", mb(registro.getSize()))
+                                                          .replace("{i}", mb(indice.getSize())),
+                                                      juce::MessageBoxIconType::NoIcon);
+    auto notas = std::make_shared<juce::ToggleButton>(matriz::i18n::t("otimizar.limpar_notas"));
+    notas->setToggleState(false, juce::dontSendNotification);  // desligado: nada que apareça na tela muda
+    notas->setSize(460, 48);
+    janela->addCustomComponent(notas.get());
+    janela->addButton(matriz::i18n::t("otimizar.botao"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainWindow> seguro(this);
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([seguro, janela, notas, pasta, registro, indice, mb](int resultado) {
+        retirarPeerDaTela(*janela);
+        if (resultado != 1 || seguro == nullptr || seguro->conteudo_ == nullptr) return;
+        const bool limparNotas = notas->getToggleState();
+
+        // Espaço: a cópia de trabalho e o arquivo novo do maior banco convivem por um momento; os originais ficam guardados.
+        const juce::int64 precisa = 2 * registro.getSize() + indice.getSize() + 100 * 1048576;
+        if (pasta.getBytesFreeOnVolume() < precisa) {
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                             .withTitle(matriz::i18n::t("otimizar.titulo"))
+                                             .withMessage(matriz::i18n::t("otimizar.sem_espaco").replace("{n}", mb(precisa)))
+                                             .withButton(matriz::i18n::t("comum.ok")),
+                                         static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+            return;
+        }
+        // O banco só pode ser compactado fechado (a compactação recusa se o -wal não estiver vazio).
+        seguro->conteudo_->fecharProjeto();
+        if (seguro->conteudo_->temProjetoAberto()) return;  // Cancel no "salvar alterações?"
+
+        auto aviso = std::make_shared<juce::AlertWindow>(matriz::i18n::t("otimizar.titulo"),
+                                                         matriz::i18n::t("otimizar.trabalhando"),
+                                                         juce::MessageBoxIconType::NoIcon);
+        aviso->enterModalState(true);
+        juce::Thread::launch([seguro, aviso, pasta, limparNotas, mb] {
+            const auto rReg = matriz::model::compactarRegistro(pasta, limparNotas);
+            const auto rIdx = rReg.ok ? matriz::model::compactarIndice(pasta) : matriz::model::ResultadoCompactacao{};
+            juce::MessageManager::callAsync([seguro, aviso, pasta, rReg, rIdx, mb] {
+                aviso->exitModalState(0);
+                retirarPeerDaTela(*aviso);
+                juce::String msg;
+                if (!rReg.ok) {
+                    msg = matriz::i18n::t("otimizar.falhou").replace("{erro}", juce::String(rReg.erro));
+                } else {
+                    msg = matriz::i18n::t("otimizar.ok_registro")
+                              .replace("{a}", mb(rReg.bytesAntes)).replace("{b}", mb(rReg.bytesDepois))
+                              .replace("{copia}", rReg.copiaOriginal.getFileName());
+                    msg << "\n";
+                    msg << (rIdx.ok ? matriz::i18n::t("otimizar.ok_indice")
+                                          .replace("{a}", mb(rIdx.bytesAntes)).replace("{b}", mb(rIdx.bytesDepois))
+                                          .replace("{copia}", rIdx.copiaOriginal.getFileName())
+                                    : matriz::i18n::t("otimizar.indice_falhou").replace("{erro}", juce::String(rIdx.erro)));
+                    msg << "\n\n" << matriz::i18n::t("otimizar.copias");
+                }
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                                 .withIconType(rReg.ok ? juce::MessageBoxIconType::InfoIcon
+                                                                       : juce::MessageBoxIconType::WarningIcon)
+                                                 .withTitle(matriz::i18n::t("otimizar.titulo"))
+                                                 .withMessage(msg)
+                                                 .withButton(matriz::i18n::t("comum.ok")),
+                                             [seguro, pasta](int) {
+                                                 if (seguro != nullptr) seguro->abrirPasta(pasta);  // reabre o projeto
+                                             });
+            });
+        });
+    }));
 }
 
 void MainWindow::mostrarBatchWatermarkDialogo() {

@@ -43,6 +43,9 @@ private:
     void mostrarAudioDeviceDialogo();
     void mostrarAboutDialogo();
     void mostrarBatchWatermarkDialogo();
+    // Tools > Optimize Database: fecha o projeto, compacta registro.sqlite e indice.sqlite numa cópia conferida
+    // (CompactacaoRegistro.h) e reabre. Os originais ficam guardados ao lado.
+    void pedirOtimizarBanco();
     void trocarIdioma(const juce::String& locale);
     void conectarConteudo();
 
