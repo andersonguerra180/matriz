@@ -6248,9 +6248,11 @@ FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(proj
     conteudo_->aoMudar = [this] { if (aoMudar) aoMudar(); };
     conteudo_->aoAplicarSucesso = [this](const std::string& itemId) { if (aoAplicarSucesso) aoAplicarSucesso(itemId); };
     conteudo_->aoPedirFocoGrade = [this] { if (aoPedirFocoGrade) aoPedirFocoGrade(); };
+    addMouseListener(&selecionarTudoAoClicar_, true);
 }
 
 FichaPanelComponent::~FichaPanelComponent() {
+    removeMouseListener(&selecionarTudoAoClicar_);
     // Cobre fechar projeto e fechar o app: nesses dois casos o destrutor
     // roda com projeto_/mosaico_/arvoreAcervo_ ainda vivos (ordem de
     // destruição em MainComponent), então o flush ainda alcança o banco e

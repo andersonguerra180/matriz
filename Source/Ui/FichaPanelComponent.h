@@ -94,6 +94,15 @@ private:
     std::string itemIdAtual_;
     bool modoLote_ = false;
     bool editavel_ = true;
+    // 1º clique num campo de uma linha seleciona todo o texto (vazio: cursor pronto). Liga
+    // setSelectAllWhenFocused no mouseEnter, antes do clique — vale p/ editores criados depois.
+    struct SelecionarTudoAoClicar : juce::MouseListener {
+        void mouseEnter(const juce::MouseEvent& e) override {
+            auto* ed = dynamic_cast<juce::TextEditor*>(e.eventComponent);
+            if (ed == nullptr && e.eventComponent != nullptr) ed = e.eventComponent->findParentComponentOfClass<juce::TextEditor>();
+            if (ed != nullptr && !ed->isMultiLine()) ed->setSelectAllWhenFocused(true);
+        }
+    } selecionarTudoAoClicar_;
     std::unique_ptr<juce::Viewport> viewport_;
     std::unique_ptr<FichaConteudo> conteudo_;
     std::unique_ptr<FichaLoteConteudo> conteudoLote_;
