@@ -2416,6 +2416,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"janela_pasta.selecionados", "{n} selected"},
         {"janela_pasta.extrair", "Extract from this folder"},
         {"janela_pasta.extrair_container", "Extract from Container"},
+        {"janela_pasta.capa_do_container", "Use as Container Cover"},
         {"janela_pasta.aba_filtros", "Filters"},
         {"janela_pasta.busca_pasta", "Find folder..."},
         {"janela_pasta.em_pasta", "In"},

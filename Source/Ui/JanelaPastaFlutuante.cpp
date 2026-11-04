@@ -34,6 +34,7 @@ constexpr int kRecuoArvore = 14;
 constexpr int kMenuExtrairDaPasta = 9001;
 constexpr int kMenuMoverParaPasta = 9002;
 constexpr int kMenuExtrairDoContainer = 9003;
+constexpr int kMenuCapaDoContainer = 9004;
 
 void coletarIdsRecursivos(const ProjetoAberto::NoArvore& no, std::set<std::string>& out) {
     out.insert(no.itemIds.begin(), no.itemIds.end());
@@ -1242,13 +1243,24 @@ private:
         if (!semPasta_ && nestId_.empty()) menu.addItem(kMenuExtrairDaPasta, i18n::t("janela_pasta.extrair"));
         // Container: tira os arquivos dele (voltam ao grid como itens comuns; com Undo). Container com 1 arquivo se desfaz.
         if (!nestId_.empty()) menu.addItem(kMenuExtrairDoContainer, i18n::t("janela_pasta.extrair_container"), !projeto_.somenteLeitura());
+        // Container: a imagem escolhida aqui dentro vira a capa dele (o "Use image as cover..." de cima continua
+        // trocando a miniatura do próprio arquivo).
+        if (!nestId_.empty() && ids.size() == 1 && acoes::itemEhImagemParaCapa(projeto_, ids.front(), ganchos().itemEmMemoria))
+            menu.addItem(kMenuCapaDoContainer, i18n::t("janela_pasta.capa_do_container"), !projeto_.somenteLeitura());
         menu.addItem(kMenuMoverParaPasta, i18n::t("janela_pasta.mover"));
         juce::Component::SafePointer<Conteudo> seguro(this);
         ProjetoAberto* proj = &projeto_;
         const auto gs = ganchos();
         menu.showMenuAsync(juce::PopupMenu::Options(), [seguro, proj, ids, gs](int r) {
             if (seguro == nullptr || r == 0) return;
-            if (r == kMenuExtrairDaPasta) {
+            if (r == kMenuCapaDoContainer) {
+                auto g = gs;
+                g.aoMudarDados = [seguro, antes = gs.aoMudarDados] {
+                    if (antes) antes();
+                    if (seguro != nullptr && seguro->capa_ != nullptr) seguro->capa_->recarregar();  // capa na lateral da janela
+                };
+                acoes::usarComoCapaDoContainer(*proj, seguro->nestId_, ids.front(), g);
+            } else if (r == kMenuExtrairDaPasta) {
                 std::set<std::string> pastas;
                 std::function<void(const ProjetoAberto::NoArvore&)> coleta = [&](const ProjetoAberto::NoArvore& n) {
                     pastas.insert(n.id);

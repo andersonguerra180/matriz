@@ -673,6 +673,24 @@ void aplicarCapaNosContainers(ProjetoAberto* p, const std::set<std::string>& nes
 
 } // namespace
 
+bool itemEhImagemParaCapa(ProjetoAberto& projeto, const std::string& itemId, const ResolvedorItemEmMemoria& emMemoria) {
+    return ehFoto(projeto, itemId, emMemoria);
+}
+
+void usarComoCapaDoContainer(ProjetoAberto& projeto, const std::string& nestId, const std::string& itemId, Ganchos ganchos) {
+    if (nestId.empty() || itemId.empty()) return;
+    // O master da imagem; se está offline, cai na miniatura (como no seletor de capa).
+    juce::File origem;
+    if (auto info = projeto.arquivoPrincipal(itemId)) origem = juce::File(info->caminhoAbsoluto);
+    if (!origem.existsAsFile())
+        if (auto mini = projeto.caminhoMiniaturaPrincipal(itemId)) origem = juce::File(*mini);
+    if (!origem.existsAsFile()) {
+        avisarErroArquivo(matriz::i18n::t("acoes.capa_sem_arquivo"));
+        return;
+    }
+    aplicarCapaNosContainers(&projeto, {nestId}, origem, ganchos.aoMudarDados);
+}
+
 void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
     if (itemIds.empty()) return;
     ProjetoAberto* p = &projeto;
