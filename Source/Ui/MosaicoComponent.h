@@ -477,6 +477,7 @@ private:
         juce::String categoriaMaiuscula;
         juce::String duracao;         // duração do selo da grade ("" se não tem)
         juce::String subtituloGrade;  // "EXT  |  pasta" (sem o sufixo OFFLINE)
+        juce::String subtituloGradeLista;  // "EXT  |  LIST" do arquivo avulso ("EXT" se não tem LIST); NEST mantém o da pasta
     };
     static TextosCelula calcularTextos(const ItemResumo& item);
     std::vector<TextosCelula> textosTodos_;

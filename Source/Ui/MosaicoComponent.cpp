@@ -1040,6 +1040,11 @@ MosaicoComponent::TextosCelula MosaicoComponent::calcularTextos(const ItemResumo
 
     t.subtituloGrade = item.extensaoArquivo.empty() ? juce::String("FILE") : t.extensao;
     if (!item.pastaNome.empty()) t.subtituloGrade += "  |  " + juce::String::fromUTF8(item.pastaNome.c_str());
+    t.subtituloGradeLista = item.extensaoArquivo.empty() ? juce::String("FILE") : t.extensao;
+    if (item.lista.has_value()) {
+        const auto lista = juce::String::fromUTF8(item.lista->c_str()).trim();
+        if (lista.isNotEmpty()) t.subtituloGradeLista += "  |  " + lista;
+    }
     return t;
 }
 
@@ -3427,8 +3432,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setFont(lista.isEmpty() ? font95Normal : font9Bold);
                 g.drawText(lista.isEmpty() ? juce::String::fromUTF8("\xe2\x80\x94") : lista, areaBarra, juce::Justification::centredLeft, true);
             } else {
-                // Subtitle: file type + folder
-                juce::String info2 = tx.subtituloGrade;
+                // Subtitle: arquivo = tipo + LIST; NEST e membro de PROJECT continuam tipo + pasta.
+                juce::String info2 = (emGrupo || membroDeProject) ? tx.subtituloGrade : tx.subtituloGradeLista;
                 if (item.offline) info2 += "  |  OFFLINE";
                 g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
                 g.setFont(font95Normal);
