@@ -1932,7 +1932,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"backup.mover_sem_pasta_pular", "NOT NOW"},
         {"backup.reorganizar_resumo", "{n} file(s) to reorganize in the MAIN"},
         {"backup.reorganizar_titulo", "REORGANIZE THE MAIN"},
-        {"backup.reorganizar_msg", "{n} file(s) in the MAIN are not in the folder the MAIN's folder map gives them now. Move them? Files are only moved inside the MAIN: nothing is copied again and nothing is deleted. Files of deleted folders go to _SEM_PASTA. Clones receive the same moves on their next sync, and every move is recorded in the project log."},
+        {"backup.reorganizar_msg", "{n} file(s) in the MAIN are not in the folder the MAIN's structure (folder map or rules: subject, year, list...) gives them now. Move them? Files are only moved inside the MAIN: nothing is copied again and nothing is deleted. Files of deleted folders go to _SEM_PASTA. Clones receive the same moves on their next sync, and every move is recorded in the project log."},
         {"backup.reorganizar_n_arquivos", "{n} file(s)"},
         {"backup.reorganizar_mais_pastas", "... and {n} more folder(s)"},
         {"export.por_mapa", "By folder map"},

@@ -3617,7 +3617,8 @@ void BackupWorkspaceComponent::atualizarResumo() {
             const juce::File destinoMedia = destinoRaiz.getChildFile("Media");
             r.plano = matriz::consolidacao::planejarConsolidacao(
                 *registro, pastaProjeto, destinoMedia, h, {}, modoPrefixo, prefixo,
-                autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId, /*estritoAoDestino*/ rebuild);
+                autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId, /*estritoAoDestino*/ rebuild,
+                /*semPastaNaRaiz*/ false, /*reorganizarMain*/ !rebuild);
 
             std::vector<matriz::consolidacao::ItemPlanejado> mv;
             // A reorganização vale pro MAIN inteiro: uma pasta renomeada não pode ficar meio no lugar antigo.

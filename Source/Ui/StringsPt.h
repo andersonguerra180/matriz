@@ -1944,7 +1944,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"backup.mover_sem_pasta_pular", "AGORA NÃO"},
         {"backup.reorganizar_resumo", "{n} arquivo(s) para reorganizar no MAIN"},
         {"backup.reorganizar_titulo", "REORGANIZAR O MAIN"},
-        {"backup.reorganizar_msg", "{n} arquivo(s) do MAIN não estão na pasta que o folder map do MAIN dá a eles agora. Mover? Os arquivos só são movidos dentro do MAIN: nada é copiado de novo e nada é apagado. Arquivos de pastas apagadas vão para _SEM_PASTA. Os clones recebem os mesmos movimentos no próximo sync, e cada movimento fica registrado no log do projeto."},
+        {"backup.reorganizar_msg", "{n} arquivo(s) do MAIN não estão na pasta que a estrutura do MAIN (folder map ou regras: subject, ano, lista...) dá a eles agora. Mover? Os arquivos só são movidos dentro do MAIN: nada é copiado de novo e nada é apagado. Arquivos de pastas apagadas vão para _SEM_PASTA. Os clones recebem os mesmos movimentos no próximo sync, e cada movimento fica registrado no log do projeto."},
         {"backup.reorganizar_n_arquivos", "{n} arquivo(s)"},
         {"backup.reorganizar_mais_pastas", "... e mais {n} pasta(s)"},
         {"export.por_mapa", "Por mapa de pastas"},

@@ -196,7 +196,11 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         // (os do MAIN antigo e os legados sem destino não contam).
                                         bool estritoAoDestino = false,
                                         // export por mapa: item sem pasta no mapa sai em _SEM_PASTA (em vez de ser excluído)
-                                        bool semPastaNaRaiz = false);
+                                        bool semPastaNaRaiz = false,
+                                        // Make Backup do MAIN: a reorganização por moves (cópia registrada fora da
+                                        // pasta que a estrutura dá hoje vira move) vale também para MAIN por regra
+                                        // (subject/ano/...) e estrutura original, não só para MAIN por folder map.
+                                        bool reorganizarMain = false);
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);

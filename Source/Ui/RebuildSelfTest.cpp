@@ -463,6 +463,70 @@ int rodarRebuildSelfTest() {
             for (const auto& ip : depois.itens) nadaACopiar = nadaACopiar && ip.jaConsolidado;
             checar(depois.movimentosSemPasta.empty() && nadaACopiar, "reorganize: the next plan has nothing to move and nothing to copy");
         }
+
+        // ---- 7) Reorganizar MAIN por REGRA (reorganizarMain): SUBJECT editado na ficha e estrutura trocada no
+        // REORGANIZE MAIN viram moves — nunca recópia; sem a flag (outros chamadores) e no rebuild, nada muda.
+        {
+            matriz::model::NovoProjetoParams params4;
+            params4.nome = "Regra";
+            params4.prefixoNomenclatura = "RGR";
+            auto projeto4 = matriz::model::Project::criar(raiz.getChildFile("P4"), params4);
+            const std::string projetoId4 = projeto4->projetoId();
+            ProjetoAberto pr(std::move(projeto4));
+            auto& regr = pr.projeto().registro();
+            const juce::File mediaR = pr.projeto().pastaMedia();
+            const juce::File s4 = raiz.getChildFile("SOURCE4");
+            const juce::File g1 = s4.getChildFile("um.wav"), g2 = s4.getChildFile("dois.wav");
+            escreverArquivo(g1, 31, 41000);
+            escreverArquivo(g2, 32, 42000);
+            const auto r1 = inserirItem(regr, projetoId4, "RGR-1", g1), r2 = inserirItem(regr, projetoId4, "RGR-2", g2);
+            regr.run("UPDATE item SET dc_subject = 'Rock' WHERE id = ?", {Value::of(r1)});
+            regr.run("UPDATE item SET dc_subject = 'Jazz' WHERE id = ?", {Value::of(r2)});
+            const auto porSubject = cons::HierarquiaBackup{cons::NivelHierarquia::Subject};
+            const auto porTipo = cons::HierarquiaBackup{cons::NivelHierarquia::TipoArquivo};
+            auto planejarR = [&](const cons::HierarquiaBackup& h, bool reorganizar, bool estrito = false) {
+                return cons::planejarConsolidacao(regr, pr.projeto().pasta(), mediaR, h, {}, cons::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                  false, false, false, {}, estrito, false, reorganizar);
+            };
+            auto dirDe = [](const juce::String& rel) { return rel.upToLastOccurrenceOf("/", false, false); };
+            auto res0 = cons::executarConsolidacao(regr, pr.projeto().pasta(), mediaR, planejarR(porSubject, true));
+            checar(res0.consolidados == 2 && res0.falhas.empty(), "rule reorganize: first backup by SUBJECT");
+            checar(planejarR(porSubject, true).movimentosSemPasta.empty(), "rule reorganize: nothing to move right after a backup");
+
+            // SUBJECT editado: só o item editado muda de pasta.
+            regr.run("UPDATE item SET dc_subject = 'Blues' WHERE id = ?", {Value::of(r1)});
+            checar(planejarR(porSubject, false).movimentosSemPasta.empty(), "rule reorganize: without the flag nothing is moved (other callers)");
+            checar(planejarR(porSubject, true, /*estrito*/ true).movimentosSemPasta.empty(), "rule reorganize: never during a rebuild");
+            auto p1 = planejarR(porSubject, true);
+            checar(p1.movimentosSemPasta.size() == 1 && p1.movimentosSemPasta[0].itemId == r1 && p1.movimentosSemPasta[0].reorganizacao &&
+                       dirDe(p1.movimentosSemPasta[0].moverDe) == "Rock" && dirDe(p1.movimentosSemPasta[0].caminhoRelativoDestino) == "Blues",
+                   "rule reorganize: edited SUBJECT -> 1 move Rock/ -> Blues/");
+            bool copiaNova = false;
+            for (const auto& ip : p1.itens) copiaNova = copiaNova || !ip.jaConsolidado;
+            checar(!copiaNova, "rule reorganize: nothing is planned to be copied again");
+            const juce::File antes = mediaR.getChildFile(p1.movimentosSemPasta[0].moverDe);
+            const std::string shaAntes = sha(antes);
+            auto mv1 = cons::executarMovimentosSemPasta(regr, pr.projeto().pasta(), mediaR, p1.movimentosSemPasta);
+            const juce::File depoisF = mediaR.getChildFile(p1.movimentosSemPasta[0].caminhoRelativoDestino);
+            checar(mv1.movidos == 1 && mv1.falhas.empty() && depoisF.existsAsFile() && sha(depoisF) == shaAntes &&
+                       !mediaR.getChildFile("Rock").exists(),
+                   "rule reorganize: file moved with the same SHA-256, emptied folder removed");
+
+            // Estrutura trocada (SUBJECT -> tipo de arquivo): os dois vão para WAV/.
+            auto p2 = planejarR(porTipo, true);
+            bool todosWav = p2.movimentosSemPasta.size() == 2;
+            for (const auto& m : p2.movimentosSemPasta) todosWav = todosWav && dirDe(m.caminhoRelativoDestino) == "WAV";
+            checar(todosWav, "rule reorganize: new structure -> both files move to WAV/");
+            auto mv2 = cons::executarMovimentosSemPasta(regr, pr.projeto().pasta(), mediaR, p2.movimentosSemPasta);
+            auto cont = [&](const std::string& sql) { auto st = regr.prepare(sql); st.step(); return static_cast<int>(st.columnInt(0)); };
+            checar(mv2.movidos == 2 && mv2.falhas.empty() && cont("SELECT COUNT(*) FROM consolidacao_registro") == 2 &&
+                       cont("SELECT COUNT(*) FROM consolidacao_registro WHERE caminho_relativo_destino LIKE 'WAV/%'") == 2,
+                   "rule reorganize: registry follows, still 2 copies");
+            auto p3 = planejarR(porTipo, true);
+            bool nada = p3.movimentosSemPasta.empty();
+            for (const auto& ip : p3.itens) nada = nada && ip.jaConsolidado;
+            checar(nada, "rule reorganize: the next plan has nothing to move and nothing to copy");
+        }
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";
         ++falhas;

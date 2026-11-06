@@ -496,7 +496,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool paraExport,
                                         const std::string& mapaId,
                                         bool estritoAoDestino,
-                                        bool semPastaNaRaiz) {
+                                        bool semPastaNaRaiz,
+                                        bool reorganizarMain) {
     MATRIZ_TRACE("consolidacao::planejarConsolidacao");
     PlanoConsolidacao plano;
     std::map<std::string, std::string> codigoPorVault;
@@ -530,6 +531,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     const bool mapaEmUso = filtrarMapa && usaPastaManual && !usaEstruturaOriginal;
     const bool semPastaFisica = mapaEmUso && !paraExport;
     const bool semPastaNoCaminho = semPastaFisica || (mapaEmUso && paraExport && semPastaNaRaiz);
+    // Reorganização por moves: MAIN por folder map sempre; por regra/estrutura original quando o Make Backup pede.
+    const bool reorganiza = semPastaFisica || (reorganizarMain && !paraExport && !estritoAoDestino);
     std::set<std::string> itensComMovimento;
     // Containers de importação: no PastaManual viram subpasta da pasta onde estão (ou raiz, se soltos). Só com PastaManual.
     const auto containers = (usaPastaManual && !usaEstruturaOriginal) ? containersDoProjeto(registro, mapaId) : std::map<std::string, ContainerNoPlano>{};
@@ -876,7 +879,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     const bool existe = noMain.existsAsFile();
                     ip.registradoDivergente = existe && tamRegistrado > 0 && noMain.getSize() != tamRegistrado;
                     ip.jaConsolidado = !forcarRebackup && existe && !ip.registradoDivergente;
-                    if (semPastaFisica && ip.jaConsolidado)
+                    if (reorganiza && ip.jaConsolidado)
                         candidatosReorg[ip.arquivoId + "\n" + registrado.toStdString()].push_back(
                             {plano.itens.size(), registrado, pastaDestinoStr});
                 }
@@ -903,6 +906,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
     // MAIN por folder map: o mapa manda. Cópia registrada fora da pasta que o mapa dá hoje (pasta
     // renomeada/movida/apagada, item trocado de pasta) vira um move — nunca recópia, nunca apaga.
+    // MAIN por regra (reorganizarMain): idem com a pasta que a regra dá hoje (estrutura trocada no
+    // REORGANIZE MAIN, subject/ano/lista editados na ficha).
     // Mantém o nome registrado: só a pasta muda. Pasta apagada / item sem pasta = _SEM_PASTA.
     // Se alguma linha do item já está na pasta da cópia, ela fica onde está.
     if (!candidatosReorg.empty()) {
