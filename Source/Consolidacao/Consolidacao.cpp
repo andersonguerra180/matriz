@@ -1049,6 +1049,9 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
     const int total = static_cast<int>(movimentos.size());
     int feito = 0;
     std::set<juce::String> dirsDeOrigem;  // reorganização: pastas que podem ter ficado vazias
+    // Uma entrada de log por move, gravadas juntas no fim: appendEntry reescreve o log.md inteiro
+    // (entrada nova no topo), e reorganizar um MAIN grande = milhares de reescritas de um arquivo de MBs.
+    std::vector<matriz::model::ProjectLog::Entry> entradasLog;
     for (const auto& mv : movimentos) {
         if (aoProgredir && !aoProgredir(feito, total)) {
             resultado.cancelado = true;
@@ -1126,16 +1129,20 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
                                             mv.caminhoRelativoDestino.toStdString(), shaMovido);
             } catch (...) {}
             if (trava.owns_lock()) trava.unlock();
-            matriz::model::ProjectLog pLog(pastaProjeto);
-            pLog.appendEntry(mv.reorganizacao ? "Media Reorganized In MAIN (folder map)" : "Media Moved Out Of _SEM_PASTA",
-                             {"Item: " + juce::String::fromUTF8(mv.codigoAcervo.c_str()), "From: " + mv.moverDe,
-                              "To: " + mv.caminhoRelativoDestino});
+            entradasLog.push_back({mv.reorganizacao ? "Media Reorganized In MAIN (folder map)" : "Media Moved Out Of _SEM_PASTA",
+                                   {"Item: " + juce::String::fromUTF8(mv.codigoAcervo.c_str()), "From: " + mv.moverDe,
+                                    "To: " + mv.caminhoRelativoDestino}});
             ++resultado.movidos;
         } catch (const std::exception& e) {
             resultado.falhas.push_back(mv.codigoAcervo + ": " + e.what());
         }
     }
     apagarPastasQueFicaramVazias(destino, dirsDeOrigem);
+    if (!entradasLog.empty()) {
+        try {
+            matriz::model::ProjectLog(pastaProjeto).appendEntries(entradasLog);
+        } catch (...) {}
+    }
     return resultado;
 }
 
