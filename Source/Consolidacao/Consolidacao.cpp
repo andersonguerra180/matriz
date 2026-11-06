@@ -1343,7 +1343,10 @@ constexpr const char* kSufixoTemporario = ".mtz-tmp";
 CopiaVerificada copiarVerificado(const juce::File& origem, const juce::File& destinoFinal,
                                  const std::function<bool()>& continuar) {
     CopiaVerificada r;
-    const juce::File tmp = destinoFinal.getSiblingFile(destinoFinal.getFileName() + kSufixoTemporario);
+    // Caminho completo, não getSiblingFile: no JUCE um nome iniciado por "~" (ex.: "~$x.docx" do Office) é tratado
+    // como caminho absoluto (home de usuário) e o temporário saía fora da pasta de destino.
+    const juce::File tmp(destinoFinal.getParentDirectory().getFullPathName() + juce::File::getSeparatorString() +
+                         destinoFinal.getFileName() + kSufixoTemporario);
     auto falhar = [&](const std::string& motivo) {
         tmp.deleteFile();
         r.erro = motivo;

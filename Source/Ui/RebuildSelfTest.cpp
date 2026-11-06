@@ -86,6 +86,15 @@ int rodarRebuildSelfTest() {
             copia = cons::copiarVerificado(raiz.getChildFile("origem_ausente.bin"), destinoCopia);
             checar(!copia.ok && destinoCopia.loadFileAsString() == "destino antigo intacto",
                    "failed verified copy leaves the existing destination unchanged");
+
+            // Nome iniciado por "~" (arquivo de trava do Office): o JUCE o trata como caminho de home.
+            const juce::File pastaTil = raiz.getChildFile("til");
+            pastaTil.createDirectory();
+            const juce::File destinoTil(pastaTil.getFullPathName() + juce::File::getSeparatorString() + "~$teste.xlsx");
+            copia = cons::copiarVerificado(origemCopia, destinoTil);
+            checar(copia.ok && destinoTil.getSize() == 4096 &&
+                       pastaTil.findChildFiles(juce::File::findFiles, false, "*.mtz-tmp").isEmpty(),
+                   "verified copy of a file whose name starts with ~ (Office lock file)");
         }
 
         matriz::model::NovoProjetoParams params;
