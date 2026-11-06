@@ -53,6 +53,7 @@ enum ComandoMenu {
     kCmdVerifySourceDisks,
     kCmdScanInbox,
     kCmdMainEditModo,
+    kCmdMainCancelarRebuild,
     kCmdMainEditor,
     kCmdOtimizarBanco,
     kCmdLangPt,
@@ -258,8 +259,9 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addSeparator();
         const bool editandoMain = temColecao && conteudo_->editandoMain();
         const bool podeEntrar = temColecao && conteudo_->podeEditarMain() && !editandoMain;
-        // Rebuild do MAIN: só entra (marcado enquanto ativo); não há "sair" — termina quando o Make Backup conclui.
+        // Rebuild do MAIN: entra (marcado enquanto ativo); termina quando o Make Backup conclui ou com Cancel Rebuild.
         menu.addItem(kCmdMainEditModo, matriz::i18n::t("main_edit.botao_entrar"), podeEntrar, editandoMain);
+        menu.addItem(kCmdMainCancelarRebuild, matriz::i18n::t("main_edit.botao_cancelar"), editandoMain);
         menu.addItem(kCmdMainEditor, matriz::i18n::t("main_edit.botao_editor"), editandoMain);
     } else if (topLevelMenuIndex == kMenuPreferencias) {
         // Language Submenu
@@ -317,6 +319,7 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
             if (conteudo_) conteudo_->escanearInbox();
             break;
         case kCmdMainEditModo: if (conteudo_) conteudo_->alternarModoEdicaoMain(); break;
+        case kCmdMainCancelarRebuild: if (conteudo_) conteudo_->cancelarRebuildDoMain(); break;
         case kCmdMainEditor: if (conteudo_) conteudo_->abrirEditorDoMain(); break;
         case kCmdBatchWatermark: mostrarBatchWatermarkDialogo(); break;
         case kCmdBatchRename:

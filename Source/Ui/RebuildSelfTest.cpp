@@ -173,6 +173,9 @@ int rodarRebuildSelfTest() {
                     {Value::of(sha(c)), Value::of(static_cast<long long>(c.getSize())), Value::of(idC)});
         }
         const auto retratoAntes = retrato(media);
+        // Config do MAIN por regra (como um projeto real): o Cancel Rebuild tem de devolvê-la.
+        const std::string cfgMain = R"({"preservar": false, "mapa": false, "org": 5, "hierarquia": "subject,ano", "por_source": true})";
+        reg.run("UPDATE projeto SET backup_config_main = ?", {Value::of(cfgMain)});
         checar(pa.podeEditarMain(), "rebuild: the project can enter the mode (MAIN exists)");
         checar(!pa.entrarModoEdicaoMain("nome errado") && !pa.emRebuild(), "rebuild: wrong project name keeps the MAIN locked");
         checar(pa.entrarModoEdicaoMain("Rebuild") && pa.emRebuild(), "rebuild: entered with the project name");
@@ -183,6 +186,45 @@ int rodarRebuildSelfTest() {
         }
         const auto fonte = pa.fonteRebuild();
         checar(fonte.has_value() && fonte->raiz == pa.projeto().raiz(), "rebuild: source is the old MAIN root");
+
+        // ---- 4-) Cancel Rebuild: volta ao MAIN antigo sem copiar nada, com a config de antes; uma cópia de rebuild
+        // começada numa pasta nova sai do banco (os arquivos dela ficam no disco). Depois entra de novo para o resto.
+        {
+            auto cont = [&](const std::string& sql) { auto st = reg.prepare(sql); st.step(); return static_cast<int>(st.columnInt(0)); };
+            const int registrosAntes = cont("SELECT COUNT(*) FROM consolidacao_registro");
+            const juce::File parcial = raiz.getChildFile("PARCIAL");
+            parcial.getChildFile("Media").createDirectory();
+            parcial.getChildFile("Media").getChildFile("ja_copiado.bin").replaceWithText("x");
+            pa.definirRebuildDestino(parcial);
+            const std::string chaveParcial = cons::chaveDestino(parcial.getChildFile("Media"));
+            reg.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, checksum_sha256, "
+                    "consolidado_em, destino_path, destino_id, tamanho_bytes) "
+                    "SELECT 'parcial-1', item_id, pasta_id, arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em, ?, 'novo', "
+                    "tamanho_bytes FROM consolidacao_registro LIMIT 1",
+                    {Value::of(chaveParcial)});
+            bool cfgOk = false;
+            checar(pa.cancelarRebuild("nome errado", cfgOk).isNotEmpty() && pa.emRebuild(), "cancel rebuild: wrong project name keeps the rebuild");
+            const auto erro = pa.cancelarRebuild("Rebuild", cfgOk);
+            checar(erro.isEmpty() && !pa.emRebuild() && cfgOk, "cancel rebuild: mode ends with the project name");
+            checar(cont("SELECT COUNT(*) FROM backup_destino WHERE papel = 'FONTE_REBUILD'") == 0 &&
+                       cont("SELECT COUNT(*) FROM backup_destino WHERE papel = 'ORIGINAL' AND ativo = 1") == 1 && !pa.fonteRebuild(),
+                   "cancel rebuild: the old MAIN is the ORIGINAL again");
+            {
+                auto st = reg.prepare("SELECT COALESCE(backup_config_main, ''), COALESCE(rebuild_destino, '') FROM projeto LIMIT 1");
+                st.step();
+                const auto cfg = juce::JSON::parse(juce::String::fromUTF8(st.columnText(0).c_str()));
+                checar(cfg.isObject() && cfg.getProperty("hierarquia", "").toString() == "subject,ano" && st.columnText(1).empty(),
+                       "cancel rebuild: the old MAIN settings come back from the Project Log");
+            }
+            checar(cont("SELECT COUNT(*) FROM consolidacao_registro WHERE destino_path = '" + chaveParcial + "'") == 0 &&
+                       cont("SELECT COUNT(*) FROM consolidacao_registro") == registrosAntes,
+                   "cancel rebuild: the unfinished rebuild copy leaves the registry, the old MAIN's registrations stay");
+            checar(parcial.getChildFile("Media").getChildFile("ja_copiado.bin").existsAsFile() && retrato(media) == retratoAntes,
+                   "cancel rebuild: no file is touched (old MAIN and the unfinished folder)");
+            checar(pa.mainExiste() && pa.podeEditarMain(), "cancel rebuild: the project has its MAIN again");
+            parcial.deleteRecursively();
+            checar(pa.entrarModoEdicaoMain("Rebuild") && pa.emRebuild(), "rebuild: entered again after the cancel test");
+        }
 
         // clone antigo registrado (vai ficar desatualizado no fim)
         reg.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em) VALUES ('clone1', 'clone1', ?, 'Clone', 'CLONE', 1, ?)",

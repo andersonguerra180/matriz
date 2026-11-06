@@ -5338,6 +5338,26 @@ void MainComponent::alternarModoEdicaoMain() {
                                       });
 }
 
+// Tools > Cancel Rebuild: volta ao MAIN antigo sem copiar nada (só banco; ver ProjetoAberto::cancelarRebuild).
+void MainComponent::cancelarRebuildDoMain() {
+    if (!projetoAberto_ || !projetoAberto_->editandoMain()) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    MainEditPanel::pedirNomeDoProjeto(
+        *projetoAberto_, i18n::t("main_edit.cancelar_titulo"), i18n::t("main_edit.cancelar_msg"),
+        i18n::t("main_edit.cancelar_confirmar"), [safeThis](const juce::String& digitado) {
+            if (!safeThis || !safeThis->projetoAberto_) return;
+            safeThis->projetoAberto_->cancelarRebuildEmSegundoPlano(
+                digitado, [safeThis](const juce::String& erro, bool configRestaurada) {
+                    if (!safeThis) return;
+                    const juce::String msg = erro.isNotEmpty() ? erro
+                                             : i18n::t(configRestaurada ? "main_edit.cancelado" : "main_edit.cancelado_sem_config");
+                    juce::AlertWindow::showMessageBoxAsync(erro.isNotEmpty() ? juce::AlertWindow::WarningIcon
+                                                                             : juce::AlertWindow::InfoIcon,
+                                                           i18n::t("main_edit.cancelar_titulo"), msg);
+                });
+        });
+}
+
 void MainComponent::atualizarFaixaAviso() {
     if (!faixaAviso_) return;
     juce::Component::SafePointer<MainComponent> safeThis(this);

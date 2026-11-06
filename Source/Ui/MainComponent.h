@@ -171,6 +171,7 @@ public:
     bool podeEditarMain() const;
     bool editandoMain() const;
     void alternarModoEdicaoMain();
+    void cancelarRebuildDoMain();
     void abrirEditorDoMain();
     void importarCatalogoLightroom();
     // Adobe Bridge: pasta catalogada no Bridge entra pelo INTAKE normal; o XMP (embutido ou sidecar) é lido ANTES

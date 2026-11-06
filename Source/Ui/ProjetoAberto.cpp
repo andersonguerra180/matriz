@@ -9726,6 +9726,110 @@ juce::String ProjetoAberto::concluirRebuild(const juce::File& novaRaiz, const st
     return {};
 }
 
+// Cancel Rebuild — o inverso do entrarModoEdicaoMain, que só mexeu no banco (a pasta do MAIN antigo nunca é tocada).
+juce::String ProjetoAberto::cancelarRebuildNoBanco(bool& configRestaurada) {
+    configRestaurada = false;
+    if (!projeto_) return "no project";
+    const auto fonte = fonteRebuild();
+    if (!fonte) return "old MAIN (FONTE_REBUILD) not found";
+    const juce::File destinoNovo = rebuildDestino();
+
+    // Config do MAIN antigo: a entrada mais recente "REBUILD DO MAIN: entered" do log (entradas novas no topo).
+    bool achouLinha = false;
+    juce::String configAntiga;
+    {
+        const juce::File arqLog = matriz::model::ProjectLog(projeto_->pasta()).getLogFile();
+        const juce::String texto = arqLog.existsAsFile() ? arqLog.loadFileAsString() : juce::String();
+        const int ini = texto.indexOf("REBUILD DO MAIN: entered");
+        if (ini >= 0) {
+            const juce::String marca = "- Old MAIN settings: ";
+            const int fimEntrada = texto.indexOf(ini, "\n### ");
+            const int pos = texto.indexOf(ini, marca);
+            if (pos >= 0 && (fimEntrada < 0 || pos < fimEntrada)) {
+                const juce::String json =
+                    texto.substring(pos + marca.length()).upToFirstOccurrenceOf("\n", false, false).trim();
+                if (json.isEmpty()) {
+                    achouLinha = true;  // não havia config antes (MAIN legado): nada a restaurar
+                } else if (juce::JSON::parse(json).isObject()) {
+                    achouLinha = true;
+                    configAntiga = json;
+                }
+            }
+        }
+    }
+
+    auto& db = projeto_->registro();
+    {
+        matriz::db::Database::Trava trava(db);
+        try {
+            db.run("BEGIN IMMEDIATE", {});
+            if (destinoNovo != juce::File()) {
+                // Cópia de rebuild começada na pasta nova: os registros saem, os arquivos ficam no disco.
+                const std::string chaveNova = matriz::consolidacao::chaveDestino(destinoNovo.getChildFile("Media"));
+                const std::string chaveAntiga = matriz::consolidacao::chaveDestino(fonte->raiz.getChildFile("Media"));
+                if (chaveNova != chaveAntiga)
+                    db.run("DELETE FROM consolidacao_registro WHERE destino_path = ?", {matriz::db::Value::of(chaveNova)});
+            }
+            db.run("UPDATE backup_destino SET papel = 'ORIGINAL', ativo = 1 WHERE papel = 'FONTE_REBUILD'", {});
+            if (achouLinha)
+                db.run("UPDATE projeto SET backup_config_main = ?, rebuild_destino = ''",
+                       {configAntiga.isEmpty() ? matriz::db::Value::null() : matriz::db::Value::of(configAntiga.toStdString())});
+            else
+                db.run("UPDATE projeto SET rebuild_destino = ''", {});
+            db.run("COMMIT", {});
+        } catch (const std::exception& e) {
+            try { db.run("ROLLBACK", {}); } catch (...) {}
+            return juce::String::fromUTF8(e.what());
+        }
+    }
+    configRestaurada = achouLinha;
+    try {
+        juce::StringArray det;
+        det.add("The old MAIN is the MAIN again: " + fonte->raiz.getFullPathName());
+        det.add(achouLinha ? "MAIN settings restored: " + configAntiga
+                           : juce::String("MAIN settings not found in the log: choose them again in BACKUP"));
+        if (destinoNovo != juce::File())
+            det.add("Unfinished rebuild folder (files left on disk): " + destinoNovo.getFullPathName());
+        matriz::model::ProjectLog(projeto_->pasta()).appendEntry("REBUILD DO MAIN: cancelled", det);
+    } catch (...) {}
+    return {};
+}
+
+juce::String ProjetoAberto::cancelarRebuild(const juce::String& nomeDigitado, bool& configRestaurada) {
+    configRestaurada = false;
+    if (!projeto_ || !editandoMain_) return "rebuild is not active";
+    if (!nomeConfereComProjeto(nomeDigitado)) return matriz::i18n::t("main_edit.barreira_errada");
+    if (operacaoMainEmCurso_.load() || trabalhoDeConsolidacaoEmCurso()) return matriz::i18n::t("main_edit.cancelar_ocupado");
+    const auto erro = cancelarRebuildNoBanco(configRestaurada);
+    if (erro.isNotEmpty()) return erro;
+    editandoMain_ = false;
+    if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
+    return {};
+}
+
+void ProjetoAberto::cancelarRebuildEmSegundoPlano(const juce::String& nomeDigitado,
+                                                  std::function<void(const juce::String& erro, bool configRestaurada)> aoConcluir) {
+    auto falhar = [&](const juce::String& msg) { if (aoConcluir) aoConcluir(msg, false); };
+    if (!projeto_ || !editandoMain_) { falhar("rebuild is not active"); return; }
+    if (!nomeConfereComProjeto(nomeDigitado)) { falhar(matriz::i18n::t("main_edit.barreira_errada")); return; }
+    if (trabalhoDeConsolidacaoEmCurso()) { falhar(matriz::i18n::t("main_edit.cancelar_ocupado")); return; }
+    auto restaurada = std::make_shared<bool>(false);
+    executarEdicaoMain("Cancelling MAIN rebuild", [this, restaurada]() {
+        matriz::mainedit::Resultado r;
+        const auto erro = cancelarRebuildNoBanco(*restaurada);
+        r.ok = erro.isEmpty();
+        r.erro = erro.toStdString();
+        return r;
+    }, [this, restaurada, aoConcluir](const matriz::mainedit::Resultado& r) {
+        // Já na message thread e com o projeto vivo (executarEdicaoMain confere antes de chamar).
+        if (r.ok) {
+            editandoMain_ = false;
+            if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
+        }
+        if (aoConcluir) aoConcluir(r.ok ? juce::String() : juce::String::fromUTF8(r.erro.c_str()), *restaurada);
+    });
+}
+
 void ProjetoAberto::tocarAtividadeMain() { ultimaAtividadeMainMs_ = juce::Time::currentTimeMillis(); }
 
 bool ProjetoAberto::verificarTimeoutEdicaoMain() { return false; }  // rebuild não expira: só termina concluído

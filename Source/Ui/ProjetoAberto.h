@@ -852,6 +852,15 @@ public:
     // Fim bem-sucedido: o destino novo vira ORIGINAL, o antigo sai da lista, os clones antigos
     // ficam desatualizados e o modo termina. Devolve "" ou a mensagem de erro.
     juce::String concluirRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId);
+    // Cancel Rebuild (Tools): desfaz o entrarModoEdicaoMain sem copiar nada — o MAIN antigo
+    // (FONTE_REBUILD) volta a ser o ORIGINAL, a config dele volta do Project Log ("Old MAIN
+    // settings", gravada na entrada) e os registros de uma cópia de rebuild começada na pasta
+    // nova saem do banco (os arquivos já copiados lá ficam no disco). Devolve "" ou o erro;
+    // configRestaurada = false quando o log não tinha a config (o usuário escolhe de novo no BACKUP).
+    // A versão síncrona é a dos self-tests; a UI usa a em segundo plano (log.md pode ter MBs).
+    juce::String cancelarRebuild(const juce::String& nomeDigitado, bool& configRestaurada);
+    void cancelarRebuildEmSegundoPlano(const juce::String& nomeDigitado,
+                                       std::function<void(const juce::String& erro, bool configRestaurada)> aoConcluir);
     // MAIN existe e é este projeto (não CLONE) — condição pra oferecer o modo.
     bool podeEditarMain() const;
     // Só compara o texto com o nome atual; false = barreira não passou.
@@ -1461,6 +1470,8 @@ public:
     std::recursive_mutex& writeMutex() { return projeto_->writeMutex(); }
 
 private:
+    // Núcleo do Cancel Rebuild: só banco + Project Log, qualquer thread; não mexe em editandoMain_.
+    juce::String cancelarRebuildNoBanco(bool& configRestaurada);
     // Folder Maps múltiplos (Fase 1) — único caminho de código que insere
     // em acervo_item_pasta: resolve o mapa_id da pasta e grava as duas
     // colunas juntas, sempre em sincronia (self-test dedicado cobra isto
