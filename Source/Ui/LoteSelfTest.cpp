@@ -2801,6 +2801,25 @@ void rodarTestesLoteAjustes(const Checar& checar) {
                "a folder that already has files in the MAIN is blocked");
         checar(pa.aplicarAutoOrganizacao(inbox, "").status == ProjetoAberto::StatusAutoOrg::SemNiveis, "no blocks: nothing to apply");
 
+        // LIST: o editor oferece o bloco; sozinho ou depois do SUBJECT ele tem de valer (antes era descartado).
+        {
+            const std::string porLista = pa.criarPastaAcervo("PorLista", std::nullopt, mapa);
+            const auto l1 = inserirItemComArquivo(reg, projetoId, "AJU-L1", arquivoReal("lista1.wav"));
+            const auto l2 = inserirItemComArquivo(reg, projetoId, "AJU-L2", arquivoReal("lista2.wav"));
+            reg.run("UPDATE item SET lista = 'Top 10', dc_subject = 'Rock' WHERE id = ?", {Value::of(l1)});
+            reg.run("UPDATE item SET dc_subject = 'Rock' WHERE id = ?", {Value::of(l2)});
+            pa.adicionarItensAPasta({l1, l2}, porLista);
+            const auto rl = pa.aplicarAutoOrganizacao(porLista, "lista");
+            checar(rl.status == ProjetoAberto::StatusAutoOrg::Ok && rl.itensMovidos == 2 && regraDe(porLista) == "lista" &&
+                       caminhoDaPasta(pastaDoItem(l1).front().id) == "PorLista/Top 10" &&
+                       caminhoDaPasta(pastaDoItem(l2).front().id) == "PorLista/No list",
+                   "auto-organize by LIST alone: Top 10 / No list");
+            const auto rsl = pa.aplicarAutoOrganizacao(porLista, "subject,lista");
+            checar(rsl.status == ProjetoAberto::StatusAutoOrg::Ok && regraDe(porLista) == "subject,lista" &&
+                       caminhoDaPasta(pastaDoItem(l1).front().id) == "PorLista/Rock/Top 10",
+                   "auto-organize by SUBJECT > LIST keeps the LIST level");
+        }
+
         // ----- INTAKE: R (Reject)
         std::cout << "\n-- INTAKE: R (Reject) --\n";
         {

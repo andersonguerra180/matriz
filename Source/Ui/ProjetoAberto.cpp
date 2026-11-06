@@ -3851,7 +3851,7 @@ juce::String segmentoDePastaAuto(const juce::String& bruto, const juce::String& 
 bool nivelPermitidoNaAutoOrganizacao(matriz::consolidacao::NivelHierarquia n) {
     using N = matriz::consolidacao::NivelHierarquia;
     return n == N::Ano || n == N::TipoMidia || n == N::TipoArquivo || n == N::Origem || n == N::Artista ||
-           n == N::ContentType || n == N::Subject;
+           n == N::ContentType || n == N::Subject || n == N::Lista;
 }
 
 // Só as chaves de fato usadas por desfazer/refazer de uma organização.
@@ -3895,7 +3895,7 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
         auto stmt = leitura().prepare(
             "SELECT i.id, i.tipo_midia, i.dc_creator, i.collection_type, i.dc_subject, i.source_media, "
             "i.ano, "
-            "a.caminho_relativo "
+            "a.caminho_relativo, i.lista "
             "FROM item i "
             "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
             "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
@@ -3941,6 +3941,8 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
                     case N::Artista: segs.push_back(segmentoDePastaAuto(texto(2), "No creator")); break;
                     case N::ContentType: segs.push_back(segmentoDePastaAuto(texto(3), "No content")); break;
                     case N::Subject: segs.push_back(segmentoDePastaAuto(texto(4), "No subject")); break;
+                    // LIST da ficha (mesmo "No list" do backup, Consolidacao.cpp).
+                    case N::Lista: segs.push_back(segmentoDePastaAuto(texto(8), "No list")); break;
                     default: break;
                 }
             }
