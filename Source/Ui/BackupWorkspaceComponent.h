@@ -205,6 +205,16 @@ private:
     // com MAIN mas sem config gravada: trava a partir do próximo backup.
     bool configTravada_ = false;
     bool organizarPorSource_ = false;  // pasta raiz/sufixo por SOURCE (só MAIN criado a partir da etapa 5)
+    // REORGANIZE MAIN (card C): destrava a estrutura do MAIN depois da barreira do nome do projeto. O Make
+    // Backup seguinte grava a estrutura nova e o plano move o que já está no MAIN (lista MOVE / NOT NOW).
+    // Prefixo e nome dos arquivos continuam travados: só as pastas mudam. CANCEL volta à estrutura gravada.
+    bool reorganizandoMain_ = false;
+    std::unique_ptr<juce::TextButton> btnReorganizarMain_;
+    void alternarReorganizarMain();
+    // REORGANIZE MAIN de um MAIN por regra: "Pastas atuais do MAIN" no combo de mapas cria um folder map com as
+    // pastas reais do MAIN (ProjetoAberto::converterMainParaFolderMap; só banco). Depois é só editar no Folder Map.
+    static constexpr int kIdComboPastasAtuaisDoMain = 9999;
+    void criarMapaDasPastasAtuaisDoMain();
     void atualizarTravasDoMain();
     // Nada sai do projeto antes do FAZER BACKUP criar o MAIN (modo Coleção):
     // PUBLISH TO HTML, EXPORTAR..., EXPORTAR PLANILHA e BACKUP SYNC... só

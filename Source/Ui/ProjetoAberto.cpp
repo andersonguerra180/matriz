@@ -9884,13 +9884,13 @@ void ProjetoAberto::executarConsolidacaoEmSegundoPlano(std::function<void()> tra
 }
 
 void ProjetoAberto::executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
-                                       AoConcluirEdicaoMain aoConcluir) {
+                                       AoConcluirEdicaoMain aoConcluir, bool exigeRebuild) {
     auto falhar = [&](const std::string& msg) {
         matriz::mainedit::Resultado r;
         r.erro = msg;
         if (aoConcluir) aoConcluir(r);
     };
-    if (!editandoMain_) { falhar("MAIN EDIT MODE is not active"); return; }
+    if (exigeRebuild && !editandoMain_) { falhar("MAIN EDIT MODE is not active"); return; }
     bool esperado = false;
     if (!operacaoMainEmCurso_.compare_exchange_strong(esperado, true)) { falhar("another MAIN operation is still running"); return; }
     tocarAtividadeMain();
@@ -9998,7 +9998,10 @@ void ProjetoAberto::editarMainEsvaziarQuarentena(std::function<void(const matriz
 
 void ProjetoAberto::converterMainParaFolderMap(
     std::function<void(const juce::String& erro, const juce::String& nomeDoMapa)> aoConcluir) {
-    if (!editandoMain_ || !projeto_) { if (aoConcluir) aoConcluir("MAIN EDIT MODE is not active", {}); return; }
+    // No rebuild (editor do MAIN) ou com o MAIN normal (REORGANIZE MAIN da aba BACKUP). Só banco: nada é movido.
+    if (!projeto_ || (!editandoMain_ && !mainExiste())) { if (aoConcluir) aoConcluir("the project has no MAIN", {}); return; }
+    if (somenteLeitura_) { if (aoConcluir) aoConcluir("read-only project", {}); return; }
+    if (trabalhoDeConsolidacaoEmCurso()) { if (aoConcluir) aoConcluir("a backup is still running", {}); return; }
     if (mainUsaMapa()) { if (aoConcluir) aoConcluir("The MAIN already uses a folder map", {}); return; }
     auto nomeDoMapa = std::make_shared<juce::String>();
     executarEdicaoMain("Converting MAIN to folder map", [this, nomeDoMapa]() {
@@ -10083,7 +10086,7 @@ void ProjetoAberto::converterMainParaFolderMap(
         return r;
     }, [nomeDoMapa, aoConcluir](const matriz::mainedit::Resultado& r) {
         if (aoConcluir) aoConcluir(r.ok ? juce::String() : juce::String::fromUTF8(r.erro.c_str()), *nomeDoMapa);
-    });
+    }, /*exigeRebuild*/ false);
 }
 
 void ProjetoAberto::recuperarOperacoesDoMain() {

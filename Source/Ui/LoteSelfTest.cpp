@@ -5673,8 +5673,25 @@ int rodarLoteSelfTest() {
         checar(bw.comboModoPrefixo_->getSelectedId() == 2 && !bw.comboModoPrefixo_->isEnabled() &&
                    !bw.togglePreservarEstrutura_->isEnabled(),
                "naming / prefix locked too");
-        checar(bw.labelOrg_->getText().contains(matriz::i18n::t("backup.definido_primeiro_backup")),
+        // Com o REORGANIZE MAIN no título, o "definido no primeiro backup" vai pra dica do título.
+        checar(bw.labelOrg_->getTooltip().contains(matriz::i18n::t("backup.definido_primeiro_backup")),
                "the section says it was set in the first backup");
+        checar(bw.btnReorganizarMain_ && bw.btnReorganizarMain_->isVisible() &&
+                   bw.btnReorganizarMain_->getButtonText() == matriz::i18n::t("backup.reorganizar_main_btn"),
+               "REORGANIZE MAIN is on the FOLDER STRUCTURE title");
+        // REORGANIZE MAIN (a barreira do nome é modal; aqui entra direto): a estrutura destrava, o prefixo não,
+        // e CANCEL devolve a estrutura gravada.
+        bw.reorganizandoMain_ = true;
+        bw.atualizarTravasDoMain();
+        checar(!bw.configTravada_ && bw.comboOrg_->isEnabled() && bw.comboOrg_->getSelectedId() == 3 &&
+                   !bw.comboModoPrefixo_->isEnabled() &&
+                   bw.labelOrg_->getText() == matriz::i18n::t("backup.reorganizando_main") &&
+                   bw.btnReorganizarMain_->getButtonText() == matriz::i18n::t("backup.reorganizar_main_cancelar"),
+               "reorganize: structure unlocked (keeps the saved choice), prefix stays locked, button says CANCEL");
+        bw.comboOrg_->setSelectedId(2, juce::dontSendNotification);
+        bw.alternarReorganizarMain();  // CANCEL
+        checar(!bw.reorganizandoMain_ && bw.configTravada_ && bw.comboOrg_->getSelectedId() == 3 && !bw.comboOrg_->isEnabled(),
+               "reorganize CANCEL: back to the saved structure, locked");
         checar(!bw.organizarPorSource_, "an old MAIN keeps its naming rule (no per-SOURCE suffix)");
         checar(bw.btnAtualizarSidecars_ && bw.btnAtualizarSidecars_->isVisible(),
                "with a MAIN, UPDATE SIDECARS takes the place of embed");

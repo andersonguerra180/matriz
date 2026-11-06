@@ -1533,7 +1533,10 @@ public:
         // 3. ORGANIZATION (Collection Mode only)
         if (!isCatalogMode && owner_.comboOrg_) {
             auto dentro = abrirCartao(card3H);
-            if (owner_.labelOrg_) owner_.labelOrg_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
+            auto tituloOrg = linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao));
+            if (owner_.btnReorganizarMain_ && owner_.btnReorganizarMain_->isVisible())
+                owner_.btnReorganizarMain_->setBounds(tituloOrg.removeFromRight(juce::jmin(tituloOrg.getWidth() / 2, 160)));
+            if (owner_.labelOrg_) owner_.labelOrg_->setBounds(tituloOrg);
             dentro.removeFromTop(2);
             if (owner_.togglePreservarEstrutura_) owner_.togglePreservarEstrutura_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleUsarEstruturaMapa_) owner_.toggleUsarEstruturaMapa_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
@@ -2153,6 +2156,13 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     labelOrg_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelOrg_);
 
+    btnReorganizarMain_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.reorganizar_main_btn"));
+    btnReorganizarMain_->setColour(juce::TextButton::buttonColourId, tk.botaoSecundario);
+    btnReorganizarMain_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    btnReorganizarMain_->setTooltip(matriz::i18n::t("backup.reorganizar_main_dica"));
+    btnReorganizarMain_->onClick = [this] { alternarReorganizarMain(); };
+    configContainer_->addChildComponent(*btnReorganizarMain_);
+
     togglePreservarEstrutura_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.preservar_estrutura"));
     togglePreservarEstrutura_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
     togglePreservarEstrutura_->setColour(juce::ToggleButton::tickColourId, tk.acento);
@@ -2204,7 +2214,11 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     comboMapaMain_->setColour(juce::ComboBox::outlineColourId, tk.borda);
     comboMapaMain_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     comboMapaMain_->setTooltip(matriz::i18n::t("backup.mapa_main_dica"));
-    comboMapaMain_->onChange = [this] { gravarRascunhoOrganizacao(); atualizarResumo(); };
+    comboMapaMain_->onChange = [this] {
+        if (comboMapaMain_->getSelectedId() == kIdComboPastasAtuaisDoMain) { criarMapaDasPastasAtuaisDoMain(); return; }
+        gravarRascunhoOrganizacao();
+        atualizarResumo();
+    };
     configContainer_->addAndMakeVisible(*comboMapaMain_);
     recarregarComboMapaMain();
 
@@ -3698,6 +3712,7 @@ void BackupWorkspaceComponent::aplicarPlanoCalculado(ResultadoPlano r, bool forc
     // o motivo vai junto do resumo sempre que o backup não puder rodar.
     const bool soMovimentos = plano_.itens.empty() && !plano_.movimentosSemPasta.empty();
     bool pronto = plano_.podeConsolidar() && (!plano_.itens.empty() || soMovimentos);
+    if (reorganizandoMain_) summary += "  -  " + matriz::i18n::t("backup.reorganizando_resumo");
     if (!plano_.movimentosSemPasta.empty()) {
         const bool reorganiza = std::any_of(plano_.movimentosSemPasta.begin(), plano_.movimentosSemPasta.end(),
                                             [](const auto& m) { return m.reorganizacao; });
@@ -3801,9 +3816,12 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
             if (sc.step()) cfg = juce::JSON::parse(juce::String::fromUTF8(sc.columnText(0).c_str()));
         }
     } catch (...) {}
-    configTravada_ = mainSelado_ && cfg.isObject();
-    // MAIN antigo (sem config gravada ou gravada sem a flag) segue a regra que já tinha.
-    organizarPorSource_ = configTravada_ ? static_cast<bool>(cfg.getProperty("por_source", false)) : !mainSelado_;
+    const bool temConfigDoMain = mainSelado_ && cfg.isObject();
+    if (!temConfigDoMain || projeto_.somenteLeitura()) reorganizandoMain_ = false;
+    configTravada_ = temConfigDoMain && !reorganizandoMain_;
+    // MAIN antigo (sem config gravada ou gravada sem a flag) segue a regra que já tinha. Reorganizando: mantém.
+    if (!reorganizandoMain_)
+        organizarPorSource_ = configTravada_ ? static_cast<bool>(cfg.getProperty("por_source", false)) : !mainSelado_;
 
     if (configTravada_) {
         const bool preservar = cfg.getProperty("preservar", false);
@@ -3833,13 +3851,32 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
         comboMapaMain_->setEnabled(livre && toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState());
     if (comboOrg_) comboOrg_->setEnabled(livre && !usaOriginal);
     if (btnEditarHierarquia_) btnEditarHierarquia_->setEnabled(livre && !usaOriginal);
-    if (comboModoPrefixo_) comboModoPrefixo_->setEnabled(livre);
-    if (editPrefixo_) editPrefixo_->setEnabled(livre);
-    const juce::String sufixo = configTravada_ ? "  -  " + matriz::i18n::t("backup.definido_primeiro_backup") : juce::String();
-    if (labelOrg_) labelOrg_->setText(matriz::i18n::t("backup.secao_organizacao") + sufixo, juce::dontSendNotification);
+    // Reorganizar muda só as pastas: o nome dos arquivos (prefixo) segue o do primeiro backup.
+    const bool prefixoTravado = configTravada_ || reorganizandoMain_;
+    if (comboModoPrefixo_) comboModoPrefixo_->setEnabled(!prefixoTravado);
+    if (editPrefixo_) editPrefixo_->setEnabled(!prefixoTravado);
+    // REORGANIZE MAIN no título do card: aparece com o MAIN criado e a estrutura gravada.
+    const bool mostrarReorganizar = temConfigDoMain && !projeto_.somenteLeitura();
+    if (btnReorganizarMain_) {
+        btnReorganizarMain_->setButtonText(matriz::i18n::t(reorganizandoMain_ ? "backup.reorganizar_main_cancelar" : "backup.reorganizar_main_btn"));
+        btnReorganizarMain_->setTooltip(matriz::i18n::t(reorganizandoMain_ ? "backup.reorganizar_main_cancelar_dica" : "backup.reorganizar_main_dica"));
+        btnReorganizarMain_->setEnabled(!executando_);
+        if (btnReorganizarMain_->isVisible() != mostrarReorganizar) {
+            btnReorganizarMain_->setVisible(mostrarReorganizar);
+            if (configContainer_) configContainer_->resized();
+        }
+    }
+    const juce::String sufixo = (configTravada_ && !mostrarReorganizar) ? "  -  " + matriz::i18n::t("backup.definido_primeiro_backup") : juce::String();
+    if (labelOrg_ && configTravada_)
+        labelOrg_->setTooltip(matriz::i18n::t("backup.definido_primeiro_backup") + "  -  " + matriz::i18n::t("backup.reorganizar_main_dica"));
+    if (labelOrg_) {
+        labelOrg_->setText(reorganizandoMain_ ? matriz::i18n::t("backup.reorganizando_main")
+                                              : matriz::i18n::t("backup.secao_organizacao") + sufixo, juce::dontSendNotification);
+        labelOrg_->setColour(juce::Label::textColourId, reorganizandoMain_ ? tema().alerta : tema().textoSecundario);
+    }
     // O aviso fica no título da seção; no rótulo estreito do prefixo, só na dica.
     if (comboModoPrefixo_)
-        comboModoPrefixo_->setTooltip(configTravada_ ? matriz::i18n::t("backup.definido_primeiro_backup")
+        comboModoPrefixo_->setTooltip(prefixoTravado ? matriz::i18n::t("backup.definido_primeiro_backup")
                                                      : matriz::i18n::t("backup.prefixo_modo_nenhum_dica"));
 
     // Embed e "forçar backup completo" só existem antes do MAIN: depois o
@@ -3933,6 +3970,11 @@ void BackupWorkspaceComponent::recarregarComboMapaMain() {
         idsComboMapaMain_.push_back(m.id);
         comboMapaMain_->addItem(m.nome, ++n);
     }
+    // Reorganizando um MAIN por regra: as pastas que o MAIN já tem viram um mapa editável (nada é movido).
+    if (reorganizandoMain_ && !projeto_.mainUsaMapa()) {
+        if (n > 0) comboMapaMain_->addSeparator();
+        comboMapaMain_->addItem(matriz::i18n::t("backup.mapa_pastas_atuais_main"), kIdComboPastasAtuaisDoMain);
+    }
     // Padrão: MAIN legado sem config = primeiro mapa (o antigo mapa único);
     // senão o mapa aberto no Folder Map.
     std::string alvo = selecionadoAntes;
@@ -3961,8 +4003,65 @@ void BackupWorkspaceComponent::gravarConfigDoMain() {
     } catch (...) {}
 }
 
+// "Pastas atuais do MAIN": cria o mapa (só banco), o MAIN passa a ser por folder map e a reorganização acaba —
+// a partir daí reorganizar é editar esse mapa no Folder Map e rodar o backup.
+void BackupWorkspaceComponent::criarMapaDasPastasAtuaisDoMain() {
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    auto voltar = [safeThis] {
+        if (!safeThis) return;
+        safeThis->recarregarComboMapaMain();
+        safeThis->atualizarResumo();
+    };
+    if (executando_ || !reorganizandoMain_) { voltar(); return; }
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle(matriz::i18n::t("backup.reorganizar_titulo"))
+            .withMessage(matriz::i18n::t("backup.mapa_pastas_atuais_confirmar"))
+            .withButton(matriz::i18n::t("backup.mapa_pastas_atuais_criar"))
+            .withButton(matriz::i18n::t("dialogo.cancelar")),
+        juce::ModalCallbackFunction::create([safeThis, voltar](int res) {
+            if (!safeThis || res != 1) { voltar(); return; }
+            auto& projeto = safeThis->projeto_;
+            // Undo: a config do MAIN volta (o mapa criado tem o próprio Undo, de criarFolderMap).
+            try {
+                projeto.registrarUndoDeColunas("Convert MAIN to Folder Map", "projeto", "id", projeto.projeto().projetoId(),
+                                               {"backup_config_main"});
+            } catch (...) {}
+            projeto.converterMainParaFolderMap([safeThis](const juce::String& erro, const juce::String& nome) {
+                if (!safeThis) return;
+                if (erro.isEmpty()) safeThis->reorganizandoMain_ = false;
+                safeThis->recarregarComboMapaMain();
+                safeThis->atualizarResumo();
+                juce::AlertWindow::showMessageBoxAsync(
+                    erro.isEmpty() ? juce::AlertWindow::InfoIcon : juce::AlertWindow::WarningIcon,
+                    matriz::i18n::t("backup.reorganizar_titulo"),
+                    erro.isEmpty() ? matriz::i18n::t("backup.mapa_pastas_atuais_pronto").replace("{nome}", nome) : erro);
+            });
+        }));
+}
+
+// REORGANIZE MAIN: um clique (com o nome do projeto) destrava a estrutura; CANCEL volta à gravada.
+void BackupWorkspaceComponent::alternarReorganizarMain() {
+    if (executando_) return;
+    if (reorganizandoMain_) {
+        reorganizandoMain_ = false;
+        atualizarResumo();  // atualizarTravasDoMain relê backup_config_main e devolve os controles
+        return;
+    }
+    if (!mainSelado_ || projeto_.somenteLeitura()) return;
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    MainEditPanel::pedirNomeDoProjeto(projeto_, matriz::i18n::t("backup.reorganizar_titulo"),
+                                      matriz::i18n::t("backup.reorganizar_main_msg"),
+                                      matriz::i18n::t("backup.reorganizar_main_confirmar"), [safeThis](const juce::String&) {
+                                          if (!safeThis || safeThis->executando_) return;
+                                          safeThis->reorganizandoMain_ = true;
+                                          safeThis->atualizarResumo();
+                                      });
+}
+
 void BackupWorkspaceComponent::gravarRascunhoOrganizacao() {
-    if (configTravada_ || aplicandoRascunho_) return;
+    if (configTravada_ || reorganizandoMain_ || aplicandoRascunho_) return;
     juce::DynamicObject::Ptr o = new juce::DynamicObject();
     o->setProperty("preservar", togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState());
     o->setProperty("mapa", toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState());
@@ -3984,7 +4083,7 @@ void BackupWorkspaceComponent::gravarRascunhoOrganizacao() {
 }
 
 void BackupWorkspaceComponent::aplicarRascunhoOrganizacao() {
-    if (configTravada_) return;  // depois do 1º backup vale backup_config_main
+    if (configTravada_ || reorganizandoMain_) return;  // depois do 1º backup vale backup_config_main
     if (projeto_.projeto().modo() == matriz::model::Modo::Catalogo) return;  // sem seção de estrutura
     juce::var cfg;
     try {
@@ -4134,6 +4233,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
     // O MAIN é fiel à SOURCE: o backup nunca embute metadados/marcadores (isso é só do EXPORT).
     const bool embutirMeta = false;
     if (!isCatalogMode) gravarConfigDoMain();  // estas escolhas passam a valer pra todo arquivo novo
+    reorganizandoMain_ = false;  // REORGANIZE MAIN: a estrutura nova está gravada (os moves vão neste backup ou no próximo)
 
     juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
         resolvedDestFolder_.isDirectory() ? resolvedDestFolder_ : (isCatalogMode ? resolvedDestFolder_ : projeto.projeto().raiz()));
@@ -4530,6 +4630,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
                                                     : matriz::i18n::t("backup.aviso_source_dependem")
                                                           .replace("{n}", juce::String(dependem)));
             }
+            // Na cara de quem acabou de fazer o backup: como refazer as pastas sem recopiar nada.
+            if (!resultado.cancelado && !rebuild) finalMsg << "\n" << matriz::i18n::t("backup.dica_reorganizar");
             if (houveFalha)
                 finalMsg << "\n\n" << matriz::i18n::t("backup.erros_pointer").replace("{n}", juce::String(safeThis->falhasCount_));
             safeThis->labelResumo_->setText(finalMsg, juce::dontSendNotification);

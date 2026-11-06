@@ -1536,8 +1536,9 @@ private:
     bool organizandoAuto_ = false;  // guarda contra recursão da passada automática de auto-organização
     juce::int64 ultimaAtividadeMainMs_ = 0;
     std::atomic<bool> operacaoMainEmCurso_{false};
+    // exigeRebuild = false: operação que vale com o MAIN normal (converter o MAIN para folder map no REORGANIZE MAIN).
     void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
-                            AoConcluirEdicaoMain aoConcluir);
+                            AoConcluirEdicaoMain aoConcluir, bool exigeRebuild = true);
     std::atomic<int> consolidacoesEmCurso_{0};  // antes do pool: o job decrementa até o último instante
     juce::ThreadPool poolMainEdit_{1};
     // Registra o Undo de uma remoção (item, arquivo e as tabelas filhas guardadas em temp.undo__*). Message thread.
