@@ -334,8 +334,10 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
                                bool embutir, bool formatoBridge = false,
                                const OpcoesMetadadosSaida& metaSaida = {},
-                               // true = Bounce List direta dos Assets: lê o ORIGINAL (sem MAIN), confere o SHA-256 contra o
-                               // catálogo antes de copiar; alterado/ausente vai pra `pulados`. O original nunca é tocado.
+                               // true = Bounce List direta dos Assets: item já no MAIN/CLONE sai da cópia do backup (o
+                               // disco original pode estar desconectado); item ainda sem backup lê o ORIGINAL e confere o
+                               // SHA-256 contra o catálogo antes de copiar — alterado/ausente vai pra `pulados`. O original
+                               // nunca é tocado.
                                bool fonteOrigem = false);
 
 // SEM USO desde a etapa 5 (arquivo no MAIN nunca é renomeado); mantida só

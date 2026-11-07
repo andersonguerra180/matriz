@@ -1181,8 +1181,13 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
             auto noBackup = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
             auto naOrigem = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
                                                            matriz::vault::Preferencia::Origem);
-            if (fonteOrigem) {
-                // Bounce List direta dos Assets: a fonte é o original catalogado; só vale se ainda é o mesmo arquivo.
+            const bool temCopiaNoBackup = noBackup && !(naOrigem && *naOrigem == *noBackup);
+            if (fonteOrigem && temCopiaNoBackup) {
+                // Bounce List de item já no backup: depois do backup o MAIN é a origem — a cópia verificada do
+                // MAIN/CLONE sai mesmo com o disco original desconectado.
+            } else if (fonteOrigem) {
+                // Bounce List de item que ainda não está no backup: a fonte é o original catalogado; só vale se
+                // ainda é o mesmo arquivo.
                 if (!naOrigem || !naOrigem->existsAsFile()) {
                     resultado.pulados.push_back(ip.codigoAcervo + ": missing");
                     continue;
@@ -1199,7 +1204,7 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                     }
                 }
                 noBackup = naOrigem;
-            } else if (!noBackup || (naOrigem && *naOrigem == *noBackup)) {
+            } else if (!temCopiaNoBackup) {
                 ++resultado.foraDoMain;
                 continue;
             }

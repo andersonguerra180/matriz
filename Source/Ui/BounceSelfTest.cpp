@@ -192,7 +192,8 @@ int rodarBounceSelfTest() {
         pa.aguardarGravacoesMarcas();
         checar(contarB() == 5 && !pa.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, idFora), "tag B: pressing B twice toggles it back off");
 
-        auto exportar = [&](const juce::String& nome, matriz::consolidacao::ModoMetadadosSaida modo, bool sidecar, int& semPasta) {
+        auto exportar = [&](const juce::String& nome, matriz::consolidacao::ModoMetadadosSaida modo, bool sidecar, int& semPasta,
+                            bool fonteOrigem = false) {
             const juce::File saida = raiz.getChildFile(nome);
             saida.createDirectory();
             auto plano = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), saida,
@@ -208,7 +209,8 @@ int rodarBounceSelfTest() {
             matriz::consolidacao::OpcoesMetadadosSaida meta;
             meta.modo = modo;
             meta.sidecar = sidecar;
-            return std::make_pair(saida, matriz::consolidacao::executarExport(reg, pa.projeto().pasta(), saida, plano, {}, {}, false, false, meta));
+            return std::make_pair(saida, matriz::consolidacao::executarExport(reg, pa.projeto().pasta(), saida, plano, {}, {}, false, false, meta,
+                                                                                  fonteOrigem));
         };
         using Modo = matriz::consolidacao::ModoMetadadosSaida;
         auto nomeJpg = [](const juce::File& s) { return s.getChildFile("Entrega/foto.jpg"); };
@@ -285,6 +287,19 @@ int rodarBounceSelfTest() {
             checar(sha(saida.getChildFile("Entrega/raw.cr2")) == hashMain[media.getChildFile("Entrega/raw.cr2").getFullPathName().toStdString()],
                    "Clean: the RAW is copied untouched");
             checar(saida.getChildFile("Entrega/som.wav").getSize() > 44, "Clean: the cleaned WAV is still a file with audio");
+        }
+
+        // ---- 5b) disco original desconectado: depois do backup o MAIN é a origem (o Bounce não depende do SOURCE)
+        {
+            const juce::File offline = raiz.getChildFile("SOURCE_offline");
+            const bool desconectou = src.moveFileTo(offline);
+            auto [saida, r] = exportar("saida_sem_source", Modo::Original, false, semPasta, /*fonteOrigem*/ true);
+            if (desconectou) offline.moveFileTo(src);
+            checar(desconectou && r.copiados == 4 && r.pulados.empty() && r.falhas.empty(),
+                   "Bounce with the original disk disconnected: 4 files exported from the MAIN, none skipped as missing (" +
+                       juce::String(r.copiados) + " copied, " + juce::String((int) r.pulados.size()) + " skipped)");
+            checar(sha(nomeJpg(saida)) == hashMain[media.getChildFile("Entrega/foto.jpg").getFullPathName().toStdString()],
+                   "Bounce with the original disk disconnected: the copy is identical to the MAIN file");
         }
 
         // ---- 6) nada mudou onde não podia
