@@ -44,6 +44,9 @@ struct Ganchos {
     // Opcional, por ÚLTIMO: true = cada arquivo é ele mesmo (janela do container, que mostra os membros soltos). Fora dela,
     // apagar / limpar metadados / renomear em lote / categorizar a CAPA de um NEST ou CONTAINER vale para todos os arquivos dele.
     bool membrosIndividuais = false;
+    // Opcional, por ÚLTIMO: o container da janela (vazio fora dela). Com ele, "Use image as cover" numa foto torna
+    // essa foto a capa do container.
+    std::string nestDoContainer;
 };
 
 // Monta o menu de contexto pra `itemIds` (nunca vazio). Os rótulos mudam de
@@ -71,7 +74,6 @@ void removerDoBackup(ProjetoAberto& projeto, const std::vector<std::string>& ite
 void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 // Janela do container: a imagem `itemId` (membro dele) vira a capa do container `nestId` — mesmo caminho do
 // "Use image as cover" feito na capa do container no Grid.
-bool itemEhImagemParaCapa(ProjetoAberto& projeto, const std::string& itemId, const ResolvedorItemEmMemoria& emMemoria = {});
 void usarComoCapaDoContainer(ProjetoAberto& projeto, const std::string& nestId, const std::string& itemId, Ganchos ganchos);
 // Locate Offline Files: escolhe uma pasta e reconecta, de uma vez, os arquivos offline da seleção que estão nela ou
 // nas subpastas (mesmo nome, tamanho e SHA-256; mesmo Asset ID). Conteúdo diferente fica para o relink individual.

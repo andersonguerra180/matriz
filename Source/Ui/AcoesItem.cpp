@@ -673,10 +673,6 @@ void aplicarCapaNosContainers(ProjetoAberto* p, const std::set<std::string>& nes
 
 } // namespace
 
-bool itemEhImagemParaCapa(ProjetoAberto& projeto, const std::string& itemId, const ResolvedorItemEmMemoria& emMemoria) {
-    return ehFoto(projeto, itemId, emMemoria);
-}
-
 void usarComoCapaDoContainer(ProjetoAberto& projeto, const std::string& nestId, const std::string& itemId, Ganchos ganchos) {
     if (nestId.empty() || itemId.empty()) return;
     // O master da imagem; se está offline, cai na miniatura (como no seletor de capa).
@@ -1156,7 +1152,11 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
         }
 
         case kDefinirCapa:
-            definirCapa(projeto, itemIds, ganchos);
+            // Janela do container, uma foto selecionada: ela vira a capa do container, direto (sem escolher arquivo).
+            if (!ganchos.nestDoContainer.empty() && itemIds.size() == 1 && ehFoto(projeto, itemIds.front(), ganchos.itemEmMemoria))
+                usarComoCapaDoContainer(projeto, ganchos.nestDoContainer, itemIds.front(), ganchos);
+            else
+                definirCapa(projeto, itemIds, ganchos);
             break;
 
         case kRemoverCapa: {

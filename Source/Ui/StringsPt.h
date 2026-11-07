@@ -2459,7 +2459,6 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"janela_pasta.selecionados", "{n} selecionados"},
         {"janela_pasta.extrair", "Extrair desta pasta"},
         {"janela_pasta.extrair_container", "Extrair do container"},
-        {"janela_pasta.capa_do_container", "Usar como capa do container"},
         {"janela_pasta.aba_filtros", "Filtros"},
         {"janela_pasta.busca_pasta", "Buscar pasta..."},
         {"janela_pasta.em_pasta", "Em"},
