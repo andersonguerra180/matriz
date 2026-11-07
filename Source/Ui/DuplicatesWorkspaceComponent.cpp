@@ -532,6 +532,11 @@ public:
             menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, itemId](int res) {
                 if (!safeThis) return;
                 if (res == 1) {
+                    // Depois do backup o MAIN é a origem (disco original pode estar desconectado).
+                    if (auto acessivel = safeThis->projeto_.arquivoAcessivelDoItem(itemId)) {
+                        acessivel->revealToUser();
+                        return;
+                    }
                     auto caminhoOpt = safeThis->projeto_.caminhoDeOrigem(itemId);
                     if (caminhoOpt && caminhoOpt->isNotEmpty()) {
                         juce::File f(*caminhoOpt);
@@ -788,6 +793,11 @@ private:
                     menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, targetItemId, isPt](int res) {
                         if (!safeThis) return;
                         if (res == 1) {
+                            // Depois do backup o MAIN é a origem (disco original pode estar desconectado).
+                            if (auto acessivel = safeThis->owner_.projeto_.arquivoAcessivelDoItem(targetItemId)) {
+                                acessivel->revealToUser();
+                                return;
+                            }
                             auto caminhoOpt = safeThis->owner_.projeto_.caminhoDeOrigem(targetItemId);
                             if (caminhoOpt && caminhoOpt->isNotEmpty()) {
                                 juce::File f(*caminhoOpt);
@@ -1361,6 +1371,12 @@ private:
             juce::Component::SafePointer<Card> seguro(this);
             menu.showMenuAsync(juce::PopupMenu::Options(), [seguro, itemId](int res) {
                 if (!seguro || res == 0) return;
+                // Show source: depois do backup o MAIN é a origem (disco original pode estar desconectado).
+                if (res == 1)
+                    if (auto acessivel = seguro->owner_.projeto_.arquivoAcessivelDoItem(itemId)) {
+                        acessivel->revealToUser();
+                        return;
+                    }
                 const auto caminho = seguro->owner_.projeto_.caminhoDeOrigem(itemId);
                 if (!caminho || caminho->isEmpty()) return;
                 if (res == 1) juce::File(*caminho).revealToUser();

@@ -43,6 +43,8 @@ public:
 
     std::function<void(const std::string& assetId)> aoSelecionarItem;
     std::function<void(const std::set<std::string>& assetIds)> aoAbrirNoGrid;
+    // Show Source: arquivo do item acessível agora (MAIN/CLONE/origem). Vazio = usa o caminho de origem gravado.
+    std::function<std::optional<juce::File>(const std::string& assetId)> arquivoAcessivel;
 
     void paint(juce::Graphics& g) override;
     void resized() override;

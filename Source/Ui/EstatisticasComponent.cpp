@@ -218,6 +218,7 @@ EstatisticasComponent::EstatisticasComponent(ProjetoAberto& projeto)
                 aoSelecionarItem(itemId);
             }
         };
+        treemapComponent_.arquivoAcessivel = [this](const std::string& itemId) { return projeto_.arquivoAcessivelDoItem(itemId); };
         treemapComponent_.aoAbrirNoGrid = [this](const std::set<std::string>& assetIds) {
             if (aoAbrirNoGrid) {
                 aoAbrirNoGrid(assetIds);

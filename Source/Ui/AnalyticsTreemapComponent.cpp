@@ -729,7 +729,12 @@ void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
         }
 
         if (e.getNumberOfClicks() == 2) {
-            // Double click: Show at Source (§ C.1)
+            // Double click: Show at Source (§ C.1). Depois do backup o MAIN é a origem.
+            if (arquivoAcessivel && !clicked->assetId.empty())
+                if (auto acessivel = arquivoAcessivel(clicked->assetId)) {
+                    acessivel->revealToUser();
+                    return;
+                }
             juce::String targetPath = juce::String(clicked->path);
             if (!targetPath.isEmpty()) {
                 juce::File arq(targetPath);
@@ -755,9 +760,15 @@ void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
             juce::String targetPath = juce::String(clicked->path);
             juce::String assetIdStr = juce::String(clicked->assetId);
             auto abrirGridCb = aoAbrirNoGrid;
+            juce::Component::SafePointer<AnalyticsTreemapComponent> seguro(this);
 
-            menu.showMenuAsync(juce::PopupMenu::Options(), [targetPath, assetIdStr, abrirGridCb](int resultado) {
+            menu.showMenuAsync(juce::PopupMenu::Options(), [targetPath, assetIdStr, abrirGridCb, seguro](int resultado) {
                 if (resultado == 1) {
+                    if (seguro && seguro->arquivoAcessivel && assetIdStr.isNotEmpty())
+                        if (auto acessivel = seguro->arquivoAcessivel(assetIdStr.toStdString())) {
+                            acessivel->revealToUser();
+                            return;
+                        }
                     if (!targetPath.isEmpty()) {
                         juce::File arq(targetPath);
                         if (arq.existsAsFile() || arq.isDirectory()) {

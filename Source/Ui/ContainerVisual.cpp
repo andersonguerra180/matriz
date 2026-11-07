@@ -104,8 +104,11 @@ void desenharContainerGrafico(juce::Graphics& g, juce::Rectangle<float> area, co
 
 void abrirContainerDdp(ProjetoAberto& projeto, const std::string& nestId) {
     std::vector<juce::File> origens;
-    for (const auto& id : projeto.membrosDoNest(nestId))
+    for (const auto& id : projeto.membrosDoNest(nestId)) {
         if (auto c = projeto.caminhoDeOrigem(id)) origens.emplace_back(*c);
+        // Disco original desconectado: a cópia do MAIN/CLONE também serve pra achar a pasta do DDP.
+        if (auto a = projeto.arquivoAcessivelDoItem(id)) origens.emplace_back(*a);
+    }
     juce::String erro;
     const auto pastaDdp = JanelaPlayerDdp::acharPastaDdp(origens);
     if (pastaDdp == juce::File() || !JanelaContainerDdp::abrir(projeto, nestId, pastaDdp, erro))
