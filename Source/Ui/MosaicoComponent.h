@@ -349,6 +349,8 @@ public:
     // true enquanto o snapshot em background disparado por recarregar()
     // ainda não voltou. Mesmo uso que ArvoreComponent::recargaPendente().
     bool snapshotPendente() const { return snapshotPendente_; }
+    // Quantas leituras completas do catálogo (snapshot em background) começaram. Self-test: editar não pode somar.
+    int recargasCompletasIniciadas() const { return recargasCompletasIniciadas_; }
     // Carrega só estes itens no próximo recarregar() (janela de uma pasta), em vez do catálogo inteiro. nullopt = tudo.
     void definirEscopoCarga(std::optional<std::set<std::string>> itemIds) { escopoCarga_ = std::move(itemIds); }
     // Incrementa a cada snapshot COMPLETO aplicado (não em atualizarItemEmMemoria).
@@ -420,6 +422,13 @@ private:
     std::optional<juce::String> mensagemVazia_;
     void agendarRefiltroCoalescido();
     bool snapshotPendente_ = false;
+    // Edições que chegaram com um snapshot completo em voo (ele pode ter lido o valor antigo): quando ele chega, só
+    // estes itens são relidos por cima (atualizarItemEmMemoria) e o mapa de containers refeito. NUNCA descartar o
+    // snapshot e pedir outro completo por causa de uma edição: com 30 mil itens cada edição reiniciava a leitura de
+    // todas as miniaturas/tags e editar em sequência virava um laço (perf.log, [Recarregar] em cadeia).
+    std::set<std::string> itensTocadosDuranteSnapshot_;
+    bool nestsTocadosDuranteSnapshot_ = false;
+    int recargasCompletasIniciadas_ = 0;
     // Fix de performance (item 8): buscarItens() varre FTS5 + LIKE em várias
     // tabelas — na thread principal, cada tecla digitada travava a janela.
     // Mesmo padrão de geração do snapshot acima, pra uma busca mais nova não

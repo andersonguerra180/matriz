@@ -409,6 +409,26 @@ void rodarTestesGradeConsistente(const Checar& checar) {
         mosaico.atualizarItemEmMemoria(dup);
         checar(noSnapshot(dup) == nullptr, "a duplicate resolved as discarded leaves the grid right away");
         checar(noSnapshot(dump) != nullptr, "the other items stay in the grid");
+
+        // Editar com a leitura completa do catálogo em voo: cada edição descartava a leitura e pedia outra completa
+        // (com 30 mil itens, "Reading thumbnails and tags" de novo a cada arquivo editado). A leitura chega inteira e
+        // só o item editado é relido por cima dela — e a edição vale, mesmo a leitura tendo visto o valor antigo.
+        {
+            const int leiturasAntes = mosaico.recargasCompletasIniciadas();
+            mosaico.recarregar();
+            // Sem bombear: o job termina de ler o banco (2 itens) mas a entrega (callAsync) fica na fila.
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            const bool emVoo = mosaico.snapshotPendente();
+            pa.salvarMetadado(dump, "collection_type", "EditedWhileLoading");
+            for (int i = 0; i < 5; ++i) mosaico.atualizarItemEmMemoria(dump);
+            esperarAte([&] { return !mosaico.snapshotPendente(); }, 10000);
+            bombear(300);
+            checar(emVoo && mosaico.recargasCompletasIniciadas() == leiturasAntes + 1,
+                   "editing while the catalog is being read does not start another full read");
+            d = noSnapshot(dump);
+            checar(d != nullptr && d->collectionType.value_or("") == "EditedWhileLoading",
+                   "the edit made during the read wins over the value the read saw");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("grid consistency selftest: ") + e.what());
     }

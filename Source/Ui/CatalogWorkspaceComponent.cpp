@@ -2435,7 +2435,16 @@ void CatalogWorkspaceComponent::abrirWorkbench(const std::string& itemId) {
         juce::MessageManager::callAsync([safeThis]() {
             if (!safeThis) return;
             safeThis->activePreviewWindow_.reset();
-            safeThis->recarregar();
+            // Fechar NÃO relê o catálogo (recarregar() lia as miniaturas/tags de todos os itens a cada arquivo
+            // editado): cada edição feita no Workbench já chegou à grade item a item (EventBus ->
+            // atualizarItemEmMemoria). Aqui só a contagem da lateral (do snapshot em memória), o funil e a seleção.
+            safeThis->atualizarContagens();
+            const auto& chave = safeThis->categorias_.empty()
+                ? std::string()
+                : safeThis->categorias_[static_cast<size_t>(safeThis->categoriaSelecionada_)].chave;
+            if (chave == "folders") safeThis->revalidarPastaAtual();
+            else safeThis->aplicarFiltrosAdicionais();
+            safeThis->atualizarMetadados(false);
         });
     };
 

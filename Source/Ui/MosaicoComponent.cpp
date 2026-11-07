@@ -23,6 +23,7 @@
 #include <memory>
 #include <iterator>
 #include <map>
+#include <utility>
 
 namespace matriz::ui {
 
@@ -144,9 +145,8 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
     // NEST criado / desfeito / capa trocada: relê só o mapa de nests (uma consulta) e refiltra.
     if (e.tipoAlteracao == "nest") {
         // Um snapshot completo que começou ANTES deste nest (leu o estado antigo) não pode sobrescrever o
-        // resultado quando chegar: descarta-o e pede um novo logo depois (mesmo padrão de atualizarItemEmMemoria).
-        if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
-        ++geracaoSnapshot_;
+        // resultado quando chegar: ao chegar, o mapa de nests é refeito por cima dele (sem reler o catálogo).
+        if (snapshotPendente_) nestsTocadosDuranteSnapshot_ = true;
         const auto nests = ProjetoAberto::mapaDeNests(projeto_.projeto().registro());
         const juce::File pastaDoProjeto = projeto_.projeto().pasta();
         auto aplicar = [&](std::vector<ItemResumo>& lista) {
@@ -231,11 +231,11 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
         if (ocultarEditados_) agendarRefiltroCoalescido();
         // Snapshot em voo foi lido ANTES do E: ao chegar, traria a flag
         // antiga por cima (com Hide Edited os arquivos sumiam, voltavam e
-        // sumiam de novo). Descarta-o (geração nova, como em "nest" e em
-        // atualizarItemEmMemoria) e pede um recarregar logo depois dele.
+        // sumiam de novo). Ao chegar, estes itens são relidos por cima dele
+        // (sem descartá-lo nem reler o catálogo inteiro).
         if (snapshotPendente_) {
-            recarregarAoTerminarSnapshot_ = true;
-            ++geracaoSnapshot_;
+            if (lote) itensTocadosDuranteSnapshot_.insert(e.itemIds.begin(), e.itemIds.end());
+            else itensTocadosDuranteSnapshot_.insert(e.itemId);
         }
         return;
     }
@@ -352,6 +352,7 @@ void MosaicoComponent::recarregar() {
     }
     recarregarAoTerminarSnapshot_ = false;
     snapshotPendente_ = true;
+    ++recargasCompletasIniciadas_;
     {
         const juce::ScopedLock sl(cacheLock_);
         semMiniatura_.clear(); // um novo ingest pode ter gerado miniatura pra itens antes sem
@@ -448,6 +449,19 @@ void MosaicoComponent::recarregar() {
             self->textosTodos_ = std::move(textos);
             self->invalidarIndiceTodos();
             ++self->versaoSnapshot_;
+            // Edições feitas enquanto este snapshot lia o banco: relê só esses itens (e o mapa de containers) por cima.
+            {
+                auto tocados = std::move(self->itensTocadosDuranteSnapshot_);
+                self->itensTocadosDuranteSnapshot_.clear();
+                if (std::exchange(self->nestsTocadosDuranteSnapshot_, false))
+                    self->aplicarEvento(EventoItemAlterado{"", "nest", {}});
+                if (!tocados.empty()) {
+                    self->iniciarLoteAtualizacao();
+                    for (const auto& id : tocados) self->atualizarItemEmMemoria(id);
+                    self->refiltroAdiado_ = false;  // o aplicarFiltrosEOrdenacao logo abaixo refiltra uma vez só
+                    self->finalizarLoteAtualizacao();
+                }
+            }
             self->aplicarFiltrosEOrdenacao();
             if (self->aoMudarConteudoVisivel) self->aoMudarConteudoVisivel();
             ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", juce::String(self->itensTodos_.size()) + " items loaded");
@@ -463,12 +477,10 @@ void MosaicoComponent::recarregar() {
 void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     if (itemId.empty()) return;
 
-    // Um recarregar() em voo (ex.: um filtro esperando o catálogo completo)
-    // fica órfão quando a geração muda aqui: sua resposta chega descartada
-    // (branch de geração divergente em recarregar()). Sem isto, quem estava
-    // esperando aquele snapshot nunca é avisado do desfecho.
-    if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
-    ++geracaoSnapshot_;
+    // Snapshot completo em voo pode ter lido este item ANTES da edição: ao
+    // chegar, este item é relido por cima dele. Não descartar o snapshot nem
+    // pedir outro completo (ver itensTocadosDuranteSnapshot_).
+    if (snapshotPendente_) itensTocadosDuranteSnapshot_.insert(itemId);
 
     ItemResumo* it = itemEmTodos(itemId);
     if (it == nullptr) return;

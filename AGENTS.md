@@ -85,6 +85,16 @@ regras e decisões que não mudam de sessão pra sessão.
   obsoleta (`atualizarItemEmMemoria()` mudou `geracaoSnapshot_` no meio
   do carregamento). Sem isso o modal "Loading Catalog" trava
   indefinidamente.
+- **Editar nunca relê o catálogo inteiro.** Snapshot completo em voo
+  (`MosaicoComponent::recarregar`) que pode ter lido um valor antigo NÃO
+  se resolve descartando-o (`++geracaoSnapshot_`) e pedindo outro
+  (`recarregarAoTerminarSnapshot_`): anota o item em
+  `itensTocadosDuranteSnapshot_` (container: `nestsTocadosDuranteSnapshot_`)
+  e ele é relido por cima quando o snapshot chega. Esse "descarta e
+  relê" foi reintroduzido 3 vezes (atualizarItemEmMemoria, `nest`, tecla
+  E/`122bf94`) e com 30 mil itens cada edição refazia "Reading thumbnails
+  and tags". Fechar o Workbench também não chama `recarregar()`. Check:
+  `--selftest-lote` ("editing while the catalog is being read...").
 - **`MainComponent::timerCallback()` só descarta `loteEmCurso_`/
   `estadoLoteAtual_` quando `finalizarUnidadeDeLote()` retorna `true`**
   (finalização de fato aconteceu) — senão um lote pode ficar sem nunca
