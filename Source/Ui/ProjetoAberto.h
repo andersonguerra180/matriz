@@ -1185,6 +1185,12 @@ public:
     // origem registrada.
     std::optional<juce::String> caminhoDeOrigem(const std::string& itemId) const;
 
+    // Arquivo principal do item que existe em disco agora, na ordem de
+    // leitura (relink em memória → MAIN → CLONEs → SOURCE): depois do backup
+    // o MAIN é a origem, então "Show at source" acha o arquivo mesmo com o
+    // disco original desconectado. nullopt se nenhuma cópia está acessível.
+    std::optional<juce::File> arquivoAcessivelDoItem(const std::string& itemId) const;
+
     // GET EXIF (a pedido do usuário): o que a thread de fundo precisa pra
     // achar o arquivo de cada item SEM tocar neste objeto — as colunas de
     // resolução (só banco, sem disco) e um resolvedor já carregado (MAIN/

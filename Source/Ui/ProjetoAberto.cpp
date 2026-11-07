@@ -7111,6 +7111,20 @@ int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::st
     return gravados;
 }
 
+std::optional<juce::File> ProjetoAberto::arquivoAcessivelDoItem(const std::string& itemId) const {
+    if (!projeto_) return std::nullopt;
+    std::string arquivoId;
+    try {
+        auto st = projeto_->registro().prepare("SELECT id FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC, id LIMIT 1");
+        st.bind(1, matriz::db::Value::of(itemId));
+        if (st.step()) arquivoId = st.columnText(0);
+    } catch (...) {}
+    if (arquivoId.empty()) return std::nullopt;
+    auto f = resolverArquivoComMemoria(arquivoId);
+    if (f && f->existsAsFile()) return f;
+    return std::nullopt;
+}
+
 std::optional<juce::String> ProjetoAberto::caminhoDeOrigem(const std::string& itemId) const {
     if (!projeto_) return std::nullopt;
 

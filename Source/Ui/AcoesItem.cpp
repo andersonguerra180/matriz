@@ -1212,6 +1212,12 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
         }
 
         case kMostrarNaOrigem: {
+            // Depois do backup o MAIN é a origem: com o disco original
+            // desconectado, mostra a cópia do MAIN (ou de um CLONE).
+            if (auto acessivel = projeto.arquivoAcessivelDoItem(itemIds.front())) {
+                acessivel->revealToUser();
+                break;
+            }
             auto caminho = projeto.caminhoDeOrigem(itemIds.front());
             if (!caminho || caminho->isEmpty()) {
                 juce::AlertWindow::showAsync(

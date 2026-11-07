@@ -5199,6 +5199,11 @@ std::vector<std::string> ArvoreBackupComponent::idsSoltosSelecionados() const {
 }
 
 void ArvoreBackupComponent::mostrarNaOrigem(const std::string& itemId) {
+    // Depois do backup o MAIN é a origem (disco original pode estar desconectado).
+    if (auto acessivel = projeto_.arquivoAcessivelDoItem(itemId)) {
+        acessivel->revealToUser();
+        return;
+    }
     juce::File origem;
     try {
         auto st = projeto_.projeto().registro().prepare("SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC LIMIT 1");
