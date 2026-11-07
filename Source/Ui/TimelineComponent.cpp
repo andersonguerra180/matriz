@@ -9,6 +9,10 @@
 #include <algorithm>
 #include <cmath>
 
+#if JUCE_MAC && JUCE_INTEL
+ #include <mmintrin.h>  // _mm_empty() (EMMS) em ~TimelineComponent
+#endif
+
 namespace matriz::ui {
 
 namespace {
@@ -78,6 +82,15 @@ TimelineComponent::TimelineComponent(ProjetoAberto& projeto) : projeto_(projeto)
 }
 
 TimelineComponent::~TimelineComponent() {
+#if JUCE_MAC && JUCE_INTEL
+    // Algum código (fora do Matriz) roda MMX na message thread sem EMMS e deixa o x87 cheio. Aí a destruição de
+    // cacheOnda_ (TimeSliceThread::stopThread -> Thread::sleep(2) -> sleep_for da libc++, que compara a duração em
+    // long double/x87) recebe NaN e dorme "para sempre": fechar o preview travava o app. EMMS esvazia o x87; é seguro
+    // aqui porque o ABI exige o x87 vazio em fronteira de função. Só Mac Intel: Apple Silicon não tem x87 e no
+    // Windows x64 (MSVC) long double é double. Provavelmente é também o "nunca sinaliza término" do item 2 em
+    // carregarItem().
+    _mm_empty();
+#endif
     stopTimer();
     transporte_.setSource(nullptr);
     playerCompartilhado().setSource(nullptr);

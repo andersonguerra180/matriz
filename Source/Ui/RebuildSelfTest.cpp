@@ -2,14 +2,19 @@
 
 #include <JuceHeader.h>
 
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <map>
+#include <thread>
 
 #include "../Consolidacao/Consolidacao.h"
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
 #include "../Vault/Resolucao.h"
 #include "ProjetoAberto.h"
+#include "TimelineComponent.h"
 
 namespace matriz::ui {
 
@@ -109,6 +114,27 @@ int rodarRebuildSelfTest() {
         const auto idC = inserirItem(reg, projetoId, "RBD-3", fc);
         const auto idD = inserirItem(reg, projetoId, "RBD-4", fd);
         (void)idA; (void)idD;
+
+#if JUCE_MAC && JUCE_INTEL
+        {
+            // Fechar o preview com o x87 sujo de MMX (instrução MMX sem EMMS na message thread) travava para sempre em
+            // ~TimelineComponent (Thread::sleep -> sleep_for em long double dá NaN). Se travar, o vigia reprova e sai.
+            std::atomic<bool> terminou{false};
+            std::thread vigia([&terminou] {
+                for (int i = 0; i < 100 && !terminou.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (!terminou.load()) {
+                    std::cout << "  FAIL ~TimelineComponent hung with the x87 dirty from MMX (preview close freeze)\n" << std::flush;
+                    std::_Exit(1);
+                }
+            });
+            auto timeline = std::make_unique<TimelineComponent>(pa);
+            __asm__ volatile("pxor %%mm0, %%mm0" ::: "mm0");  // MMX sem EMMS: deixa o x87 cheio
+            timeline.reset();
+            terminou = true;
+            vigia.join();
+            checar(true, "closing the preview timeline with the x87 dirty from MMX does not hang");
+        }
+#endif
         const std::string hashA = sha(fa), hashB = sha(fb), hashC = sha(fc), hashD = sha(fd);
         const juce::File media = pa.projeto().pastaMedia();
         const auto hier = cons::HierarquiaBackup{cons::NivelHierarquia::TipoMidia};
