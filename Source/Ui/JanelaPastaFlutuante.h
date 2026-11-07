@@ -37,6 +37,8 @@ public:
     // Duplo clique no arquivo: o preview aberto (nullptr se não abriu).
     FloatingPreviewWindow* abrirPreviewParaTeste(const std::string& itemId);
     void mostrarAbaFiltrosParaTeste();  // container: lateral na aba Filters
+    void definirModoArquivosParaTeste(bool arquivos);  // container: Folders | Files
+    int arquivosVisiveisParaTeste() const;            // arquivos que a grade mostra agora
 
 private:
     class Conteudo;

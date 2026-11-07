@@ -69,6 +69,9 @@ juce::String contagemI18n(const char* chave, int n) {
     return i18n::t(juce::String(chave) + (n == 1 ? ".1" : ".n")).replace("{n}", explorer::comMilhares(n, pt));
 }
 
+// Janela do container: Folders | Files. Guardado na sessão — o próximo container abre no último modo escolhido.
+bool gModoArquivosContainer = false;
+
 const juce::String kPonto = juce::String::fromUTF8(" \xc2\xb7 ");
 const juce::String kSeta = juce::String::fromUTF8(" \xe2\x80\xba ");
 
@@ -187,6 +190,11 @@ public:
         addAndMakeVisible(*trilha_);
         seletorVisao_ = std::make_unique<SeletorVisao>(*this);
         addAndMakeVisible(*seletorVisao_);
+        if (!nestId_.empty()) {  // container: Folders | Files
+            modoArquivos_ = gModoArquivosContainer;
+            seletorModo_ = std::make_unique<SeletorModo>(*this);
+            addAndMakeVisible(*seletorModo_);
+        }
 
         // `_no folder`: R (no mosaico) marca; REJECT MARKED manda os marcados com R para o _trash do mapa.
         btnRejeitar_.setButtonText(i18n::t("janela_pasta.rejeitar_marcados"));
@@ -322,6 +330,10 @@ public:
         nav.removeFromRight(12);
         seletorVisao_->setBounds(nav.removeFromRight(132).reduced(0, 1));
         nav.removeFromRight(12);
+        if (seletorModo_ != nullptr) {
+            seletorModo_->setBounds(nav.removeFromRight(156).reduced(0, 1));
+            nav.removeFromRight(12);
+        }
         if (btnOffline_.isVisible()) {
             const auto fonte = explorer::fonte(13.0f, true);
             btnOffline_.setBounds(nav.removeFromRight(explorer::larguraDoTexto(fonte, btnOffline_.getButtonText()) + 32).reduced(0, 1));
@@ -761,6 +773,32 @@ private:
         Conteudo& dono_;
     };
 
+    // ── Folders | Files em pílula (só no container): Files mostra os arquivos sem os cartões de pasta; a árvore da
+    // lateral filtra ────────────────────────────────────────────────────────────────────────────────────────────────
+    class SeletorModo : public juce::Component, public juce::SettableTooltipClient {
+    public:
+        explicit SeletorModo(Conteudo& dono) : dono_(dono) { setTooltip(i18n::t("janela_pasta.modo_dica")); }
+        void paint(juce::Graphics& g) override {
+            const auto c = explorer::cores();
+            const auto r = getLocalBounds().toFloat();
+            g.setColour(c.cartao);
+            g.fillRoundedRectangle(r, r.getHeight() * 0.5f);
+            g.setColour(c.borda);
+            g.drawRoundedRectangle(r.reduced(0.5f), r.getHeight() * 0.5f, 1.0f);
+            const bool arquivos = dono_.modoArquivos_;
+            auto metade = r.reduced(3.0f);
+            const auto esquerda = metade.removeFromLeft(metade.getWidth() * 0.5f);
+            desenharPilula(g, esquerda, !arquivos, i18n::t("janela_pasta.modo_pastas"), false);
+            desenharPilula(g, metade, arquivos, i18n::t("janela_pasta.modo_arquivos"), false);
+        }
+        void mouseUp(const juce::MouseEvent& e) override {
+            dono_.definirModoArquivos(e.x >= getWidth() / 2);
+            repaint();
+        }
+    private:
+        Conteudo& dono_;
+    };
+
     // Janela do container: abas Folders | Filters, "Find folder...", resumo dos filtros, rodapé e a capa do PROJECT.
     void montarLateralComAbas() {
         filtros_->definirComGrupos(true);
@@ -945,6 +983,11 @@ private:
         }
         // Sem subpastas a grade mostra todos os arquivos dela; com elas, só os que estão direto nesta pasta (as pastas viram cartões).
         ids_ = atual->filhos.empty() ? atual->itemIds : atual->itemIdsDiretos;
+        if (modoArquivos_) {  // Files: sem cartões de pasta; todos os arquivos da pasta atual e das subpastas (na raiz, o container)
+            subpastas.clear();
+            ids_.clear();
+            coletarIdsRecursivos(*atual, ids_);
+        }
         if (modoOffline_) {  // a grade filtra os offline
             subpastas.clear();
             ids_.clear();
@@ -961,6 +1004,15 @@ private:
         std::set<std::string> todos;
         coletarIdsRecursivos(arvoreDoMapa_, todos);
         carregarGrade(todos);  // o container inteiro fica carregado: navegar entre as pastas não relê o banco
+    }
+
+    // Folders | Files: muda só o que a grade mostra da pasta atual (o container inteiro já está carregado; nada de banco).
+    void definirModoArquivos(bool ligado) {
+        if (nestId_.empty() || ligado == modoArquivos_) return;
+        modoArquivos_ = ligado;
+        gModoArquivosContainer = ligado;
+        if (seletorModo_ != nullptr) seletorModo_->repaint();
+        if (arvoreDoMapa_.id == nestId_) mostrarPastaDoContainer();
     }
 
     void definirModoOffline(bool ligado) {
@@ -1175,7 +1227,7 @@ private:
         const int sel = static_cast<int>(mosaico_->itensSelecionados().size());
         juce::StringArray partes;
         const auto* atual = acharNo(arvoreDoMapa_, pastaId_);
-        const int nPastas = (atual != nullptr && !nestId_.empty() && !modoOffline_) ? static_cast<int>(atual->filhos.size()) : 0;
+        const int nPastas = (atual != nullptr && !nestId_.empty() && !modoOffline_ && !modoArquivos_) ? static_cast<int>(atual->filhos.size()) : 0;
         if (modoOffline_) {
             int n = 0;
             for (const auto& item : mosaico_->todosItensEmMemoria())
@@ -1313,7 +1365,8 @@ private:
                     if (const auto* achou = pastaDe(f)) return achou;
                 return nullptr;
             };
-            if (const auto* pasta = pastaDe(arvoreDoMapa_)) mesmaPasta = pasta->itemIdsDiretos;
+            if (modoArquivos_ && ids_.count(itemId) > 0) mesmaPasta = ids_;  // Files: os arquivos da grade, não só os da mesma pasta
+            else if (const auto* pasta = pastaDe(arvoreDoMapa_)) mesmaPasta = pasta->itemIdsDiretos;
         }
         janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou, false, std::move(mesmaPasta));
     }
@@ -1340,6 +1393,8 @@ private:
     std::unique_ptr<FichaPanelComponent> ficha_;       // arquivo(s) selecionado(s): a ficha editável do GRID
     std::unique_ptr<Trilha> trilha_;
     std::unique_ptr<SeletorVisao> seletorVisao_;
+    std::unique_ptr<SeletorModo> seletorModo_;  // só no container: Folders | Files
+    bool modoArquivos_ = false;                 // container em Files: sem cartões de pasta, a árvore filtra
     std::unique_ptr<PainelOverlay> overlay_;
     juce::Viewport viewportGrade_, viewportLateral_;
     juce::TextButton btnVoltar_, btnRejeitar_;
@@ -1404,6 +1459,14 @@ void JanelaPastaFlutuante::mostrarArquivoParaTeste(const std::string& itemId) {
 
 void JanelaPastaFlutuante::mostrarAbaFiltrosParaTeste() {
     if (conteudo_ != nullptr && conteudo_->coluna_->comAbas()) conteudo_->definirAbaLateral(Conteudo::ColunaLateral::Aba::Filtros);
+}
+
+void JanelaPastaFlutuante::definirModoArquivosParaTeste(bool arquivos) {
+    if (conteudo_ != nullptr) conteudo_->definirModoArquivos(arquivos);
+}
+
+int JanelaPastaFlutuante::arquivosVisiveisParaTeste() const {
+    return conteudo_ != nullptr ? conteudo_->mosaico_->totalItensVisiveis() : -1;
 }
 
 FloatingPreviewWindow* JanelaPastaFlutuante::abrirPreviewParaTeste(const std::string& itemId) {

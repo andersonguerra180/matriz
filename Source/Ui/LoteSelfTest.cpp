@@ -7849,6 +7849,41 @@ int rodarExplorerVisualSelfTest() {
                 janela->irParaPastaParaTeste(nest, "Acervo Djalma Correa");
                 girar(1500);
                 salvar(*janela, "explorer_raiz_volta");
+                {
+                    // Folders | Files: em Files a grade mostra os arquivos sem os cartões de pasta (na raiz, o container
+                    // inteiro); clicar numa pasta da lateral filtra pelos arquivos dela e das subpastas; Folders volta.
+                    std::set<std::string> todos, daPedra;
+                    std::function<void(const ProjetoAberto::NoArvore&, std::set<std::string>&)> coletar =
+                        [&](const ProjetoAberto::NoArvore& n, std::set<std::string>& out) {
+                            out.insert(n.itemIds.begin(), n.itemIds.end());
+                            out.insert(n.itemIdsDiretos.begin(), n.itemIdsDiretos.end());
+                            for (const auto& f : n.filhos) coletar(f, out);
+                        };
+                    coletar(arvore, todos);
+                    coletar(*pedra, daPedra);
+                    const int raizPastas = janela->arquivosVisiveisParaTeste();
+                    janela->definirModoArquivosParaTeste(true);
+                    girar(1200);
+                    salvar(*janela, "explorer_modo_arquivos");
+                    const int raizArquivos = janela->arquivosVisiveisParaTeste();
+                    const bool okRaiz = raizArquivos == static_cast<int>(todos.size()) && raizPastas < raizArquivos;
+                    std::cout << (okRaiz ? "  OK   " : "  FAIL ") << "Files mode lists every container file at the root (" << raizArquivos << " of "
+                              << todos.size() << "; Folders showed " << raizPastas << ")\n";
+                    if (!okRaiz) ++falhas;
+                    janela->irParaPastaParaTeste(pedra->id, pedra->nome);
+                    girar(1200);
+                    const int naPedra = janela->arquivosVisiveisParaTeste();
+                    const bool okFiltro = naPedra == static_cast<int>(daPedra.size());
+                    std::cout << (okFiltro ? "  OK   " : "  FAIL ") << "Files mode: a folder in the left column filters the files (" << naPedra
+                              << " of " << daPedra.size() << ")\n";
+                    if (!okFiltro) ++falhas;
+                    janela->irParaPastaParaTeste(nest, "Acervo Djalma Correa");
+                    janela->definirModoArquivosParaTeste(false);
+                    girar(1200);
+                    const bool okVolta = janela->arquivosVisiveisParaTeste() == raizPastas;
+                    std::cout << (okVolta ? "  OK   " : "  FAIL ") << "Folders mode comes back as before\n";
+                    if (!okVolta) ++falhas;
+                }
             } else {
                 std::cout << "  FAIL PEDRA DE GUARATIBA not found\n";
                 ++falhas;
