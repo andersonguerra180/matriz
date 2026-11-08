@@ -1320,9 +1320,11 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
     // Mosaico vazio (abertura, snapshot não chegou): não lista na message
     // thread — carrega e reaplica os filtros quando o snapshot chegar.
+    // Snapshot já em voo: só espera por ele (aoMudarConteudoVisivel reaplica). Pedir outro aqui enfileirava uma
+    // releitura completa a cada clique de filtro, e cada uma deixava os filtros esperando de novo.
     if (mosaico_->todosItensEmMemoria().empty() && !reaplicandoFiltrosAposSnapshot_) {
         filtrosAguardandoSnapshot_ = true;
-        mosaico_->recarregar();
+        if (!mosaico_->snapshotPendente()) mosaico_->recarregar();
         return;
     }
     const auto& itens = mosaico_->todosItensEmMemoria();
@@ -1362,10 +1364,13 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         recentesIds.insert(ids.begin(), ids.end());
         // Logo após uma promoção INTAKE -> GRID o snapshot ainda não tem a
         // leva nova: montar o filtro agora a descartaria. Espera o snapshot
-        // (uma vez só; ao reaplicar segue com o que houver).
+        // (uma vez só; ao reaplicar segue com o que houver). Só espera se
+        // falta item da leva: com todos já em memória, filtra na hora mesmo
+        // com um snapshot em voo (num HD disputado ele leva minutos, e cada
+        // clique de filtro/RESET ficava sem efeito até ele chegar).
         if (!reaplicandoFiltrosAposSnapshot_) {
-            bool faltaAlgum = mosaico_->snapshotPendente();
-            if (!faltaAlgum && !recentesIds.empty()) {
+            bool faltaAlgum = false;
+            if (!recentesIds.empty()) {
                 std::set<std::string> emMemoria;
                 for (const auto& item : itens) emMemoria.insert(item.id);
                 for (const auto& id : recentesIds)
@@ -1373,7 +1378,8 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             }
             if (faltaAlgum) {
                 filtrosAguardandoSnapshot_ = true;
-                mosaico_->recarregar();
+                // Snapshot já em voo: espera por ele. Pedir outro enfileirava uma releitura completa por clique.
+                if (!mosaico_->snapshotPendente()) mosaico_->recarregar();
                 return;
             }
         }

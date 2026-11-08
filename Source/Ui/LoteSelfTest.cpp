@@ -4427,6 +4427,30 @@ int rodarLoteSelfTest() {
                "an item-changed event landing mid-flight (e.g. Send to Grid) doesn't strand the toggle — it still shows the new batch with no extra click (" +
                    juce::String(visiveis(cw)) + ")");
 
+        // Recent ligado, leva C toda em memória e um snapshot completo em voo (num HD disputado leva minutos):
+        // um filtro clicado agora vale na hora e não enfileira outra releitura completa. Antes, cada clique
+        // esperava o snapshot e pedia mais um, e o seguinte voltava a esperar (2026-11-08, Bunker Analog).
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+        bombear(200);
+        const int recargasAntes = cw->mosaico_->recargasCompletasIniciadas();
+        cw->mosaico_->recarregar();
+        checar(cw->mosaico_->snapshotPendente(), "a full catalog snapshot is in flight for the Recent + filter check");
+        cw->tipoMidiaSelecionado_ = std::string("video");  // C é áudio: o filtro esvazia a grade
+        cw->aplicarFiltrosAdicionais();
+        checar(visiveis(cw) == 0,
+               "with Recent ON and the batch in memory, a filter clicked while a snapshot is in flight applies at once (" +
+                   juce::String(visiveis(cw)) + " visible, expected 0)");
+        cw->tipoMidiaSelecionado_ = std::nullopt;
+        cw->aplicarFiltrosAdicionais();
+        checar(visiveis(cw) == static_cast<int>(loteC.size()),
+               "clearing that filter mid-flight also applies at once (" + juce::String(visiveis(cw)) + ")");
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+        bombear(300);
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+        checar(cw->mosaico_->recargasCompletasIniciadas() == recargasAntes + 1,
+               "filter clicks during that snapshot don't queue extra full catalog reloads (" +
+                   juce::String(cw->mosaico_->recargasCompletasIniciadas() - recargasAntes) + " started, expected 1)");
+
         janela.reset();
     } catch (const std::exception& e) {
         checar(false, juce::String("recent batch selftest: ") + e.what());
