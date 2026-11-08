@@ -1207,6 +1207,9 @@ public:
     std::weak_ptr<bool> tokenVida() const { return vivo_; }
     std::weak_ptr<bool> tokenVivo() const { return vivo_; }
     void executarProvaEmFundo(std::function<void()> job) { poolProva_.addJob(std::move(job)); }
+    // Leitura da ficha em lote (valores comuns, tags, tipo, geo) fora da message thread. Uma thread só: uma
+    // conexão de leitura, e o pool é esvaziado no destrutor, antes do banco fechar.
+    void agendarLeituraDaFichaLote(std::function<void()> job) { poolFichaLote_.addJob(std::move(job)); }
 
     // Outros itens do projeto cujo conteúdo é idêntico (mesmo SHA-256 de
     // algum arquivo). Inclui o próprio item quando há duplicata, pra a grade
@@ -1556,6 +1559,7 @@ private:
     // Resolução de duplicatas/merge (Fase 4). Também depois de projeto_.
     juce::ThreadPool poolMerge_{1};
     juce::ThreadPool poolProva_{2};
+    juce::ThreadPool poolFichaLote_{1};
     void restaurarRetratoMerge(const matriz::model::merge::Retrato& retrato);
 
     std::map<std::string, std::string> inMemoryRelinkedPaths_;

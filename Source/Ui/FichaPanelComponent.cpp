@@ -4233,6 +4233,76 @@ private:
 // FichaLoteConteudo — Unified batch metadata editor (§ metadata spec & batch editing)
 // ---------------------------------------------------------------------------
 
+namespace {
+// Tudo o que a ficha em lote lê do banco para montar os campos, lido de uma vez FORA da message thread. Montar na
+// message thread fazia uma consulta por campo e várias por item: com seleção grande no disco USB, a tela travava
+// vários segundos (perf.log: 5,5 s só no CREATOR).
+struct DadosFichaLote {
+    MediaCategory cat = MediaCategory::Mixed;
+    bool tiposMisturados = false;
+    std::map<std::string, std::optional<std::string>> valores;  // coluna -> ProjetoAberto::valorComumEmLote
+    bool algumIa = false, algumSemIa = false;
+    std::vector<std::string> tagsComuns;
+    std::unordered_map<std::string, matriz::analytics::AssetGeolocation> geoPorId;
+};
+
+DadosFichaLote lerDadosFichaLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds) {
+    DadosFichaLote d;
+    std::set<std::string> tiposPresentes;
+    bool algumNulo = false;
+    projeto.obterTiposMidiaDosItens(itemIds, tiposPresentes, algumNulo);
+    d.tiposMisturados = tiposPresentes.size() > 1;
+
+    bool primeiro = true;
+    for (const auto& id : itemIds) {
+        std::string tStd, tpMid, codAc;
+        std::string ext;
+        if (auto arq = projeto.arquivoPrincipal(id)) {
+            ext = juce::File(arq->caminhoAbsoluto).getFileExtension().trimCharactersAtStart(".").toLowerCase().toStdString();
+        }
+        projeto.obterItemInfo(id, tStd, tpMid, codAc);
+        MediaCategory itemCat = determinarCategoriaMidia(tpMid, ext);
+        if (primeiro) {
+            d.cat = itemCat;
+            primeiro = false;
+        } else if (d.cat != itemCat) {
+            d.cat = MediaCategory::Mixed;
+            break;
+        }
+    }
+
+    for (const char* coluna : {"dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor", "dc_issued",
+                               "dc_type", "dc_source", "dc_language", "dc_relation", "dc_coverage", "dc_rights", "ano",
+                               "evento_mes", "evento_dia", "lista", "collection_type", "isrc"})
+        d.valores[coluna] = projeto.valorComumEmLote(itemIds, coluna);
+
+    for (const auto& itemId : itemIds) {
+        (itemEhIa(projeto, itemId) ? d.algumIa : d.algumSemIa) = true;
+        if (d.algumIa && d.algumSemIa) break;
+    }
+
+    // Interseção das tags (chave case-insensitive), na grafia do 1º item — ver addTagsLote.
+    std::map<std::string, std::string> comuns;  // chave -> grafia
+    bool primeiroItem = true;
+    for (const auto& id : itemIds) {
+        std::set<std::string> chavesItem;
+        for (const auto& t : projeto.lerTags(id)) {
+            chavesItem.insert(matriz::model::nomes::chave(t));
+            if (primeiroItem) comuns.emplace(matriz::model::nomes::chave(t), t);
+        }
+        if (!primeiroItem)
+            for (auto it = comuns.begin(); it != comuns.end();)
+                it = chavesItem.count(it->first) ? std::next(it) : comuns.erase(it);
+        primeiroItem = false;
+        if (comuns.empty()) break;
+    }
+    for (const auto& [k, grafia] : comuns) d.tagsComuns.push_back(grafia);
+
+    d.geoPorId = matriz::analytics::AssetGeolocationRepository::obterPorAssetIds(projeto.projeto().registroLeitura(), itemIds);
+    return d;
+}
+}  // namespace
+
 class FichaLoteConteudo : public juce::Component {
 public:
     explicit FichaLoteConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
@@ -4336,6 +4406,9 @@ public:
     void mostrarSelecao(std::vector<std::string> itemIds) {
         limpar();
         itemIds_ = std::move(itemIds);
+        dados_ = {};
+        const int geracao = ++(*geracaoCarga_);
+        carregandoDados_ = !itemIds_.empty();
         if (itemIds_.empty()) {
             relayoutEExibir();
             return;
@@ -4343,41 +4416,57 @@ public:
 
         // A contagem "N materials selected" mora na faixa fixa do FichaPanelComponent
         // (junto do Presets), não mais aqui: o card não pode mudar de lugar entre 1 e N.
-
-        std::set<std::string> tiposPresentes;
-        bool algumNulo = false;
-        projeto_.obterTiposMidiaDosItens(itemIds_, tiposPresentes, algumNulo);
-
         // Itens sem tipo (formato que o app não reconhece: .bin, .exe, .dat, .sys...) NÃO pedem mais uma categoria no chute:
         // seguem como "Other", e o usuário preenche na entrada (questionário) ou na ficha de metadados.
-        juce::ignoreUnused(algumNulo);
 
-        // Determine general category across items
-        MediaCategory cat = MediaCategory::Mixed;
-        bool primeiro = true;
-        for (const auto& id : itemIds_) {
-            std::string tStd, tpMid, codAc;
-            std::string ext;
-            if (auto arq = projeto_.arquivoPrincipal(id)) {
-                ext = juce::File(arq->caminhoAbsoluto).getFileExtension().trimCharactersAtStart(".").toLowerCase().toStdString();
-            }
-            projeto_.obterItemInfo(id, tStd, tpMid, codAc);
-            MediaCategory itemCat = determinarCategoriaMidia(tpMid, ext);
-            if (primeiro) {
-                cat = itemCat;
-                primeiro = false;
-            } else if (cat != itemCat) {
-                cat = MediaCategory::Mixed;
-                break;
-            }
-        }
-
-        if (tiposPresentes.size() > 1) {
-            construirMensagemMisto();
-        }
-
-        construirCamposUnificadosLote(cat);
+        // O banco é lido fora da message thread (lerDadosFichaLote); os campos são montados quando os dados chegam.
+        mensagem_ = std::make_unique<juce::Label>();
+        mensagem_->setText(matriz::i18n::t("ficha.lote_carregando"), juce::dontSendNotification);
+        mensagem_->setColour(juce::Label::textColourId, matriz::ui::tema().textoSecundario);
+        mensagem_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteCorpo)));
+        addAndMakeVisible(*mensagem_);
         relayoutEExibir();
+
+        ProjetoAberto* p = &projeto_;
+        const auto ids = itemIds_;
+        const auto geracoes = geracaoCarga_;
+        juce::Component::SafePointer<FichaLoteConteudo> seguro(this);
+        projeto_.agendarLeituraDaFichaLote([p, ids, geracao, geracoes, seguro] {
+            if (geracoes->load() != geracao) return;  // a seleção já mudou: não lê à toa
+            std::shared_ptr<DadosFichaLote> dados;
+            try {
+                dados = std::make_shared<DadosFichaLote>(lerDadosFichaLote(*p, ids));
+            } catch (...) {
+                dados = std::make_shared<DadosFichaLote>();  // campos vazios, como antes num erro de leitura
+            }
+            juce::MessageManager::callAsync([seguro, geracao, dados] {
+                if (seguro == nullptr || seguro->geracaoCarga_->load() != geracao) return;
+                seguro->montarComDados(std::move(*dados));
+            });
+        });
+    }
+
+    void montarComDados(DadosFichaLote dados) {
+        carregandoDados_ = false;
+        mensagem_.reset();
+        dados_ = std::move(dados);
+        if (dados_.tiposMisturados) construirMensagemMisto();
+        construirCamposUnificadosLote(dados_.cat);
+        relayoutEExibir();
+    }
+
+    // Os self-tests leem os campos logo depois de mostrarSelecao: sem esperar a fila, monta agora.
+    void concluirCargaParaTeste() {
+        if (!carregandoDados_) return;
+        ++(*geracaoCarga_);  // descarta a leitura em fundo
+        montarComDados(lerDadosFichaLote(projeto_, itemIds_));
+    }
+
+    // Valor comum já lido em fundo; coluna fora da lista de lerDadosFichaLote cai na consulta direta.
+    std::optional<std::string> valorComumLote(const std::string& coluna) {
+        auto it = dados_.valores.find(coluna);
+        if (it != dados_.valores.end()) return it->second;
+        return projeto_.valorComumEmLote(itemIds_, coluna);
     }
 
     // Mesma ideia de duas passadas do modo de item único — ver comentário
@@ -4845,6 +4934,7 @@ public:
     }
 
     juce::Component* editorDoCampoParaTeste(const std::string& campoId) {
+        concluirCargaParaTeste();
         if (campoId == "geo_coords") return geoLote_.editorCoords.get();
         if (campoId == "geo_address") return geoLote_.editorAddress.get();
         if (campoId == "geo_city") return geoLote_.editorCity.get();
@@ -4871,12 +4961,16 @@ public:
     }
 
     juce::TextButton* botaoTipoMidiaParaTeste(const std::string& tipoId) {
+        concluirCargaParaTeste();
         auto opcoes = listarTiposMidiaDisponiveis(projeto_);
         for (size_t i = 0; i < opcoes.size() && i < botoesTipo_.size(); ++i)
             if (opcoes[i].id == tipoId) return botoesTipo_[i].get();
         return nullptr;
     }
-    juce::TextButton* botaoAplicarParaTeste() { return botaoAplicar_.get(); }
+    juce::TextButton* botaoAplicarParaTeste() {
+        concluirCargaParaTeste();
+        return botaoAplicar_.get();
+    }
 
 private:
     struct LinhaLote {
@@ -5361,7 +5455,7 @@ private:
                 ed->setTextToShowWhenEmpty("Type notes to add/append to all selected items...", juce::Colour(0xff7d766c));
             } else {
                 // Uma consulta para todos os itens (era uma por item, na message thread).
-                const auto valorLote = projeto_.valorComumEmLote(itemIds_, dbColuna);
+                const auto valorLote = valorComumLote(dbColuna);
                 const bool todosIguais = valorLote.has_value();
                 const std::string valorComum = valorLote.value_or("");
                 if (todosIguais && !valorComum.empty()) {
@@ -5410,9 +5504,9 @@ private:
             auto campo = std::make_unique<CampoDataEvento>();
             campo->setFonte(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
             // Uma consulta por parte para todos os itens; qualquer parte diferente = "valores múltiplos".
-            const auto ano = projeto_.valorComumEmLote(itemIds_, "ano");
-            const auto mes = projeto_.valorComumEmLote(itemIds_, "evento_mes");
-            const auto dia = projeto_.valorComumEmLote(itemIds_, "evento_dia");
+            const auto ano = valorComumLote("ano");
+            const auto mes = valorComumLote("evento_mes");
+            const auto dia = valorComumLote("evento_dia");
             linha->dataMista = !ano || !mes || !dia;
             if (!linha->dataMista) {
                 linha->dataComum = {*dia, *mes, *ano};
@@ -5467,11 +5561,7 @@ private:
             if (dbColuna == "ai_generated") {
                 // Estado real (campo OU tags de IA), como no seletor da ficha individual: todos ligados = YES,
                 // todos desligados = NO, mistura = "Multiple values". Opções: 1 = YES, 2 = NO.
-                bool algumLigado = false, algumDesligado = false;
-                for (const auto& itemId : itemIds_) {
-                    (itemEhIa(projeto_, itemId) ? algumLigado : algumDesligado) = true;
-                    if (algumLigado && algumDesligado) break;
-                }
+                const bool algumLigado = dados_.algumIa, algumDesligado = dados_.algumSemIa;  // lidos em lerDadosFichaLote
                 if (algumLigado != algumDesligado) {
                     cb->setSelectedId(algumLigado ? 1 : 2, juce::dontSendNotification);
                     linha->valorSeed = juce::String::fromUTF8(opcoes[algumLigado ? 0 : 1].c_str());
@@ -5488,7 +5578,7 @@ private:
                 return;
             }
             // Uma consulta para todos os itens (era uma por item, na message thread).
-            if (const auto valorLote = projeto_.valorComumEmLote(itemIds_, dbColuna)) valorComum = *valorLote;
+            if (const auto valorLote = valorComumLote(dbColuna)) valorComum = *valorLote;
             else todosIguais = false;
 
             if (todosIguais && !valorComum.empty()) {
@@ -5579,22 +5669,8 @@ private:
             // adicionada é ignorado (adicionarTag é idempotente).
             // Interseção pela chave case-insensitive ("Show" num item e
             // "show" no outro é a mesma tag), mostrada na grafia do 1º item.
-            std::map<std::string, std::string> comuns;  // chave -> grafia
-            bool primeiroItem = true;
-            for (const auto& id : itemIds_) {
-                std::set<std::string> chavesItem;
-                for (const auto& t : projeto_.lerTags(id)) {
-                    chavesItem.insert(matriz::model::nomes::chave(t));
-                    if (primeiroItem) comuns.emplace(matriz::model::nomes::chave(t), t);
-                }
-                if (!primeiroItem)
-                    for (auto it = comuns.begin(); it != comuns.end();)
-                        it = chavesItem.count(it->first) ? std::next(it) : comuns.erase(it);
-                primeiroItem = false;
-                if (comuns.empty()) break;
-            }
-            std::vector<std::string> tagsIniciais;
-            for (const auto& [k, grafia] : comuns) tagsIniciais.push_back(grafia);
+            // A interseção é calculada em lerDadosFichaLote (fora da message thread).
+            const std::vector<std::string> tagsIniciais = dados_.tagsComuns;
 
             auto chips = std::make_unique<TagChipsEditor>();
             chips->setTags(tagsIniciais);
@@ -5797,7 +5873,7 @@ private:
             // Uma consulta em blocos pra seleção inteira, não uma por item —
             // com 1000+ itens isso sozinho já levava quase 3 s pra montar o
             // card.
-            auto geoPorId = matriz::analytics::AssetGeolocationRepository::obterPorAssetIds(projeto_.projeto().registro(), itemIds_);
+            const auto& geoPorId = dados_.geoPorId;  // lido em lerDadosFichaLote
             size_t comGpsEmbutido = 0;
             for (const auto& id : itemIds_) {
                 auto it = geoPorId.find(id);
@@ -6671,6 +6747,9 @@ private:
 
     ProjetoAberto& projeto_;
     std::vector<std::string> itemIds_;
+    DadosFichaLote dados_;
+    bool carregandoDados_ = false;
+    std::shared_ptr<std::atomic<int>> geracaoCarga_ = std::make_shared<std::atomic<int>>(0);
     std::unique_ptr<juce::Label> cabecalho_;
     std::unique_ptr<juce::Label> mensagem_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesTipo_;

@@ -275,6 +275,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"ficha.dc_preenchidos", "{n} filled"},
         {"ficha.um_selecionado", "1 material selected"},
         {"ficha.lote_valores_multiplos", "Multiple values"},
+        {"ficha.lote_carregando", "Reading the selection..."},
         {"ficha.data_evento_confirmar_titulo", "EVENT DATE"},
         {"ficha.data_evento_confirmar", "Are you sure you want to change the EVENT DATE?\n\n{antes}  ->  {depois}\n\n(It came from DATE CREATED, the file's own date.)"},
         {"ficha.data_evento_confirmar_lote", "Are you sure you want to change the EVENT DATE of {n} files to {depois}?\n\nEach file's current date (from DATE CREATED) will be replaced."},

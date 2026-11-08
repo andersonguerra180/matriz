@@ -283,6 +283,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"ficha.dc_preenchidos", "{n} preenchidos"},
         {"ficha.um_selecionado", "1 material selecionado"},
         {"ficha.lote_valores_multiplos", "Múltiplos valores"},
+        {"ficha.lote_carregando", "Lendo a seleção..."},
         {"ficha.data_evento_confirmar_titulo", "DATA DO EVENTO"},
         {"ficha.data_evento_confirmar", "Tem certeza que quer alterar a DATA DO EVENTO?\n\n{antes}  ->  {depois}\n\n(Ela veio da DATA DE CRIAÇÃO, a data do próprio arquivo.)"},
         {"ficha.data_evento_confirmar_lote", "Tem certeza que quer alterar a DATA DO EVENTO de {n} arquivos para {depois}?\n\nA data atual de cada arquivo (vinda da DATA DE CRIAÇÃO) será substituída."},

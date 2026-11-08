@@ -170,6 +170,7 @@ ProjetoAberto::NoArvore construirArvoreOriginalVirtual(matriz::db::Database& db)
 
 ProjetoAberto::~ProjetoAberto() {
     poolProva_.removeAllJobs(true, 2000);
+    poolFichaLote_.removeAllJobs(true, 2000);
     aguardarGravacoesMarcas();
 }
 
