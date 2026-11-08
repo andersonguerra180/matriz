@@ -150,6 +150,12 @@ public:
     // Cópia segura e atômica via SQLite Backup API (nunca corrompe nem trava banco aberto)
     void copiarSeguroPara(const std::string& destinoPath);
 
+    // Descarrega o -wal no banco (checkpoint PASSIVE) numa conexão própria, aberta e fechada
+    // aqui: não pega a trava de nenhuma conexão do app nem espera leitor/escritor. Feita para
+    // rodar FORA da message thread depois de um surto de escrita (fim do ingest). Sem ela, o
+    // próximo COMMIT da message thread faz o auto-checkpoint de tudo o que acumulou.
+    static void descarregarWal(const std::string& path);
+
     // Controle de alterações (dirty flag para revisão do projeto)
     bool estaSujo() const { return sujo_; }
     void marcarSujo() { if (rastrearSujo_) sujo_ = true; }

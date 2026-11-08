@@ -4801,6 +4801,19 @@ bool MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
 
     if (aoConcluirLoteIngestParaTeste) aoConcluirLoteIngestParaTeste(sucessos, erros);
 
+    // Os workers do lote já pararam: descarrega o -wal agora, fora da message thread. Senão o
+    // primeiro COMMIT da message thread (histórico/vault logo abaixo, ou uma edição na ficha)
+    // fazia o auto-checkpoint de tudo o que o lote gravou e a tela travava dezenas de segundos.
+    if (projetoAberto_) {
+        const auto pasta = projetoAberto_->projeto().pasta();
+        const auto registro = pasta.getChildFile("registro.sqlite").getFullPathName().toStdString();
+        const auto indice = pasta.getChildFile("indice.sqlite").getFullPathName().toStdString();
+        juce::Thread::launch([registro, indice] {
+            matriz::db::Database::descarregarWal(registro);
+            matriz::db::Database::descarregarWal(indice);
+        });
+    }
+
     const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     auto passos = std::make_shared<std::vector<PassoFinalizacao>>();
 

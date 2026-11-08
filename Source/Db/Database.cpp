@@ -192,6 +192,10 @@ Database::Database(const std::string& path, Modo modo) {
     // garantia com NORMAL) e evita um fsync a cada COMMIT.
     execScript("PRAGMA journal_mode=WAL;");
     execScript("PRAGMA synchronous=NORMAL;");
+    // Sem limite o -wal nunca encolhe: depois de um ingest grande ficava com centenas de MB
+    // (390 MB no Bunker Analog) e toda leitura pagava por isso. Com o limite, quando o WAL
+    // recomeça do início o arquivo é truncado para no máximo 64 MB.
+    execScript("PRAGMA journal_size_limit=67108864;");
 }
 
 namespace {
@@ -377,6 +381,15 @@ void Database::copiarSeguroPara(const std::string& destinoPath) {
         throw DatabaseError("failed to complete safe database backup: " + err);
     }
     sqlite3_close(pDest);
+}
+
+void Database::descarregarWal(const std::string& path) {
+    sqlite3* db = nullptr;
+    if (sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK) {
+        sqlite3_exec(db, "PRAGMA journal_size_limit=67108864;", nullptr, nullptr, nullptr);
+        sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+    }
+    if (db) sqlite3_close(db);
 }
 
 } // namespace matriz::db
