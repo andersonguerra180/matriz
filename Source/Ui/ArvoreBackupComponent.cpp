@@ -1576,22 +1576,32 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             // Órfãos NÃO vão para o canvas por conta própria (milhares de arquivos soltos por erro de operador):
             // ficam guardados no card fixo _NO FOLDER. Só aparece solto o que o usuário posicionou de propósito
             // (posição salva) ou uma conversa de WhatsApp. Container aprovado no Intake sempre aparece (como no Mini).
-            if (layoutSalvo_.find(chaveLayout(lf.id)) == layoutSalvo_.end() && !lf.ehConversaWhatsapp && !lf.ehContainer) continue;
+            if (layoutSalvo_.find(chaveDoSolto(lf)) == layoutSalvo_.end() && !lf.ehConversaWhatsapp && !lf.ehContainer) continue;
             lf.bounds = juce::Rectangle<int>(looseX, looseY, lf.ehContainer ? largContainer : 126, lf.ehContainer ? altContainer : 138);
             looseY += 148;
             if (looseY > looseStartY + 420) {
                 looseY = looseStartY;
                 looseX += 138;
             }
-            auto salvo = layoutSalvo_.find(chaveLayout(lf.id));
+            auto salvo = layoutSalvo_.find(chaveDoSolto(lf));
             if (salvo != layoutSalvo_.end()) {
                 lf.bounds.setPosition(salvo->second);
             } else if (lf.ehContainer && !pastaPai.empty()) {
-                // Container numa pasta: nasce à direita dela, ligado por uma linha (a posição só é gravada se o usuário o mover).
+                // Container numa pasta: nasce ao lado dela, ligado por uma linha (a posição só é gravada se o usuário o mover
+                // ou num AUTO ARRANGE). Se a pasta tem subpastas, entra na coluna delas, logo abaixo da última — como o
+                // AUTO ARRANGE o põe —, em vez de ficar por cima delas.
                 for (const auto& n : nodes_) {
                     if (n.id != pastaPai) continue;
                     const int k = containersPorPasta[pastaPai]++;
-                    lf.bounds.setPosition(n.bounds.getRight() + 90, n.bounds.getY() + k * (altContainer + 14));
+                    int x = n.bounds.getRight() + 90, y = n.bounds.getY();
+                    bool temFilha = false;
+                    for (const auto& filha : nodes_) {
+                        if (filha.pastaPaiId != pastaPai) continue;
+                        x = temFilha ? std::min(x, filha.bounds.getX()) : filha.bounds.getX();
+                        y = temFilha ? std::max(y, filha.bounds.getBottom() + 14) : filha.bounds.getBottom() + 14;
+                        temFilha = true;
+                    }
+                    lf.bounds.setPosition(x, y + k * (altContainer + 14));
                     break;
                 }
             } else if (lf.ehContainer) {
@@ -1684,7 +1694,7 @@ void ArvoreBackupComponent::posicionarContainersNovos() {
 
 // Auto-arranjo completo dos nodes_ atuais: posições E tamanhos (por nível), respeitando o multiplicador
 // manual de cada pasta. Não persiste nada. false = nada a fazer / canvas sem tamanho.
-bool ArvoreBackupComponent::calcularEAplicarAutoArranjo() {
+bool ArvoreBackupComponent::calcularEAplicarAutoArranjo(bool comContainers) {
     if (nodes_.empty()) return false;
     const auto canvas = areaCanvas();
     if (canvas.getWidth() < 200 || canvas.getHeight() < 150) return false;
@@ -1692,6 +1702,20 @@ bool ArvoreBackupComponent::calcularEAplicarAutoArranjo() {
     std::vector<layoutarvore::NoTam> nos;
     nos.reserve(nodes_.size());
     for (const auto& n : nodes_) nos.push_back({n.id, n.pastaPaiId, static_cast<double>(n.escalaManual)});
+    // Containers ligados a uma pasta mostrada: filhos-folha dela, com o tamanho do próprio cartão (o id leva um
+    // prefixo para não colidir com o de uma pasta).
+    const std::string kPrefixoContainer = "container:";
+    if (comContainers) {
+        std::set<std::string> pastasMostradas;
+        for (const auto& n : nodes_) pastasMostradas.insert(n.id);
+        for (const auto& lf : looseFiles_) {
+            if (!lf.ehContainer || lf.pastaPaiId.empty() || !pastasMostradas.count(lf.pastaPaiId)) continue;
+            layoutarvore::NoTam no{kPrefixoContainer + lf.id, lf.pastaPaiId, 1.0};
+            no.larguraFixa = lf.bounds.getWidth();
+            no.alturaFixa = lf.bounds.getHeight();
+            nos.push_back(no);
+        }
+    }
 
     layoutarvore::ParametrosAuto parametros;
     parametros.areaLargura = canvas.getWidth();
@@ -1710,6 +1734,9 @@ bool ArvoreBackupComponent::calcularEAplicarAutoArranjo() {
         n.boundsOriginal = juce::Rectangle<int>(it->second.x, it->second.y, it->second.w, it->second.h);
         n.bounds = n.boundsOriginal;
     }
+    if (comContainers)
+        for (auto& lf : looseFiles_)
+            if (auto it = r.caixas.find(kPrefixoContainer + lf.id); it != r.caixas.end()) lf.bounds.setPosition(it->second.x, it->second.y);
     return true;
 }
 
@@ -2391,7 +2418,7 @@ void ArvoreBackupComponent::autoArranjarMapaInteiro(bool registrarUndo) {
     // Só reorganiza as POSIÇÕES (e o fator de cartão que faz tudo caber): o multiplicador que o usuário
     // ajustou em cada pasta é mantido; a escala global volta a 100%.
     escalaTamanho_ = 1.0f;
-    if (!calcularEAplicarAutoArranjo()) return;
+    if (!calcularEAplicarAutoArranjo(true)) return;
 
     std::vector<int> indices;
     for (size_t i = 0; i < nodes_.size(); ++i) indices.push_back(static_cast<int>(i));
@@ -2402,6 +2429,24 @@ void ArvoreBackupComponent::autoArranjarMapaInteiro(bool registrarUndo) {
     zoom_ = 1.0f;
     panOffset_ = {0.0f, 0.0f};
     aplicarEscalaTamanho(escalaTamanho_);
+    // Os containers ligados às pastas foram para o lado delas. As pastas são desenhadas com o SPREAD aplicado em torno
+    // do pivot (aplicarEscalaTamanho); o container recebe o mesmo deslocamento do centro (sem mudar de tamanho), e a
+    // posição fica guardada (por pasta) e acompanha a pasta.
+    if (!mapaAtivoEhOriginal()) {
+        std::set<std::string> pastasMostradas;
+        for (const auto& n : nodes_) pastasMostradas.insert(n.id);
+        bool gravou = false;
+        for (auto& lf : looseFiles_) {
+            if (!lf.ehContainer || lf.pastaPaiId.empty() || !pastasMostradas.count(lf.pastaPaiId)) continue;
+            const auto c = lf.bounds.getCentre().toFloat();
+            const juce::Point<float> novoCentro(pivotEscala_.x + (c.x - pivotEscala_.x) * escalaTamanho_ * espalharX_,
+                                                pivotEscala_.y + (c.y - pivotEscala_.y) * escalaTamanho_ * espalharY_);
+            lf.bounds.setCentre(novoCentro.toInt());
+            layoutSalvo_[chaveDoSolto(lf)] = lf.bounds.getPosition();
+            gravou = true;
+        }
+        if (gravou) gravarLayoutSalvo();
+    }
     sincronizarSlider();
 }
 
@@ -3852,7 +3897,7 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
                 ids.push_back(looseFiles_[static_cast<size_t>(looseFileDragIndice_)].id);
             }
             projeto_.moverItensParaTrash(ids, mapaAtivoId_);
-            for (const auto& id : ids) layoutSalvo_.erase(chaveLayout(id));
+            for (const auto& id : ids) esquecerPosicaoDoSolto(id);
             gravarLayoutSalvo();
             soltosArrastoIniciais_.clear();
             looseFileDragIndice_ = -1;
@@ -3958,7 +4003,7 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
         for (int idx : indices) {
             if (idx < 0 || idx >= static_cast<int>(nodes_.size())) continue;
             for (const auto& lf : looseFiles_)
-                if (lf.ehContainer && lf.pastaPaiId == nodes_[static_cast<size_t>(idx)].id) { layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition(); gravou = true; }
+                if (lf.ehContainer && lf.pastaPaiId == nodes_[static_cast<size_t>(idx)].id) { layoutSalvo_[chaveDoSolto(lf)] = lf.bounds.getPosition(); gravou = true; }
         }
         if (gravou) gravarLayoutSalvo();
     }
@@ -4026,7 +4071,7 @@ bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
             return true;
         } else if (!selectedLooseIds.empty()) {
             projeto_.moverItensParaTrash(selectedLooseIds, mapaAtivoId_);
-            for (const auto& id : selectedLooseIds) layoutSalvo_.erase(chaveLayout(id));
+            for (const auto& id : selectedLooseIds) esquecerPosicaoDoSolto(id);
             gravarLayoutSalvo();
             recarregar();
             return true;
@@ -5078,6 +5123,21 @@ juce::File ArvoreBackupComponent::arquivoLayout() const {
     return projeto_.projeto().pasta().getChildFile("cards_layout.json");
 }
 
+std::string ArvoreBackupComponent::chaveDoSolto(const LooseFileNode& lf) const {
+    if (lf.ehContainer && !lf.pastaPaiId.empty()) return chaveLayout(lf.id) + "@" + lf.pastaPaiId;
+    return chaveLayout(lf.id);
+}
+
+bool ArvoreBackupComponent::esquecerPosicaoDoSolto(const std::string& itemId) {
+    const std::string base = chaveLayout(itemId), porPasta = base + "@";
+    bool havia = layoutSalvo_.erase(base) > 0;
+    for (auto it = layoutSalvo_.lower_bound(porPasta); it != layoutSalvo_.end() && it->first.compare(0, porPasta.size(), porPasta) == 0;) {
+        it = layoutSalvo_.erase(it);
+        havia = true;
+    }
+    return havia;
+}
+
 void ArvoreBackupComponent::carregarLayoutSalvo() {
     layoutSalvo_.clear();
     containersComoPastas_ = false;
@@ -5136,16 +5196,16 @@ void ArvoreBackupComponent::concluirArrastoDeArquivoSolto(juce::Point<float> can
         std::string targetPastaId = nodes_[static_cast<size_t>(targetNodeIndex)].id;
         projeto_.adicionarItensAPasta(ids, targetPastaId);
         bool mudouLayout = false;
-        for (const auto& id : ids) mudouLayout |= layoutSalvo_.erase(chaveLayout(id)) > 0;
+        for (const auto& id : ids) mudouLayout |= esquecerPosicaoDoSolto(id);
         if (mudouLayout) gravarLayoutSalvo();
         recarregar();
     } else {
         if (soltosArrastoIniciais_.size() > 1) {
             for (const auto& [k, ini] : soltosArrastoIniciais_)
-                if (k < looseFiles_.size()) layoutSalvo_[chaveLayout(looseFiles_[k].id)] = looseFiles_[k].bounds.getPosition();
+                if (k < looseFiles_.size()) layoutSalvo_[chaveDoSolto(looseFiles_[k])] = looseFiles_[k].bounds.getPosition();
         } else {
             const auto& lf = looseFiles_[static_cast<size_t>(looseFileDragIndice_)];
-            layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+            layoutSalvo_[chaveDoSolto(lf)] = lf.bounds.getPosition();
         }
         gravarLayoutSalvo();
     }
@@ -5227,7 +5287,7 @@ bool ArvoreBackupComponent::aplicarMovimentoDeSoltos(const std::vector<std::stri
     if (mapaAtivoEhOriginal()) return false;
     projeto_.adicionarItensAPasta(ids, pastaId);
     bool mudou = false;
-    for (const auto& id : ids) mudou |= layoutSalvo_.erase(chaveLayout(id)) > 0;
+    for (const auto& id : ids) mudou |= esquecerPosicaoDoSolto(id);
     if (mudou) gravarLayoutSalvo();
     recarregar();
     return true;
@@ -5259,7 +5319,7 @@ void ArvoreBackupComponent::adicionarSubmenuDePastas(juce::PopupMenu& menu, cons
 void ArvoreBackupComponent::removerSoltosDoBackup(const std::vector<std::string>& ids) {
     if (ids.empty()) return;
     projeto_.removerItensDoProjeto(ids);
-    for (const auto& id : ids) layoutSalvo_.erase(chaveLayout(id));
+    for (const auto& id : ids) esquecerPosicaoDoSolto(id);
     gravarLayoutSalvo();
     recarregar();
 }
@@ -5360,7 +5420,7 @@ void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
     menu.addItem(i18n::t("arvore_backup.mover_para_trash"), !mapaAtivoEhOriginal(), false, [seguro, ids] {
         if (!seguro) return;
         seguro->projeto_.moverItensParaTrash(ids, seguro->mapaAtivoId_);
-        for (const auto& id : ids) seguro->layoutSalvo_.erase(seguro->chaveLayout(id));
+        for (const auto& id : ids) seguro->esquecerPosicaoDoSolto(id);
         seguro->gravarLayoutSalvo();
         seguro->recarregar();
     });
@@ -5422,7 +5482,7 @@ void ArvoreBackupComponent::arranjarSoltosSelecionados() {
     }
     for (size_t k = 0; k < sel.size(); ++k) {
         looseFiles_[sel[k]].bounds.setPosition(pos[k]);
-        layoutSalvo_[chaveLayout(looseFiles_[sel[k]].id)] = pos[k];
+        layoutSalvo_[chaveDoSolto(looseFiles_[sel[k]])] = pos[k];
     }
     gravarLayoutSalvo();
     repaint();
@@ -5442,7 +5502,7 @@ void ArvoreBackupComponent::reunirArquivosSoltos() {
         auto& lf = looseFiles_[static_cast<size_t>(i)];
         lf.bounds = juce::Rectangle<int>(origemX + (i % colunas) * celulaW, origemY + (i / colunas) * celulaH, 112, 124);
         lf.selecionado = true;
-        layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+        layoutSalvo_[chaveDoSolto(lf)] = lf.bounds.getPosition();
     }
     gravarLayoutSalvo();
     ancoraTipo_ = 1;

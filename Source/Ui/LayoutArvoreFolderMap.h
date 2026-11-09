@@ -137,6 +137,9 @@ struct NoTam {
     std::string id;
     std::string paiId;  // "" ou id ausente da lista = raiz
     double escala = 1.0;
+    // > 0: cartão de tamanho fixo em px (ex.: PROJECT CONTAINER ligado à pasta) — não cresce com o nível, o fator nem a escala;
+    // entra na faixa do pai como qualquer filho, então fica ao lado dele sem sobrepor nada.
+    int larguraFixa = 0, alturaFixa = 0;
 };
 
 struct CaixaAuto {
@@ -195,12 +198,19 @@ inline ResultadoAuto calcularAutoArranjo(const std::vector<NoTam>& nos, const Pa
         w0[static_cast<size_t>(i)] = p.larguraBase * e;
         h0[static_cast<size_t>(i)] = p.alturaBase * e;
     }
+    auto fixo = [&](int i) { const auto& no = nos[static_cast<size_t>(i)]; return no.larguraFixa > 0 && no.alturaFixa > 0; };
+    // Tamanho final no fator F: o fixo não escala.
+    auto larguraEm = [&](int i, double F) { return fixo(i) ? static_cast<double>(nos[static_cast<size_t>(i)].larguraFixa) : w0[static_cast<size_t>(i)] * F; };
+    auto alturaEm = [&](int i, double F) { return fixo(i) ? static_cast<double>(nos[static_cast<size_t>(i)].alturaFixa) : h0[static_cast<size_t>(i)] * F; };
     const int colunas = nivelMax + 1;
-    std::vector<double> larguraColuna(static_cast<size_t>(colunas), 0.0);
-    for (int i = 0; i < n; ++i) {
-        auto& c = larguraColuna[static_cast<size_t>(nivel[static_cast<size_t>(i)])];
-        c = std::max(c, w0[static_cast<size_t>(i)]);
-    }
+    auto largurasDasColunas = [&](double F) {
+        std::vector<double> c(static_cast<size_t>(colunas), 0.0);
+        for (int i = 0; i < n; ++i) {
+            auto& col = c[static_cast<size_t>(nivel[static_cast<size_t>(i)])];
+            col = std::max(col, larguraEm(i, F));
+        }
+        return c;
+    };
 
     struct Disposicao {
         std::vector<double> x, y;
@@ -208,16 +218,17 @@ inline ResultadoAuto calcularAutoArranjo(const std::vector<NoTam>& nos, const Pa
     };
     auto dispor = [&](double F, double extraX, double extraY) {
         const double gx = p.gapXBase * F + extraX, gy = p.gapYBase * F + extraY;
+        const auto larguraColuna = largurasDasColunas(F);
         std::vector<double> colX(static_cast<size_t>(colunas), 0.0);
         for (int d = 1; d < colunas; ++d)
-            colX[static_cast<size_t>(d)] = colX[static_cast<size_t>(d - 1)] + larguraColuna[static_cast<size_t>(d - 1)] * F + gx;
+            colX[static_cast<size_t>(d)] = colX[static_cast<size_t>(d - 1)] + larguraColuna[static_cast<size_t>(d - 1)] + gx;
 
         std::vector<double> faixa(static_cast<size_t>(n), 0.0);
         std::function<double(int)> alturaFaixa = [&](int i) -> double {
             double total = 0.0;
             const auto& fs = filhos[static_cast<size_t>(i)];
             for (size_t k = 0; k < fs.size(); ++k) total += alturaFaixa(fs[k]) + (k > 0 ? gy : 0.0);
-            return faixa[static_cast<size_t>(i)] = std::max(total, h0[static_cast<size_t>(i)] * F);
+            return faixa[static_cast<size_t>(i)] = std::max(total, alturaEm(i, F));
         };
 
         Disposicao d;
@@ -225,7 +236,7 @@ inline ResultadoAuto calcularAutoArranjo(const std::vector<NoTam>& nos, const Pa
         d.y.assign(static_cast<size_t>(n), 0.0);
         std::function<double(int, double)> colocar = [&](int i, double topo) -> double {  // devolve o centro y do nó
             const auto& fs = filhos[static_cast<size_t>(i)];
-            const double h = h0[static_cast<size_t>(i)] * F;
+            const double h = alturaEm(i, F);
             d.x[static_cast<size_t>(i)] = colX[static_cast<size_t>(nivel[static_cast<size_t>(i)])];
             if (fs.empty()) {
                 d.y[static_cast<size_t>(i)] = topo + (faixa[static_cast<size_t>(i)] - h) / 2.0;
@@ -254,7 +265,7 @@ inline ResultadoAuto calcularAutoArranjo(const std::vector<NoTam>& nos, const Pa
             topo += faixa[static_cast<size_t>(raizes[k])] + gy;
         }
         d.altura = topo - gy;
-        d.largura = colX[static_cast<size_t>(colunas - 1)] + larguraColuna[static_cast<size_t>(colunas - 1)] * F;
+        d.largura = colX[static_cast<size_t>(colunas - 1)] + larguraColuna[static_cast<size_t>(colunas - 1)];
         return d;
     };
 
@@ -269,7 +280,7 @@ inline ResultadoAuto calcularAutoArranjo(const std::vector<NoTam>& nos, const Pa
     auto atual = dispor(F, 0.0, 0.0);
     if (colunas > 1 && atual.largura < dispW) {
         double mediaLargura = 0.0;
-        for (double c : larguraColuna) mediaLargura += c * F;
+        for (double c : largurasDasColunas(F)) mediaLargura += c;
         mediaLargura /= colunas;
         extraX = std::min((dispW - atual.largura) / (colunas - 1), 1.2 * mediaLargura);
     }
@@ -290,8 +301,8 @@ inline ResultadoAuto calcularAutoArranjo(const std::vector<NoTam>& nos, const Pa
         CaixaAuto c;
         c.x = p.margem + static_cast<int>(std::lround(final_.x[static_cast<size_t>(i)]));
         c.y = p.margem + static_cast<int>(std::lround(final_.y[static_cast<size_t>(i)]));
-        c.w = std::max(8, static_cast<int>(std::lround(w0[static_cast<size_t>(i)] * F)));  // sem piso grande: estouraria os espaços
-        c.h = std::max(6, static_cast<int>(std::lround(h0[static_cast<size_t>(i)] * F)));
+        c.w = std::max(8, static_cast<int>(std::lround(larguraEm(i, F))));  // sem piso grande: estouraria os espaços
+        c.h = std::max(6, static_cast<int>(std::lround(alturaEm(i, F))));
         r.caixas[no.id] = c;
         r.nivel[no.id] = nivel[static_cast<size_t>(i)];
     }

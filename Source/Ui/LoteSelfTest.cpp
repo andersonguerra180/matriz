@@ -2639,6 +2639,27 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         checar(pos2.at("solto").y >= 300 + 84, "a new root goes below the saved folders instead of on top of them");
     }
 
+    {   // AUTO ARRANGE com cartão de tamanho fixo (PROJECT CONTAINER): filho-folha da pasta, tamanho próprio, sem sobrepor.
+        namespace la = matriz::ui::layoutarvore;
+        std::vector<la::NoTam> nos = {{"pai", "", 1.0}, {"f1", "pai", 1.0}, {"f2", "pai", 1.0}, {"outra", "", 1.0}};
+        la::NoTam cont{"cont", "pai", 1.0};
+        cont.larguraFixa = 126;
+        cont.alturaFixa = 138;
+        nos.push_back(cont);
+        la::ParametrosAuto parAuto;
+        parAuto.areaLargura = 1400;
+        parAuto.areaAltura = 900;
+        const auto r = la::calcularAutoArranjo(nos, parAuto);
+        const auto& c = r.caixas.at("cont");
+        checar(c.w == 126 && c.h == 138, "a fixed-size card keeps its own size in the auto-arrange");
+        checar(c.x > r.caixas.at("pai").direita() && c.x == r.caixas.at("f1").x, "and sits in the column right of its parent, with its siblings");
+        bool sobra = false;
+        for (const auto& [a, ca] : r.caixas)
+            for (const auto& [b, cb] : r.caixas)
+                if (a < b && la::caixasSeSobrepoem(ca, cb)) sobra = true;
+        checar(!sobra, "and nothing overlaps");
+    }
+
     std::cout << "\n-- METADATA: Unknown = no EVENT DATE (item A) + auto-organize (item F) --\n";
     juce::File raizAj = juce::File::getSpecialLocation(juce::File::tempDirectory)
                             .getChildFile("matriz_lote_ajustes_" + juce::Uuid().toDashedString());
@@ -4978,6 +4999,69 @@ int rodarLoteSelfTest() {
             checar(noOriginal == 2, "the read-only ORIGINAL map also shows both containers (" + juce::String(noOriginal) + ")");
             arvore.mapaAtivoId_ = mapaPadrao;
             arvore.recarregar();
+
+            // Container que estava solto (posição salva no canto, empilhado com os outros) e entrou na pasta por outro
+            // caminho que não o arrasto (IMPORT FROM _no folder, MOVE TO FOLDER, regra AUTO): nasce ao lado da pasta-pai,
+            // não fica preso à posição antiga. (Antes ficava longe da pasta, amontoado com os outros containers.)
+            auto acharFita = [&]() -> const ArvoreBackupComponent::LooseFileNode* {
+                for (const auto& lf : arvore.looseFiles_) if (lf.nestId == nestFita) return &lf;
+                return nullptr;
+            };
+            const auto* fitaSolta = acharFita();
+            checar(fitaSolta != nullptr && arvore.layoutSalvo_.count(arvore.chaveLayout(fitaSolta->id)) == 1,
+                   "setup: the loose tape container has a saved position in the corner");
+            pa.adicionarItensAPasta(fita, pasta);
+            arvore.recarregar();
+            int iPasta = -1;
+            for (size_t i = 0; i < arvore.nodes_.size(); ++i) if (arvore.nodes_[i].id == pasta) iPasta = static_cast<int>(i);
+            const auto* fitaLigada = acharFita();
+            if (iPasta >= 0 && fitaLigada != nullptr) {
+                const auto caixaPasta = arvore.nodes_[static_cast<size_t>(iPasta)].bounds;
+                checar(fitaLigada->pastaPaiId == pasta && fitaLigada->bounds.getX() >= caixaPasta.getRight() &&
+                           fitaLigada->bounds.getX() <= caixaPasta.getRight() + 200 &&
+                           std::abs(fitaLigada->bounds.getY() - caixaPasta.getY()) <= 400,
+                       "a container that entered a folder without being dragged sits next to its parent folder, not in the old corner spot (" +
+                           juce::String(fitaLigada->bounds.getX()) + "," + juce::String(fitaLigada->bounds.getY()) + " vs folder " +
+                           juce::String(caixaPasta.getRight()) + "," + juce::String(caixaPasta.getY()) + ")");
+            } else {
+                checar(false, "the tape container is on the canvas, linked to the folder");
+            }
+
+            // AUTO ARRANGE: os containers ligados entram na árvore como filhos da pasta — ao lado dela, na coluna das
+            // subpastas, sem nada por cima de nada — e a posição fica guardada por pasta.
+            pa.criarPastaAcervo("Sub", pasta, mapaPadrao);
+            arvore.recarregar();
+            arvore.autoArranjarMapaInteiro();
+            iPasta = -1;
+            for (size_t i = 0; i < arvore.nodes_.size(); ++i) if (arvore.nodes_[i].id == pasta) iPasta = static_cast<int>(i);
+            std::vector<juce::Rectangle<int>> caixas;
+            for (const auto& n : arvore.nodes_) caixas.push_back(n.bounds);
+            int ligados = 0, aoLado = 0, guardados = 0;
+            for (const auto& lf : arvore.looseFiles_) {
+                if (!lf.ehContainer) continue;
+                caixas.push_back(lf.bounds);
+                if (lf.pastaPaiId != pasta || iPasta < 0) continue;
+                ++ligados;
+                const auto caixaPasta = arvore.nodes_[static_cast<size_t>(iPasta)].bounds;
+                if (lf.bounds.getX() > caixaPasta.getRight() && lf.bounds.getX() < caixaPasta.getRight() + 400) ++aoLado;
+                if (auto it = arvore.layoutSalvo_.find(arvore.chaveDoSolto(lf)); it != arvore.layoutSalvo_.end() && it->second == lf.bounds.getPosition())
+                    ++guardados;
+            }
+            bool nadaPorCima = true;
+            for (size_t i = 0; i < caixas.size(); ++i)
+                for (size_t j = i + 1; j < caixas.size(); ++j)
+                    if (caixas[i].intersects(caixas[j])) nadaPorCima = false;
+            checar(ligados == 2 && aoLado == 2, "AUTO ARRANGE puts each linked container right next to its folder (" + juce::String(aoLado) + "/" +
+                                                    juce::String(ligados) + ")");
+            checar(nadaPorCima, "and no container overlaps a folder or another container");
+            checar(guardados == 2, "and their positions are saved for that folder");
+            std::map<std::string, juce::Point<int>> depoisDoArranjo;
+            for (const auto& lf : arvore.looseFiles_) if (lf.ehContainer) depoisDoArranjo[lf.id] = lf.bounds.getPosition();
+            arvore.recarregar();
+            bool mantidos = true;
+            for (const auto& lf : arvore.looseFiles_)
+                if (lf.ehContainer && depoisDoArranjo.count(lf.id) && depoisDoArranjo[lf.id] != lf.bounds.getPosition()) mantidos = false;
+            checar(mantidos, "reloading the map keeps the containers where AUTO ARRANGE put them");
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("folder map containers selftest: ") + e.what());

@@ -363,7 +363,8 @@ private:
     bool escalasSujas_ = false;
     std::string assinaturaSelecaoSlider_;
     void recalcularPivot();
-    bool calcularEAplicarAutoArranjo();
+    // comContainers: os CONTAINERS ligados a uma pasta entram como filhos dela (ficam ao lado, sem sobrepor nada).
+    bool calcularEAplicarAutoArranjo(bool comContainers = false);
     void sincronizarSlider();
     void aplicarSlider();
     void redefinirTamanhos();
@@ -378,6 +379,12 @@ private:
     void carregarLayoutSalvo();
     void gravarLayoutSalvo();
     std::string chaveLayout(const std::string& idNo) const { return mapaAtivoId_ + "|" + idNo; }
+    // Posição de um arquivo/container solto. CONTAINER ligado a uma pasta guarda a posição POR PASTA ("...|id@pasta"): ao
+    // entrar numa pasta (ou trocar de pasta) por qualquer caminho, a posição antiga — de quando estava solto, empilhado no
+    // canto — deixa de valer e ele nasce ao lado da pasta-pai.
+    std::string chaveDoSolto(const LooseFileNode& lf) const;
+    // Esquece todas as posições guardadas do item (solta e por pasta). true = havia alguma.
+    bool esquecerPosicaoDoSolto(const std::string& itemId);
     void concluirArrastoDeArquivoSolto(juce::Point<float> canvasRelease);
     int pastaAlvoDoDrop(juce::Point<float> cursorCanvas, juce::Rectangle<int> iconeCanvas) const;
 
