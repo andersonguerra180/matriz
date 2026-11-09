@@ -3647,8 +3647,10 @@ void MainComponent::extrairMidiaWhatsapp(const std::string& midiaItemId, const s
     ProjetoAberto* proj = projetoAberto_.get();
     processarLoteEmBackground({copia}, "", "", [seguro, proj, pastas](const std::vector<std::string>& novos) {
         if (!seguro || seguro->projetoAberto_.get() != proj) return;
+        bool recusou = false;
         for (const auto& id : novos)
-            for (const auto& pasta : pastas) proj->adicionarItemAPastaSemRemoverOutras(id, pasta);
+            for (const auto& pasta : pastas) recusou = !proj->adicionarItemAPastaSemRemoverOutras(id, pasta) || recusou;
+        if (recusou) ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.subject_lista_uma_pasta"));
         if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
         if (seguro->intakeWorkspace_) seguro->intakeWorkspace_->recarregar();
         if (seguro->mosaico_) seguro->mosaico_->recarregar();

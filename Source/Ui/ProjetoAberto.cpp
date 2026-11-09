@@ -3961,7 +3961,10 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
                     }
                     case N::Artista: segs.push_back(segmentoDePastaAuto(texto(2), "No creator")); break;
                     case N::ContentType: segs.push_back(segmentoDePastaAuto(texto(3), "No content")); break;
-                    case N::Subject: segs.push_back(segmentoDePastaAuto(texto(4), "No subject")); break;
+                    // Só o 1º SUBJECT (mesma regra do backup, primeiroSubject).
+                    case N::Subject:
+                        segs.push_back(segmentoDePastaAuto(matriz::consolidacao::primeiroSubject(texto(4)), "No subject"));
+                        break;
                     // LIST da ficha (mesmo "No list" do backup, Consolidacao.cpp).
                     case N::Lista: segs.push_back(segmentoDePastaAuto(texto(8), "No list")); break;
                     // PARENT FOLDER: a pasta onde o arquivo estava na origem (mesma regra do backup).
@@ -5358,10 +5361,42 @@ void ProjetoAberto::aplicarListaPelasPastas(const std::vector<std::pair<std::str
     finalizarGrupoUndo();
 }
 
-void ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId) {
-    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
-    if (!projeto_ || itemId.empty() || pastaId.empty()) return;
+bool ProjetoAberto::pastaEmZonaDeSubjectOuLista(const std::string& pastaId) const {
+    if (!projeto_) return false;
+    using N = matriz::consolidacao::NivelHierarquia;
+    std::string atual = pastaId;
+    for (int guarda = 0; !atual.empty() && guarda < 64; ++guarda) {
+        auto st = projeto_->registro().prepare("SELECT pasta_pai_id, COALESCE(regra_organizacao, '') FROM acervo_pasta WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(atual));
+        if (!st.step()) return false;
+        const std::string regra = st.columnText(1);
+        if (!regra.empty() && !regraEhAuto(juce::String(regra))) {
+            for (auto n : matriz::consolidacao::hierarquiaDeCsv(regra))
+                if (n == N::Subject || n == N::Lista) return true;
+        }
+        atual = st.columnIsNull(0) ? std::string() : st.columnText(0);
+    }
+    return false;
+}
+
+bool ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
+    if (!projeto_ || itemId.empty() || pastaId.empty()) return false;
+    // Um arquivo não fica em dois SUBJECT/LIST: se a pasta nova está numa pasta organizada por SUBJECT/LIST e o
+    // item já ocupa outra pasta assim no mesmo mapa, recusa (mover e auto-organizar já tiram das outras).
+    if (pastaEmZonaDeSubjectOuLista(pastaId)) {
+        auto st = projeto_->registro().prepare(
+            "SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ? AND pasta_id <> ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        st.bind(2, matriz::db::Value::of(mapaIdDaPasta(pastaId)));
+        st.bind(3, matriz::db::Value::of(pastaId));
+        std::vector<std::string> outras;
+        while (st.step()) outras.push_back(st.columnText(0));
+        for (const auto& outra : outras)
+            if (pastaEmZonaDeSubjectOuLista(outra)) return false;
+    }
     inserirItemPastaInterno(itemId, pastaId, matriz::model::agoraIso8601());
+    return true;
 }
 
 std::optional<std::string> ProjetoAberto::localizarItemPorCodigo(const std::string& codigoAcervo) const {

@@ -6,6 +6,7 @@
 #include "../Model/Project.h"
 #include "../Model/ProjectLog.h"
 #include "../Model/Inbox.h"
+#include "../Model/NomesCanonicos.h"
 #include "../Preservation/Preservation.h"
 #include "../Vault/Resolucao.h"
 #include "Mascara.h"
@@ -306,6 +307,11 @@ juce::String pastaMaeDeOrigem(const juce::String& caminhoAbsoluto, const juce::S
     };
     const juce::String nome = paiDe(caminhoAbsoluto);
     return nome.isNotEmpty() ? nome : paiDe(caminhoRelativo);
+}
+
+juce::String primeiroSubject(const juce::String& dcSubject) {
+    const auto partes = matriz::model::nomes::dividirSubjects(dcSubject.toStdString());
+    return partes.empty() ? juce::String() : juce::String::fromUTF8(partes.front().c_str()).trim();
 }
 
 juce::String NomesDePastaMae::nomePara(const juce::String& escopo, const juce::String& nomeBruto, const juce::String& nomeSeguro,
@@ -793,7 +799,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     // correção de UI): organiza pelo mesmo dc_subject da
                     // ficha (ASSET & USER / DUBLIN CORE, já sincronizados).
                     auto it = ctx.camposFicha.find("dc_subject");
-                    juce::String assunto = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
+                    // Só o 1º SUBJECT (o campo é a lista de keywords): o arquivo nunca cai em dois SUBJECTs.
+                    juce::String assunto = it == ctx.camposFicha.end() ? juce::String() : primeiroSubject(juce::String(it->second));
                     segmentosPasta.add(segmentoSeguro(assunto, "No subject"));
                     break;
                 }

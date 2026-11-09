@@ -619,6 +619,35 @@ int rodarRebuildSelfTest() {
             checar(a == "100CANON" && b == "100CANON_S02" && c == "100CANON",
                    "parent folder: homonym from another source -> 100CANON_S02; same source+path keeps 100CANON");
 
+            // SUBJECT com várias keywords: a pasta usa só a primeira (backup e árvore).
+            checar(cons::primeiroSubject("Rock, Jazz; Blues") == "Rock" && cons::primeiroSubject("  ").isEmpty(),
+                   "subject folder: only the 1st SUBJECT names the folder");
+            regm.run("UPDATE item SET dc_subject = 'Rock, Jazz' WHERE id = ?", {Value::of(i1)});
+            auto planoSubj = cons::planejarConsolidacao(regm, pm.projeto().pasta(), pm.projeto().pastaMedia(),
+                                                        {cons::NivelHierarquia::Subject}, {}, cons::ModoPrefixoArquivo::Nenhum, {}, true);
+            int noRock = 0, emOutra = 0;
+            for (const auto& ip : planoSubj.itens)
+                if (ip.itemId == i1) (ip.caminhoRelativoDestino.startsWith("Rock/") ? noRock : emOutra)++;
+            const auto segSubj = pm.segmentosDeOrganizacao({i1}, {cons::NivelHierarquia::Subject});
+            checar(noRock == 1 && emOutra == 0 && segSubj.count(i1) && segSubj.at(i1).front() == "Rock",
+                   "subject folder: 'Rock, Jazz' -> one copy, in Rock/ (backup and folder map)");
+
+            // Um arquivo não fica em duas pastas de SUBJECT/LIST do mesmo mapa.
+            const std::string mapaZ = pm.mapaAtivoPadrao();
+            const std::string porSubj = pm.criarPastaAcervo("Por subject", std::nullopt, mapaZ);
+            const std::string porLista = pm.criarPastaAcervo("Por lista", std::nullopt, mapaZ);
+            const std::string livre = pm.criarPastaAcervo("Livre", std::nullopt, mapaZ);
+            regm.run("UPDATE acervo_pasta SET regra_organizacao = 'subject' WHERE id = ?", {Value::of(porSubj)});
+            regm.run("UPDATE acervo_pasta SET regra_organizacao = 'ano,lista' WHERE id = ?", {Value::of(porLista)});
+            const std::string filhaSubj = pm.criarPastaAcervo("Rock", porSubj, mapaZ);
+            checar(pm.pastaEmZonaDeSubjectOuLista(filhaSubj) && pm.pastaEmZonaDeSubjectOuLista(porLista) &&
+                       !pm.pastaEmZonaDeSubjectOuLista(livre),
+                   "one SUBJECT/LIST: folders under a SUBJECT/LIST rule are detected, a plain folder is not");
+            checar(pm.adicionarItemAPastaSemRemoverOutras(i2, filhaSubj), "one SUBJECT/LIST: first SUBJECT folder accepted");
+            checar(pm.adicionarItemAPastaSemRemoverOutras(i2, livre), "one SUBJECT/LIST: a plain folder is still accepted as well");
+            checar(!pm.adicionarItemAPastaSemRemoverOutras(i2, porLista), "one SUBJECT/LIST: a second SUBJECT/LIST folder is refused");
+            checar(pm.adicionarItemAPastaSemRemoverOutras(i4, porLista),
+                   "one SUBJECT/LIST: another file (other name/path) can go to that folder");
         }
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";

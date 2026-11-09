@@ -945,7 +945,11 @@ public:
     // associação item->pasta, preservando as demais. Usada ao restaurar um
     // preset de pastas, onde um item pode legitimamente pertencer a várias
     // pastas (N:N) ao mesmo tempo.
-    void adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId);
+    // false = recusado: o item já está em outra pasta organizada por SUBJECT/LIST deste mapa
+    // (um arquivo não fica em dois SUBJECT/LIST — ver pastaEmZonaDeSubjectOuLista).
+    bool adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId);
+    // A pasta é (ou está dentro de) uma pasta auto-organizada cuja regra tem SUBJECT ou LIST.
+    bool pastaEmZonaDeSubjectOuLista(const std::string& pastaId) const;
 
     // --- LIST a partir do Folder Map ---------------------------------------------------------------
     // Nomes das pastas do item, da mais próxima para cima: [0] = pasta do item, [1] = a pasta pai, ...

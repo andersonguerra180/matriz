@@ -4690,8 +4690,9 @@ void ArvoreBackupComponent::importarEsquemaComoNovoMapa(const juce::String& nome
             }
 
             if (!itemResolvido) { ++itensPulados; continue; }
-            projeto_.adicionarItemAPastaSemRemoverOutras(*itemResolvido, itPasta->second);
-            ++itensRelocados;
+            // Recusado (já está em outra pasta de SUBJECT/LIST deste mapa) conta como pulado.
+            if (projeto_.adicionarItemAPastaSemRemoverOutras(*itemResolvido, itPasta->second)) ++itensRelocados;
+            else ++itensPulados;
         }
     }
 

@@ -60,6 +60,10 @@ using HierarquiaBackup = std::vector<NivelHierarquia>;
 // Aceita "/" e "\\". Raiz de drive Windows ("C:\\x.jpg") ou sem pasta => "".
 juce::String pastaMaeDeOrigem(const juce::String& caminhoAbsoluto, const juce::String& caminhoRelativo);
 
+// SUBJECT é a lista de keywords do item ("Rock, Jazz"); a pasta (backup e árvore)
+// usa só o primeiro, pra um arquivo nunca cair em dois SUBJECTs. "" se vazio.
+juce::String primeiroSubject(const juce::String& dcSubject);
+
 // PARENT FOLDER homônima: dois arquivos só caem na mesma pasta se a pasta de
 // origem for a mesma de ponta a ponta (mesmo SOURCE + mesmo caminho). Pasta de
 // mesmo nome vinda de outra origem, no mesmo ponto da árvore (escopo = pastas
