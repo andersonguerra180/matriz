@@ -3887,10 +3887,6 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
     std::map<std::string, std::vector<juce::String>> out;
     if (!projeto_ || itemIds.empty() || niveis.empty()) return out;
 
-    // Lê tudo antes de nomear: PARENT FOLDER homônima é desambiguada na ordem de codigo_acervo
-    // (mesma regra do backup, NomesDePastaMae), e os lotes do IN não vêm nessa ordem.
-    struct Linha { std::string id, codigo; std::vector<juce::String> col; };
-    std::vector<Linha> linhas;
     const std::vector<std::string> ids(itemIds.begin(), itemIds.end());
     constexpr size_t kLote = 500;
     for (size_t inicio = 0; inicio < ids.size(); inicio += kLote) {
@@ -3900,31 +3896,15 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
         auto stmt = leitura().prepare(
             "SELECT i.id, i.tipo_midia, i.dc_creator, i.collection_type, i.dc_subject, i.source_media, "
             "i.ano, "
-            "a.caminho_relativo, i.lista, a.caminho_absoluto_origem, COALESCE(a.vault_id, ''), i.codigo_acervo "
+            "a.caminho_relativo, i.lista, a.caminho_absoluto_origem "
             "FROM item i "
             "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
             "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
             "WHERE i.id IN (" + marcas + ")");
         for (size_t i = inicio; i < fim; ++i) stmt.bind(static_cast<int>(i - inicio) + 1, matriz::db::Value::of(ids[i]));
 
+        auto texto = [&](int col) { return stmt.columnIsNull(col) ? juce::String() : juce::String::fromUTF8(stmt.columnText(col).c_str()); };
         while (stmt.step()) {
-            Linha l;
-            l.id = stmt.columnText(0);
-            l.codigo = stmt.columnIsNull(11) ? std::string() : stmt.columnText(11);
-            for (int c = 0; c <= 10; ++c)
-                l.col.push_back(stmt.columnIsNull(c) ? juce::String() : juce::String::fromUTF8(stmt.columnText(c).c_str()));
-            linhas.push_back(std::move(l));
-        }
-    }
-    std::sort(linhas.begin(), linhas.end(), [](const Linha& a, const Linha& b) {
-        return a.codigo != b.codigo ? a.codigo < b.codigo : a.id < b.id;
-    });
-    const bool usaPastaMae = std::find(niveis.begin(), niveis.end(), N::PastaMae) != niveis.end();
-    matriz::consolidacao::NomesDePastaMae nomesPastaMae(
-        usaPastaMae ? matriz::consolidacao::codigosDeSource(leitura()) : std::map<std::string, std::string>{});
-    {
-        for (const auto& linha : linhas) {
-            auto texto = [&linha](int col) { return linha.col[static_cast<size_t>(col)]; };
             std::vector<juce::String> segs;
             segs.reserve(niveis.size());
             for (auto nivel : niveis) {
@@ -3967,19 +3947,16 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
                         break;
                     // LIST da ficha (mesmo "No list" do backup, Consolidacao.cpp).
                     case N::Lista: segs.push_back(segmentoDePastaAuto(texto(8), "No list")); break;
-                    // PARENT FOLDER: a pasta onde o arquivo estava na origem (mesma regra do backup).
-                    case N::PastaMae: {
-                        juce::String escopo;
-                        for (const auto& sgm : segs) escopo += (escopo.isEmpty() ? "" : "/") + sgm;
-                        const auto bruto = matriz::consolidacao::pastaMaeDeOrigem(texto(9), texto(7));
-                        segs.push_back(nomesPastaMae.nomePara(escopo, bruto, segmentoDePastaAuto(bruto, "No parent folder"),
-                                                              texto(10).toStdString(), texto(9), texto(7)));
+                    // PARENT FOLDER: a pasta onde o arquivo estava na origem (mesma regra do backup;
+                    // homônimas de caminhos diferentes caem na mesma pasta).
+                    case N::PastaMae:
+                        segs.push_back(segmentoDePastaAuto(matriz::consolidacao::pastaMaeDeOrigem(texto(9), texto(7)),
+                                                           "No parent folder"));
                         break;
-                    }
                     default: break;
                 }
             }
-            out[linha.id] = std::move(segs);
+            out[stmt.columnText(0)] = std::move(segs);
         }
     }
     return out;

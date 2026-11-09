@@ -64,24 +64,6 @@ juce::String pastaMaeDeOrigem(const juce::String& caminhoAbsoluto, const juce::S
 // usa só o primeiro, pra um arquivo nunca cair em dois SUBJECTs. "" se vazio.
 juce::String primeiroSubject(const juce::String& dcSubject);
 
-// PARENT FOLDER homônima: dois arquivos só caem na mesma pasta se a pasta de
-// origem for a mesma de ponta a ponta (mesmo SOURCE + mesmo caminho). Pasta de
-// mesmo nome vinda de outra origem, no mesmo ponto da árvore (escopo = pastas
-// acima), ganha o código do SOURCE ("Praia_S02"); se ainda colidir, "_2", "_3"…
-// A primeira origem a aparecer (chamar na ordem de codigo_acervo) fica com o nome
-// puro, então ingerir mais material não renomeia pasta que já existe.
-class NomesDePastaMae {
-public:
-    explicit NomesDePastaMae(std::map<std::string, std::string> codigoPorVault) : codigos_(std::move(codigoPorVault)) {}
-    // nomeSeguro: já limpo por segmentoSeguro. nomeBruto vazio (sem pasta de origem) não desambigua.
-    juce::String nomePara(const juce::String& escopo, const juce::String& nomeBruto, const juce::String& nomeSeguro,
-                          const std::string& vaultId, const juce::String& caminhoAbsoluto, const juce::String& caminhoRelativo);
-private:
-    std::map<std::string, std::string> codigos_;
-    std::map<std::string, juce::String> nomePorOrigem_;  // escopo + origem -> nome dado
-    std::set<std::string> usados_;                       // escopo + nome (sem caixa)
-};
-
 // Projeto → Ano → Tipo de Mídia → Tipo de Arquivo (item 5.1).
 HierarquiaBackup hierarquiaPadrao();
 

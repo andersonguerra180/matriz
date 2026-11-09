@@ -582,8 +582,8 @@ int rodarRebuildSelfTest() {
             ProjetoAberto pm(std::move(projeto5));
             auto& regm = pm.projeto().registro();
             const juce::File s5 = raiz.getChildFile("SOURCE5");
-            // m4: mesma pasta de origem que m1 (junta); m5: outra "Praia" (homônima, outro caminho) => Praia_2;
-            // m6: "Praia" em outra LIST => sem sufixo (escopo diferente).
+            // m4: mesma pasta de origem que m1; m5: outra "Praia" (homônima, outro caminho) — as três juntam em Praia;
+            // m6: "Praia" em outra LIST fica na Praia daquela LIST.
             const juce::File m1 = s5.getChildFile("Shows/Praia/um.wav"), m2 = s5.getChildFile("Fitas/dois.wav"), m3 = s5.getChildFile("tres.wav"),
                              m4 = s5.getChildFile("Shows/Praia/quatro.wav"), m5 = s5.getChildFile("Viagens/Praia/cinco.wav"),
                              m6 = s5.getChildFile("Outra/Praia/seis.wav");
@@ -604,20 +604,13 @@ int rodarRebuildSelfTest() {
                        dirPorItem[i3] == "Best Of/No parent folder",
                    "parent folder: backup LIST -> PARENT FOLDER = Best Of/Praia, Best Of/Fitas, Best Of/No parent folder");
             checar(dirPorItem[i4] == "Best Of/Praia", "parent folder: same origin folder end to end -> same destination folder");
-            checar(dirPorItem[i5] == "Best Of/Praia_2", "parent folder: same name, other origin path, no source code -> Praia_2");
-            checar(dirPorItem[i6] == "Outra/Praia", "parent folder: same name under another LIST is not a clash");
+            checar(dirPorItem[i5] == "Best Of/Praia", "parent folder: same name from another origin path joins the same folder (no suffix)");
+            checar(dirPorItem[i6] == "Outra/Praia", "parent folder: same name under another LIST stays under that LIST");
             const auto segs = pm.segmentosDeOrganizacao({i1, i2, i3, i4, i5}, {cons::NivelHierarquia::PastaMae});
             auto seg = [&](const std::string& id) { auto it = segs.find(id); return it == segs.end() || it->second.empty() ? juce::String() : it->second[0]; };
-            checar(seg(i1) == "Praia" && seg(i2) == "Fitas" && seg(i3) == "No parent folder" && seg(i4) == "Praia" && seg(i5) == "Praia_2",
+            checar(seg(i1) == "Praia" && seg(i2) == "Fitas" && seg(i3) == "No parent folder" && seg(i4) == "Praia" && seg(i5) == "Praia",
                    "parent folder: folder-map auto-organize uses the same folder names");
 
-            // Homônima vinda de OUTRO SOURCE => sufixo com o código do SOURCE.
-            cons::NomesDePastaMae nomes({{"v1", "S01"}, {"v2", "S02"}});
-            const auto a = nomes.nomePara("L", "100CANON", "100CANON", "v1", "/Volumes/A/DCIM/100CANON/x.jpg", "DCIM/100CANON/x.jpg");
-            const auto b = nomes.nomePara("L", "100CANON", "100CANON", "v2", "/Volumes/B/DCIM/100CANON/y.jpg", "DCIM/100CANON/y.jpg");
-            const auto c = nomes.nomePara("L", "100CANON", "100CANON", "v1", "/Volumes/A/DCIM/100CANON/z.jpg", "dcim/100canon/z.jpg");
-            checar(a == "100CANON" && b == "100CANON_S02" && c == "100CANON",
-                   "parent folder: homonym from another source -> 100CANON_S02; same source+path keeps 100CANON");
 
             // SUBJECT com várias keywords: a pasta usa só a primeira (backup e árvore).
             checar(cons::primeiroSubject("Rock, Jazz; Blues") == "Rock" && cons::primeiroSubject("  ").isEmpty(),
