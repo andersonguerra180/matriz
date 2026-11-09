@@ -45,12 +45,38 @@ namespace matriz::consolidacao {
 // vai pra uma pasta "sem <campo>" em vez de desaparecer ou travar o backup
 // (§5.2 — "nunca desaparece nem trava").
 // EstruturaOriginal preserves the relative folder structure from the source path.
-enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, ContentType, Subject, Lista, PastaManual, EstruturaOriginal };
+// PastaMae (PARENT FOLDER): uma pasta só, com o nome da pasta onde o arquivo
+// estava na origem (não o caminho inteiro) — bloco comum, sem o modo especial
+// de EstruturaOriginal (código do SOURCE na raiz, nome original, sem mapa).
+enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, ContentType, Subject, Lista, PastaManual, EstruturaOriginal, PastaMae };
 
 std::string nivelHierarquiaToString(NivelHierarquia n);
 NivelHierarquia nivelHierarquiaFromString(const std::string& s); // lança std::runtime_error se desconhecido
 
 using HierarquiaBackup = std::vector<NivelHierarquia>;
+
+// Nome da pasta onde o arquivo estava na origem (PARENT FOLDER): pai de
+// arquivo.caminho_absoluto_origem; sem ele, a última pasta de caminho_relativo.
+// Aceita "/" e "\\". Raiz de drive Windows ("C:\\x.jpg") ou sem pasta => "".
+juce::String pastaMaeDeOrigem(const juce::String& caminhoAbsoluto, const juce::String& caminhoRelativo);
+
+// PARENT FOLDER homônima: dois arquivos só caem na mesma pasta se a pasta de
+// origem for a mesma de ponta a ponta (mesmo SOURCE + mesmo caminho). Pasta de
+// mesmo nome vinda de outra origem, no mesmo ponto da árvore (escopo = pastas
+// acima), ganha o código do SOURCE ("Praia_S02"); se ainda colidir, "_2", "_3"…
+// A primeira origem a aparecer (chamar na ordem de codigo_acervo) fica com o nome
+// puro, então ingerir mais material não renomeia pasta que já existe.
+class NomesDePastaMae {
+public:
+    explicit NomesDePastaMae(std::map<std::string, std::string> codigoPorVault) : codigos_(std::move(codigoPorVault)) {}
+    // nomeSeguro: já limpo por segmentoSeguro. nomeBruto vazio (sem pasta de origem) não desambigua.
+    juce::String nomePara(const juce::String& escopo, const juce::String& nomeBruto, const juce::String& nomeSeguro,
+                          const std::string& vaultId, const juce::String& caminhoAbsoluto, const juce::String& caminhoRelativo);
+private:
+    std::map<std::string, std::string> codigos_;
+    std::map<std::string, juce::String> nomePorOrigem_;  // escopo + origem -> nome dado
+    std::set<std::string> usados_;                       // escopo + nome (sem caixa)
+};
 
 // Projeto → Ano → Tipo de Mídia → Tipo de Arquivo (item 5.1).
 HierarquiaBackup hierarquiaPadrao();

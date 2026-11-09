@@ -2566,6 +2566,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"arvore_backup.importar_sem_pasta_msg", "Mover os {n} arquivo(s) do _no folder para \"{nome}\" e organizá-los pelas regras de auto-organização dela?\n\nArquivos ainda no INTAKE ficam de fora. Nenhum arquivo é copiado ou apagado no disco; o Desfazer (Cmd+Z) reverte."},
         {"arvore_backup.importar_sem_pasta_btn", "IMPORTAR"},
         {"arvore_backup.importar_sem_pasta_vazio", "Não há arquivos no _no folder para importar (os que ainda estão no INTAKE ficam de fora)."},
+        {"hierarquia.nivel_pasta_mae", "PASTA-MÃE"},
         {"arvore_backup.auto_titulo_janela", "Auto-organizar: {nome}"},
         {"arvore_backup.auto_falha", "Não foi possível auto-organizar esta pasta. Nada foi alterado."},
         {"arvore_backup.auto_no_main", "Esta pasta já tem arquivos no MAIN e não pode ser auto-organizada: isso os moveria. Use uma pasta que só tenha arquivos ainda sem backup."},

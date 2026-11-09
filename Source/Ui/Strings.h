@@ -2543,6 +2543,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"arvore_backup.importar_sem_pasta_msg", "Move the {n} file(s) in _no folder into \"{nome}\" and organize them by its auto-organize rules?\n\nFiles still in INTAKE are not included. No file is copied or deleted on disk; Undo (Cmd+Z) reverts it."},
         {"arvore_backup.importar_sem_pasta_btn", "IMPORT"},
         {"arvore_backup.importar_sem_pasta_vazio", "There are no files in _no folder to import (files still in INTAKE are not included)."},
+        {"hierarquia.nivel_pasta_mae", "PARENT FOLDER"},
         {"arvore_backup.auto_titulo_janela", "Auto-organize: {nome}"},
         {"arvore_backup.auto_falha", "This folder could not be auto-organized. Nothing was changed."},
         {"arvore_backup.auto_no_main", "This folder already has files in the MAIN, so it cannot be auto-organized: that would move them. Use a folder that only has files not yet backed up."},

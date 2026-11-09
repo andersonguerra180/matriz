@@ -4121,7 +4121,7 @@ void ArvoreBackupComponent::mostrarEditorAutoOrganizar(const std::string& pastaI
 
     HierarquiaEditorOpcoes opcoes;
     opcoes.titulo = i18n::t("arvore_backup.auto_titulo_janela").replace("{nome}", nomePasta);
-    opcoes.paleta = {N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject, N::Lista};
+    opcoes.paleta = {N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject, N::Lista, N::PastaMae};
     opcoes.raizPreview = "/" + nomePasta;
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
     new HierarquiaEditorWindow(atual, [safeThis, pastaId](const matriz::consolidacao::HierarquiaBackup& h) {

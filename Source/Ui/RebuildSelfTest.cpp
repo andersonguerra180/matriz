@@ -562,6 +562,64 @@ int rodarRebuildSelfTest() {
             for (const auto& ip : p3.itens) nada = nada && ip.jaConsolidado;
             checar(nada, "rule reorganize: the next plan has nothing to move and nothing to copy");
         }
+
+        // ---- 8) PARENT FOLDER (PastaMae): só a pasta onde o arquivo estava na origem, não o caminho inteiro.
+        {
+            checar(cons::pastaMaeDeOrigem("/Volumes/CARD/DCIM/100CANON/IMG.jpg", "DCIM/100CANON/IMG.jpg") == "100CANON" &&
+                       cons::pastaMaeDeOrigem("", "Fitas/take.wav") == "Fitas" &&
+                       cons::pastaMaeDeOrigem("C:\\Fotos\\Praia\\a.jpg", "") == "Praia" &&
+                       cons::pastaMaeDeOrigem("/Volumes/CARD/IMG.jpg", "IMG.jpg") == "CARD" &&
+                       cons::pastaMaeDeOrigem("C:\\a.jpg", "a.jpg").isEmpty() && cons::pastaMaeDeOrigem("", "a.jpg").isEmpty(),
+                   "parent folder: only the folder right above the file (/, \\, card root, drive root)");
+            const cons::HierarquiaBackup listaMae{cons::NivelHierarquia::Lista, cons::NivelHierarquia::PastaMae};
+            checar(cons::hierarquiaDeCsv(cons::hierarquiaParaCsv(listaMae)) == listaMae, "parent folder: LIST -> PARENT FOLDER survives the saved CSV");
+
+            matriz::model::NovoProjetoParams params5;
+            params5.nome = "Mae";
+            params5.prefixoNomenclatura = "MAE";
+            auto projeto5 = matriz::model::Project::criar(raiz.getChildFile("P5"), params5);
+            const std::string projetoId5 = projeto5->projetoId();
+            ProjetoAberto pm(std::move(projeto5));
+            auto& regm = pm.projeto().registro();
+            const juce::File s5 = raiz.getChildFile("SOURCE5");
+            // m4: mesma pasta de origem que m1 (junta); m5: outra "Praia" (homônima, outro caminho) => Praia_2;
+            // m6: "Praia" em outra LIST => sem sufixo (escopo diferente).
+            const juce::File m1 = s5.getChildFile("Shows/Praia/um.wav"), m2 = s5.getChildFile("Fitas/dois.wav"), m3 = s5.getChildFile("tres.wav"),
+                             m4 = s5.getChildFile("Shows/Praia/quatro.wav"), m5 = s5.getChildFile("Viagens/Praia/cinco.wav"),
+                             m6 = s5.getChildFile("Outra/Praia/seis.wav");
+            int semente = 51;
+            for (const auto& f : {m1, m2, m3, m4, m5, m6}) escreverArquivo(f, semente++, 21000 + semente);
+            const auto i1 = inserirItem(regm, projetoId5, "MAE-1", m1), i2 = inserirItem(regm, projetoId5, "MAE-2", m2),
+                       i3 = inserirItem(regm, projetoId5, "MAE-3", m3), i4 = inserirItem(regm, projetoId5, "MAE-4", m4),
+                       i5 = inserirItem(regm, projetoId5, "MAE-5", m5), i6 = inserirItem(regm, projetoId5, "MAE-6", m6);
+            regm.run("UPDATE item SET lista = 'Best Of'", {});
+            regm.run("UPDATE item SET lista = 'Outra' WHERE id = ?", {Value::of(i6)});
+            // Item sem caminho de origem e sem pasta no relativo => "No parent folder" (nunca fica de fora).
+            regm.run("UPDATE arquivo SET caminho_absoluto_origem = NULL WHERE item_id = ?", {Value::of(i3)});
+            auto plano = cons::planejarConsolidacao(regm, pm.projeto().pasta(), pm.projeto().pastaMedia(), listaMae, {},
+                                                    cons::ModoPrefixoArquivo::Nenhum, {}, true);
+            std::map<std::string, juce::String> dirPorItem;
+            for (const auto& ip : plano.itens) dirPorItem[ip.itemId] = ip.caminhoRelativoDestino.upToLastOccurrenceOf("/", false, false);
+            checar(plano.itens.size() == 6 && dirPorItem[i1] == "Best Of/Praia" && dirPorItem[i2] == "Best Of/Fitas" &&
+                       dirPorItem[i3] == "Best Of/No parent folder",
+                   "parent folder: backup LIST -> PARENT FOLDER = Best Of/Praia, Best Of/Fitas, Best Of/No parent folder");
+            checar(dirPorItem[i4] == "Best Of/Praia", "parent folder: same origin folder end to end -> same destination folder");
+            checar(dirPorItem[i5] == "Best Of/Praia_2", "parent folder: same name, other origin path, no source code -> Praia_2");
+            checar(dirPorItem[i6] == "Outra/Praia", "parent folder: same name under another LIST is not a clash");
+            const auto segs = pm.segmentosDeOrganizacao({i1, i2, i3, i4, i5}, {cons::NivelHierarquia::PastaMae});
+            auto seg = [&](const std::string& id) { auto it = segs.find(id); return it == segs.end() || it->second.empty() ? juce::String() : it->second[0]; };
+            checar(seg(i1) == "Praia" && seg(i2) == "Fitas" && seg(i3) == "No parent folder" && seg(i4) == "Praia" && seg(i5) == "Praia_2",
+                   "parent folder: folder-map auto-organize uses the same folder names");
+
+            // Homônima vinda de OUTRO SOURCE => sufixo com o código do SOURCE.
+            cons::NomesDePastaMae nomes({{"v1", "S01"}, {"v2", "S02"}});
+            const auto a = nomes.nomePara("L", "100CANON", "100CANON", "v1", "/Volumes/A/DCIM/100CANON/x.jpg", "DCIM/100CANON/x.jpg");
+            const auto b = nomes.nomePara("L", "100CANON", "100CANON", "v2", "/Volumes/B/DCIM/100CANON/y.jpg", "DCIM/100CANON/y.jpg");
+            const auto c = nomes.nomePara("L", "100CANON", "100CANON", "v1", "/Volumes/A/DCIM/100CANON/z.jpg", "dcim/100canon/z.jpg");
+            checar(a == "100CANON" && b == "100CANON_S02" && c == "100CANON",
+                   "parent folder: homonym from another source -> 100CANON_S02; same source+path keeps 100CANON");
+
+        }
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";
         ++falhas;

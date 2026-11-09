@@ -288,8 +288,53 @@ std::string nivelHierarquiaToString(NivelHierarquia n) {
         case NivelHierarquia::Lista: return "lista";
         case NivelHierarquia::PastaManual: return "pasta_manual";
         case NivelHierarquia::EstruturaOriginal: return "estrutura_original";
+        case NivelHierarquia::PastaMae: return "pasta_mae";
     }
     return "projeto";
+}
+
+juce::String pastaMaeDeOrigem(const juce::String& caminhoAbsoluto, const juce::String& caminhoRelativo) {
+    auto paiDe = [](const juce::String& bruto) -> juce::String {
+        const juce::String caminho = bruto.trim();
+        const int barra = juce::jmax(caminho.lastIndexOfChar('/'), caminho.lastIndexOfChar('\\'));
+        if (barra <= 0) return {};  // sem pasta, ou arquivo direto na raiz "/"
+        const juce::String dir = caminho.substring(0, barra);
+        const int barraPai = juce::jmax(dir.lastIndexOfChar('/'), dir.lastIndexOfChar('\\'));
+        const juce::String nome = dir.substring(barraPai + 1).trim();
+        if (nome.endsWithChar(':') || nome == ".") return {};  // raiz de drive Windows não é pasta
+        return nome;
+    };
+    const juce::String nome = paiDe(caminhoAbsoluto);
+    return nome.isNotEmpty() ? nome : paiDe(caminhoRelativo);
+}
+
+juce::String NomesDePastaMae::nomePara(const juce::String& escopo, const juce::String& nomeBruto, const juce::String& nomeSeguro,
+                                       const std::string& vaultId, const juce::String& caminhoAbsoluto,
+                                       const juce::String& caminhoRelativo) {
+    if (nomeBruto.isEmpty()) return nomeSeguro;
+    auto dirDe = [](const juce::String& c) {
+        const juce::String n = c.trim().replaceCharacter('\\', '/');
+        return n.upToLastOccurrenceOf("/", false, false).toLowerCase();
+    };
+    // Origem de ponta a ponta: SOURCE + caminho dentro dele; sem SOURCE, o caminho absoluto.
+    const juce::String origem = vaultId.empty() ? "abs:" + dirDe(caminhoAbsoluto)
+                                                : juce::String(vaultId) + ":" + dirDe(caminhoRelativo);
+    const std::string esc = escopo.toLowerCase().toStdString() + "\n";
+    const std::string chaveOrigem = esc + origem.toStdString();
+    if (auto it = nomePorOrigem_.find(chaveOrigem); it != nomePorOrigem_.end()) return it->second;
+
+    auto livre = [&](const juce::String& n) { return !usados_.count(esc + n.toLowerCase().toStdString()); };
+    juce::String nome = nomeSeguro;
+    if (!livre(nome)) {
+        const auto itCod = codigos_.find(vaultId);
+        const juce::String base = itCod != codigos_.end() && !itCod->second.empty() ? nomeSeguro + "_" + juce::String(itCod->second)
+                                                                                     : nomeSeguro;
+        nome = base;
+        for (int n = 2; !livre(nome); ++n) nome = base + "_" + juce::String(n);
+    }
+    usados_.insert(esc + nome.toLowerCase().toStdString());
+    nomePorOrigem_[chaveOrigem] = nome;
+    return nome;
 }
 
 NivelHierarquia nivelHierarquiaFromString(const std::string& s) {
@@ -303,6 +348,7 @@ NivelHierarquia nivelHierarquiaFromString(const std::string& s) {
     if (s == "subject") return NivelHierarquia::Subject;
     if (s == "lista") return NivelHierarquia::Lista;
     if (s == "pasta_manual") return NivelHierarquia::PastaManual;
+    if (s == "pasta_mae") return NivelHierarquia::PastaMae;
     throw std::runtime_error("nível de hierarquia de backup desconhecido: \"" + s + "\"");
 }
 
@@ -505,6 +551,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     // `destino` é <raiz do destino>/Media; o destination.json fica na raiz.
     const std::string destinoId = matriz::vault::destinationIdDaRaiz(destino.getParentDirectory());
     HierarquiaBackup hierarquia = hierarquiaPedida.empty() ? hierarquiaDoProjeto(registro) : hierarquiaPedida;
+    const bool usaPastaMae = std::find(hierarquia.begin(), hierarquia.end(), NivelHierarquia::PastaMae) != hierarquia.end();
+    NomesDePastaMae nomesPastaMae(usaPastaMae ? codigosDeSource(registro) : std::map<std::string, std::string>{});
     auto rotuloTipo = rotuloTipoMidia ? rotuloTipoMidia
                                        : RotuloTipoMidia([](const std::string& t) { return juce::String(t); });
 
@@ -549,7 +597,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     auto stmt = registro.prepare(
         std::string("SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
         "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes, "
-        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, ''), i.lista "
+        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, ''), i.lista, "
+        "COALESCE(a.caminho_absoluto_origem, '') "
         "FROM item i "
         "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id ") +
         (filtrarMapa ? "AND aip.mapa_id = ? " : "") +
@@ -615,6 +664,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         std::string dcSubjectAtual = stmt.columnIsNull(11) ? std::string() : stmt.columnText(11);
         std::string sourceMediaAtual = stmt.columnIsNull(12) ? std::string() : stmt.columnText(12);
         std::string listaAtual = stmt.columnIsNull(14) ? std::string() : stmt.columnText(14);
+        const juce::String caminhoAbsolutoOrigem = juce::String::fromUTF8(stmt.columnText(15).c_str());
         juce::String codigoSource;
         if (organizarPorSource) {
             auto itCod = codigoPorVault.find(stmt.columnText(13));
@@ -777,6 +827,15 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                             if (limpo.isNotEmpty() && limpo != ".") segmentosPasta.add(segmentoSeguro(limpo, "Folder"));
                         }
                     }
+                    break;
+                }
+                case NivelHierarquia::PastaMae: {
+                    // PARENT FOLDER: só a pasta onde o arquivo estava na origem, não o caminho inteiro;
+                    // homônima de outra origem no mesmo ponto da árvore ganha _S0N (NomesDePastaMae).
+                    const juce::String bruto = pastaMaeDeOrigem(caminhoAbsolutoOrigem, caminhoRelativoOrigem);
+                    segmentosPasta.add(nomesPastaMae.nomePara(segmentosPasta.joinIntoString("/"), bruto,
+                                                              segmentoSeguro(bruto, "No parent folder"), stmt.columnText(13),
+                                                              caminhoAbsolutoOrigem, caminhoRelativoOrigem));
                     break;
                 }
             }
