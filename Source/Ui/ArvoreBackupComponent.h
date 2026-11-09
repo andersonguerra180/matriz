@@ -409,6 +409,8 @@ private:
     void recalcularNodes();
     void recalcularNodesInterno();
     void autoArranjar();
+    // O AUTO ARRANGE do mapa inteiro (ignora a seleção). Também roda sozinho quando uma regra AUTO monta/muda a árvore.
+    void autoArranjarMapaInteiro();
     // AJUSTAR com 2+ pastas selecionadas: reorganiza só elas (mesmos tamanhos), na região que já ocupavam.
     void autoArranjarSelecionadas(const std::vector<int>& selecionadas);
 

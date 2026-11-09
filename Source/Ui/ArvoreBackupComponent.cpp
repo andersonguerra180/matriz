@@ -2383,7 +2383,11 @@ void ArvoreBackupComponent::autoArranjar() {
         autoArranjarSelecionadas(selecionadas);
         return;
     }
+    autoArranjarMapaInteiro();
+}
 
+void ArvoreBackupComponent::autoArranjarMapaInteiro() {
+    if (nodes_.empty()) return;
     // Só reorganiza as POSIÇÕES (e o fator de cartão que faz tudo caber): o multiplicador que o usuário
     // ajustou em cada pasta é mantido; a escala global volta a 100%.
     escalaTamanho_ = 1.0f;
@@ -4140,6 +4144,9 @@ void ArvoreBackupComponent::aplicarAutoOrganizacaoNaPasta(const std::string& pas
         default: ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.auto_falha")); break;
     }
     recarregar();
+    // A regra montou/mudou a árvore (ex.: IMPORT FROM _no folder): ela já vem arranjada, como no AUTO ARRANGE —
+    // as subpastas novas não ficam espremidas entre as pastas que já tinham posição.
+    if (r.status == S::Ok && (r.pastasCriadas > 0 || r.pastasApagadas > 0 || r.itensMovidos > 0)) autoArranjarMapaInteiro();
 }
 
 // IMPORT FROM _no folder: os ids são lidos fora da message thread (os do INTAKE ficam: ainda não entraram no catálogo); depois de

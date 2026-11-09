@@ -7361,6 +7361,48 @@ int rodarLoteSelfTest() {
             checar(reaberta.fatorCards_ > 0.0 && pa.fatorCardsDoMapa(mapa) > 0.0, "and so does the map's card factor");
         }
 
+        // Regra AUTO que monta a árvore (IMPORT FROM _no folder, Reorganize now): ela já vem arranjada, como no AUTO ARRANGE —
+        // as subpastas novas ganham posição gravada e nada fica por cima de nada. (Antes caíam no layout padrão, sem gravar.)
+        {
+            const std::string mapaAuto = pa.criarFolderMap("AutoArranjo", std::nullopt);
+            const std::string base = pa.criarPastaAcervo("Base", std::nullopt, mapaAuto);
+            pa.criarPastaAcervo("Filha", base, mapaAuto);
+            const std::string recebe = pa.criarPastaAcervo("Recebe", std::nullopt, mapaAuto);
+            auto& reg = pa.projeto().registro();
+            std::vector<std::string> itens;
+            for (int k = 0; k < 4; ++k) {
+                auto f = raizFM.getChildFile("auto" + juce::String(k) + ".wav");
+                f.replaceWithText("x");
+                itens.push_back(inserirItemComArquivo(reg, projetoId, "TFM-A" + std::to_string(k), f));
+                definirCampoRaiz(reg, itens.back(), "ano", std::to_string(2001 + k));
+            }
+            pa.definirMapaAtivo(mapaAuto);
+            ArvoreBackupComponent mapaA(pa);
+            mapaA.setBounds(0, 0, 1400, 900);
+            bombear(100);
+            mapaA.selecionarMapaPorId(mapaAuto);
+            bombear(50);
+            mapaA.autoArranjarMapaInteiro();  // posições gravadas: a partir daqui o mapa não abre mais arranjado sozinho
+            pa.adicionarItensAPasta(itens, recebe);
+            for (auto& n : mapaA.nodes_) n.selecionado = true;  // seleção não restringe o arranjo automático
+            mapaA.aplicarAutoOrganizacaoNaPasta(recebe, "ano");
+            int novas = 0, gravadas = 0;
+            auto st = reg.prepare("SELECT COALESCE(posicao_x, 0), COALESCE(posicao_y, 0) FROM acervo_pasta WHERE pasta_pai_id = ?");
+            st.bind(1, matriz::db::Value::of(recebe));
+            while (st.step()) {
+                ++novas;
+                if (st.columnInt(0) != 0 || st.columnInt(1) != 0) ++gravadas;
+            }
+            checar(novas == 4 && gravadas == 4, "the AUTO rule's new subfolders come already arranged, with saved positions (" +
+                                                    juce::String(gravadas) + " of " + juce::String(novas) + ")");
+            bool semSobra = true;
+            for (size_t i = 0; i < mapaA.nodes_.size(); ++i)
+                for (size_t j = i + 1; j < mapaA.nodes_.size(); ++j)
+                    if (mapaA.nodes_[i].bounds.intersects(mapaA.nodes_[j].bounds)) semSobra = false;
+            checar(mapaA.nodes_.size() == 7 && semSobra, "and the whole map is arranged with no overlap (" + juce::String((int) mapaA.nodes_.size()) + " folders)");
+            pa.definirMapaAtivo(mapa);
+        }
+
         // Mapa GRANDE (centenas de pastas): o cartão nunca encolhe abaixo do legível — o mapa passa da área e
         // o FIT mostra o conjunto — e continua sem sobreposição. (Antes encolhia a 30% e ficava ilegível.)
         {
