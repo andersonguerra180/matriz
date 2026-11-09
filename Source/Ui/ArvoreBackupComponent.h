@@ -409,8 +409,9 @@ private:
     void recalcularNodes();
     void recalcularNodesInterno();
     void autoArranjar();
-    // O AUTO ARRANGE do mapa inteiro (ignora a seleção). Também roda sozinho quando uma regra AUTO monta/muda a árvore.
-    void autoArranjarMapaInteiro();
+    // O AUTO ARRANGE do mapa inteiro (ignora a seleção). Também roda sozinho quando uma regra AUTO monta/muda a árvore —
+    // aí sem passo de desfazer próprio (registrarUndo = false): desfazer a importação continua sendo os mesmos passos.
+    void autoArranjarMapaInteiro(bool registrarUndo = true);
     // AJUSTAR com 2+ pastas selecionadas: reorganiza só elas (mesmos tamanhos), na região que já ocupavam.
     void autoArranjarSelecionadas(const std::vector<int>& selecionadas);
 
@@ -453,7 +454,7 @@ private:
     // Grava a posição atual (nodes_[idx].bounds) de cada índice numa única
     // transação — chamado do mouseUp ao soltar o arrasto (item 8); extraído
     // à parte pra dar pra testar sem simular um MouseEvent de verdade.
-    void persistirPosicoesEmLote(const std::vector<int>& indices);
+    void persistirPosicoesEmLote(const std::vector<int>& indices, bool registrarUndo = true);
 
     void aplicarZoom(float novoZoom, juce::Point<float> centro);
     juce::Point<float> screenToCanvas(juce::Point<int> screen) const;

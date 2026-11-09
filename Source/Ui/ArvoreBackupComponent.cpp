@@ -2301,10 +2301,10 @@ void ArvoreBackupComponent::coletarDescendentesIndices(int nodeIndex, std::set<i
     }
 }
 
-void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indices) {
+void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indices, bool registrarUndo) {
     if (indices.empty()) return;
     if (sobreposto_) return;  // sobreposição: posições só em memória (não mexem no layout do mapa principal)
-    if (!mapaAtivoEhOriginal()) projeto_.registrarUndoVisualMapa("Move Folders", mapaAtivoId_);
+    if (registrarUndo && !mapaAtivoEhOriginal()) projeto_.registrarUndoVisualMapa("Move Folders", mapaAtivoId_);
     auto& db = projeto_.projeto().registro();
     std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
     bool emTransacao = false;
@@ -2386,7 +2386,7 @@ void ArvoreBackupComponent::autoArranjar() {
     autoArranjarMapaInteiro();
 }
 
-void ArvoreBackupComponent::autoArranjarMapaInteiro() {
+void ArvoreBackupComponent::autoArranjarMapaInteiro(bool registrarUndo) {
     if (nodes_.empty()) return;
     // Só reorganiza as POSIÇÕES (e o fator de cartão que faz tudo caber): o multiplicador que o usuário
     // ajustou em cada pasta é mantido; a escala global volta a 100%.
@@ -2396,7 +2396,7 @@ void ArvoreBackupComponent::autoArranjarMapaInteiro() {
     std::vector<int> indices;
     for (size_t i = 0; i < nodes_.size(); ++i) indices.push_back(static_cast<int>(i));
     recalcularPivot();
-    persistirPosicoesEmLote(indices);  // uma transação só
+    persistirPosicoesEmLote(indices, registrarUndo);  // uma transação só
     if (!mapaAtivoEhOriginal() && !sobreposto_) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
 
     zoom_ = 1.0f;
@@ -4146,7 +4146,7 @@ void ArvoreBackupComponent::aplicarAutoOrganizacaoNaPasta(const std::string& pas
     recarregar();
     // A regra montou/mudou a árvore (ex.: IMPORT FROM _no folder): ela já vem arranjada, como no AUTO ARRANGE —
     // as subpastas novas não ficam espremidas entre as pastas que já tinham posição.
-    if (r.status == S::Ok && (r.pastasCriadas > 0 || r.pastasApagadas > 0 || r.itensMovidos > 0)) autoArranjarMapaInteiro();
+    if (r.status == S::Ok && (r.pastasCriadas > 0 || r.pastasApagadas > 0 || r.itensMovidos > 0)) autoArranjarMapaInteiro(false);
 }
 
 // IMPORT FROM _no folder: os ids são lidos fora da message thread (os do INTAKE ficam: ainda não entraram no catálogo); depois de
