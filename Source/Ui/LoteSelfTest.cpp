@@ -3547,6 +3547,47 @@ int rodarDuplicatasResultadosSelfTest() {
             checar(!filtros.barraScan_.isVisible(), "progress bar hides outside scanning");
         }
 
+        // Par só de metadados: tracks de uma sessão multitrack (mesmo tamanho, mesmo cabeçalho) não são o mesmo arquivo;
+        // cópia com só a tag do cabeçalho editada continua sendo.
+        {
+            using matriz::ingest::mesmoConteudoNoMiolo;
+            auto gravar = [&](const juce::String& nome, uint8_t cabecalho, uint8_t miolo, size_t tamanho) {
+                std::vector<uint8_t> dados(tamanho, miolo);
+                for (size_t i = 0; i < std::min<size_t>(4096, tamanho); ++i) dados[i] = cabecalho;
+                const auto f = raiz.getChildFile(nome);
+                f.replaceWithData(dados.data(), dados.size());
+                return f;
+            };
+            const size_t kTam = 3 * 1024 * 1024;
+            const auto track13 = gravar("Track13.wav", 0x52, 0x11, kTam);
+            const auto track14 = gravar("Track14.wav", 0x52, 0x22, kTam);
+            const auto track13Tag = gravar("Track13_tag.wav", 0x99, 0x11, kTam);
+            const auto menor = gravar("Track13_menor.wav", 0x52, 0x11, kTam - 10);
+            checar(mesmoConteudoNoMiolo(track13, track14) == std::optional<bool>(false),
+                   "same size + same header but different audio (multitrack tracks): not the same content");
+            checar(mesmoConteudoNoMiolo(track13, track13Tag) == std::optional<bool>(true),
+                   "same audio with an edited header tag: still the same content");
+            checar(!mesmoConteudoNoMiolo(track13, menor).has_value(), "different sizes: content check is undecided");
+            checar(!mesmoConteudoNoMiolo(track13, raiz.getChildFile("nao_existe.wav")).has_value(),
+                   "missing file: content check is undecided");
+        }
+
+        // Autocorreção da abertura lê pela conexão de leitura da thread de fundo (não prende a de escrita, que é a da
+        // tela) e continua gravando a correção pela de escrita.
+        {
+            const auto doc = novo("FLT-DOC", "2026-01-03");
+            const auto arqDoc = matriz::model::novoUuid();
+            reg.run("INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, criado_em, atualizado_em) "
+                    "VALUES (?, ?, 'originais/FLT-DOC.pdf', 'documento', 0, 10, '2026-01-03', '2026-01-03')",
+                    {Value::of(arqDoc), Value::of(doc)});
+            std::thread fundo([&] { pa.projeto().executarAutocorrecoes(nullptr); });
+            fundo.join();
+            auto st = reg.prepare("SELECT eh_master FROM arquivo WHERE id = ?");
+            st.bind(1, Value::of(arqDoc));
+            checar(st.step() && st.columnInt(0) == 1,
+                   "open self-heal reads on its own connection and still fixes eh_master of a document file");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("duplicate results selftest: ") + e.what());
     }

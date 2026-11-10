@@ -2464,6 +2464,33 @@ void DuplicatesWorkspaceComponent::run() {
         return mono;
     };
 
+    // Par achado só por metadados (mesmo tamanho exato + formato/duração...) não prova conteúdo igual: tracks de uma
+    // sessão multitrack têm a mesma duração e, em PCM, o mesmo tamanho byte a byte. Antes de mostrar o par confere o
+    // miolo dos dois arquivos (Duplicata.h, mesmoConteudoNoMiolo). Sem acesso a algum dos dois o par FICA (POSSIBLE): não
+    // cair no SHA gravado — JPG de mesmo tamanho exato e SHA diferente costuma ser a mesma foto com um byte de metadado
+    // trocado (Fotos, 2026-11-08: os 2 pares que sobravam sumiam com o disco de origem fora). Só vale para tamanhos
+    // iguais — par de mesmo nome e tamanho diferente (reexport) não é conferido aqui.
+    std::unordered_map<std::string, size_t> indiceDoItemLocal;  // só itens do projeto aberto
+    for (size_t i = 0; i < items.size(); ++i)
+        if (items[i].collectionCaminho.empty()) indiceDoItemLocal.emplace(items[i].itemId, i);
+    auto conteudoDiferente = [&](const std::string& idA, const ItemInfo* a, const std::string& idB, const ItemInfo* b,
+                                 juce::int64 tamA, juce::int64 tamB) -> bool {
+        if (tamA <= 0 || tamA != tamB) return false;
+        auto arquivo = [&](const std::string& id, const ItemInfo* it) -> std::optional<juce::File> {
+            if (it && !it->collectionCaminho.empty()) {
+                const juce::File f(juce::String::fromUTF8(it->fullPath.c_str()));
+                if (f.existsAsFile()) return f;
+                return std::nullopt;
+            }
+            return projeto_.arquivoAcessivelDoItem(id);  // MAIN -> CLONEs -> SOURCE
+        };
+        const auto fa = arquivo(idA, a);
+        const auto fb = fa ? arquivo(idB, b) : std::nullopt;
+        if (fa && fb)
+            if (const auto mesmo = matriz::ingest::mesmoConteudoNoMiolo(*fa, *fb)) return !*mesmo;
+        return false;
+    };
+
     // 2. Perform cross-matching for duplicates
     if (isCatalogMode) {
         for (size_t i = 0; i < items.size(); ++i) {
@@ -2500,6 +2527,7 @@ void DuplicatesWorkspaceComponent::run() {
                 }
                 if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
                 if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                if (isDupMatch && conteudoDiferente(a.itemId, &a, b.itemId, &b, a.tamanhoBytes, b.tamanhoBytes)) continue;
 
                 if (isDupMatch) {
                     DuplicateGroup group;
@@ -2645,6 +2673,14 @@ void DuplicatesWorkspaceComponent::run() {
                 if (activeFilters_.coincidirEspacoCor) {
                     if (!group.original.colorSpace.empty() && !group.duplicata.colorSpace.empty() && !group.duplicata.colorSpaceCoincide) continue;
                     if (obterMonocromatico(group.original.itemId, group.original.fullPath) != obterMonocromatico(group.duplicata.itemId, group.duplicata.fullPath)) continue;
+                }
+                // Com SHA-256 marcado a fase B2 já descarta o que não for byte a byte igual: não lê o disco duas vezes.
+                if (!activeFilters_.coincidirSha256) {
+                    const auto io = indiceDoItemLocal.find(group.original.itemId);
+                    const ItemInfo* infoOriginal = io != indiceDoItemLocal.end() ? &items[io->second] : nullptr;
+                    if (conteudoDiferente(group.original.itemId, infoOriginal, item.itemId, &item, group.original.tamanhoBytes,
+                                          item.tamanhoBytes))
+                        continue;
                 }
 
                 gruposDetectados_.push_back(group);
@@ -2794,6 +2830,21 @@ void DuplicatesWorkspaceComponent::run() {
                     contarAchado(grupo);
                     gruposDetectados_.push_back(std::move(grupo));
                 }
+            }
+
+            // Com SHA-256 marcado só valem pares de mesmo SHA: o que a fase A achou só por metadados (mesmo tamanho +
+            // extensão etc.) e não virou IDENTICAL acima tem bytes diferentes — sai, senão aparecia como POSSIBLE.
+            gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                                                   [](const DuplicateGroup& g) { return g.criterio != "IDENTICAL"; }),
+                                    gruposDetectados_.end());
+            grupoExistente.clear();
+            for (size_t g = 0; g < gruposDetectados_.size(); ++g)
+                grupoExistente[chavePar(gruposDetectados_[g].original.itemId, gruposDetectados_[g].duplicata.itemId)] = g;
+            achadosScan_ = static_cast<int>(gruposDetectados_.size());
+            {
+                juce::int64 bytes = 0;
+                for (const auto& g : gruposDetectados_) bytes += g.duplicata.tamanhoBytes;
+                bytesScan_ = bytes;
             }
 
             // ---- B2b: selo "pasta inteira duplicada". Pasta X está inteira em Y quando TODO arquivo master de X

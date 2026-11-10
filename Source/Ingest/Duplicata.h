@@ -49,6 +49,14 @@ struct AssinaturaVisual {
 AssinaturaVisual calcularAssinaturaVisual(const juce::File& imagem);
 bool confirmaSemelhancaVisual(const AssinaturaVisual& a, const AssinaturaVisual& b);
 
+// --- Conteúdo: conferência barata de par achado só por metadados ----------
+
+// Dois arquivos de MESMO tamanho são o mesmo conteúdo? Compara 4 blocos (até 64 KB) no miolo do arquivo (20/40/60/80%),
+// longe do cabeçalho/fim onde ficam tags (BWF, ID3, EXIF): cópia com tag editada continua "mesma", tracks diferentes de
+// uma sessão multitrack (mesma duração => mesmo tamanho em PCM) dão "diferente". nullopt = não deu para decidir
+// (tamanhos diferentes, arquivo ilegível).
+std::optional<bool> mesmoConteudoNoMiolo(const juce::File& a, const juce::File& b);
+
 // --- Áudio: fingerprint espectral próprio ----------------------------------
 
 struct FingerprintAudio {

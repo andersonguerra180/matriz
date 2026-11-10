@@ -1878,6 +1878,13 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
     auto& reg = registro();
     if (cancel) cancel->registrar(reg.handle());
     struct Desreg { CancelamentoAbertura* c; sqlite3* h; ~Desreg() { if (c) c->remover(h); } } desreg{cancel, reg.handle()};
+    // LEITURAS (pré-checagens e varreduras de `arquivo`/`item`) pela conexão de leitura desta thread. A de escrita é a
+    // mesma da message thread: a varredura da etapa 4 levou 168 s no HD USB disputado (projeto Fotos, 2026-11-08) e a
+    // tela ficou congelada esse tempo todo esperando a conexão. Só os UPDATE/DELETE (quando há o que corrigir) usam `reg`.
+    auto& leitura = registroLeitura();
+    const bool leituraPropria = &leitura != &reg;
+    if (cancel && leituraPropria) cancel->registrar(leitura.handle());
+    Desreg desregLeitura{leituraPropria ? cancel : nullptr, leitura.handle()};
 
     // Grava `n` itens em blocos transacionais; `aplicar(i)` roda dentro da transação.
     auto emBlocos = [&](size_t total, const std::function<void(size_t)>& aplicar) -> bool {
@@ -1902,7 +1909,7 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
     // Pré-checagem só de leitura (LIMIT 1): o UPDATE, que pega a trava de escrita, só roda se houver o que corrigir.
     // 3. Ensure master flag is set if an item has files but no eh_master = 1
     try {
-        const bool precisa = reg.prepare(
+        const bool precisa = leitura.prepare(
             "SELECT 1 FROM arquivo a JOIN (SELECT item_id FROM arquivo GROUP BY item_id HAVING SUM(eh_master) = 0) sub "
             "ON sub.item_id = a.item_id LIMIT 1").step();
         if (precisa && !cancelado()) {
@@ -1920,7 +1927,7 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
 
     // 4. Ensure all primary files for images and documents are marked as eh_master = 1
     try {
-        const bool precisa = reg.prepare(
+        const bool precisa = leitura.prepare(
             "SELECT 1 FROM arquivo WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0 LIMIT 1").step();
         if (precisa && !cancelado())
             reg.run("UPDATE arquivo SET eh_master = 1 WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0", {});
@@ -1930,7 +1937,7 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
 
     // 5. Self-heal missing/unknown tipo_midia based on file extension
     try {
-        auto stmtTipo = reg.prepare(
+        auto stmtTipo = leitura.prepare(
             "SELECT i.id, i.titulo, a.caminho_relativo, a.caminho_absoluto_origem "
             "FROM item i "
             "JOIN arquivo a ON a.item_id = i.id "
@@ -1978,7 +1985,7 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
         struct PathFix { std::string arquivoId; std::string absolutePath; };  // absolutePath vazio: não achou
         std::vector<std::pair<std::string, std::string>> pendentes;
         {
-            auto stmtCaminho = reg.prepare(
+            auto stmtCaminho = leitura.prepare(
                 "SELECT a.id, a.caminho_relativo FROM arquivo a "
                 "WHERE (a.caminho_absoluto_origem IS NULL OR a.caminho_absoluto_origem = '') "
                 "AND (a.caminho_relativo IS NOT NULL AND a.caminho_relativo != '') "
@@ -2039,7 +2046,7 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
     // Item 19-C: marcas R órfãs (item inexistente ou fora da quarentena).
     try {
         long long antes = 0;
-        { auto st = reg.prepare("SELECT COUNT(*) FROM intake_marca_r"); if (st.step()) antes = st.columnInt(0); }
+        { auto st = leitura.prepare("SELECT COUNT(*) FROM intake_marca_r"); if (st.step()) antes = st.columnInt(0); }
         reg.exec("BEGIN IMMEDIATE");
         try {
             reg.exec("DELETE FROM intake_marca_r WHERE NOT EXISTS ("
@@ -2047,7 +2054,7 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
             reg.exec("COMMIT");
         } catch (...) { try { reg.exec("ROLLBACK"); } catch (...) {} }
         long long depois = 0;
-        { auto st = reg.prepare("SELECT COUNT(*) FROM intake_marca_r"); if (st.step()) depois = st.columnInt(0); }
+        { auto st = leitura.prepare("SELECT COUNT(*) FROM intake_marca_r"); if (st.step()) depois = st.columnInt(0); }
         etapa("intake_marca_r_limpeza", antes - depois);
     } catch (...) {}
 

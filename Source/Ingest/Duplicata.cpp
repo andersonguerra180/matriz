@@ -7,6 +7,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstring>
 
 namespace matriz::ingest {
 
@@ -299,6 +300,24 @@ AnaliseCorteBanda detectarCorteDeBanda(const juce::File& audio, const juce::File
     }
 
     return resultado;
+}
+
+std::optional<bool> mesmoConteudoNoMiolo(const juce::File& a, const juce::File& b) {
+    const juce::int64 tamanho = a.getSize();
+    if (tamanho <= 0 || tamanho != b.getSize()) return std::nullopt;
+    juce::FileInputStream ea(a), eb(b);
+    if (!ea.openedOk() || !eb.openedOk()) return std::nullopt;
+    // Bloco <= 1/10 do arquivo: os 4 blocos ficam entre 15% e 85%, fora do cabeçalho mesmo em arquivo pequeno.
+    const int bloco = static_cast<int>(std::max<juce::int64>(1, std::min<juce::int64>(64 * 1024, tamanho / 10)));
+    std::vector<char> ba(static_cast<size_t>(bloco)), bb(static_cast<size_t>(bloco));
+    for (const double fracao : {0.2, 0.4, 0.6, 0.8}) {
+        const auto pos = std::clamp<juce::int64>(static_cast<juce::int64>(static_cast<double>(tamanho) * fracao) - bloco / 2, 0,
+                                                 tamanho - bloco);
+        if (!ea.setPosition(pos) || !eb.setPosition(pos)) return std::nullopt;
+        if (ea.read(ba.data(), bloco) != bloco || eb.read(bb.data(), bloco) != bloco) return std::nullopt;
+        if (std::memcmp(ba.data(), bb.data(), static_cast<size_t>(bloco)) != 0) return false;
+    }
+    return true;
 }
 
 } // namespace matriz::ingest
