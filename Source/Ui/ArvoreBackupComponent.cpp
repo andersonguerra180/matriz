@@ -54,15 +54,6 @@ public:
     }
 };
 
-juce::String formatarTamanhoArquivo(juce::int64 bytes) {
-    if (bytes <= 0) return "0 B";
-    if (bytes < 1024) return juce::String(bytes) + " B";
-    if (bytes < 1024 * 1024) return juce::String(bytes / 1024) + " KB";
-    if (bytes < 1024LL * 1024 * 1024)
-        return juce::String(static_cast<double>(bytes) / (1024.0 * 1024.0), 1) + " MB";
-    return juce::String(static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0), 2) + " GB";
-}
-
 } // namespace
 
 // FOLDER COLOR (item 12) — color picker padrão com color wheel; reporta
@@ -149,154 +140,6 @@ private:
     std::function<void(juce::Colour)> onFechar_;
     std::vector<juce::Colour> historico_;
     std::vector<std::unique_ptr<juce::TextButton>> swatches_;
-};
-
-class TreeDetailContent : public juce::Component {
-public:
-    struct SubfolderEntry {
-        juce::String nome;
-        int contagemItens = 0;
-    };
-    struct FileEntry {
-        std::string id;
-        juce::String nome;
-        juce::String extensao;
-        juce::int64 tamanhoBytes = 0;
-    };
-
-    TreeDetailContent() {
-        btnShowInGrid = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.exibir_grade"));
-        btnShowInGrid->setColour(juce::TextButton::buttonColourId, tema().acento);
-        btnShowInGrid->setColour(juce::TextButton::textColourOffId, tema().textoSobreAcento);
-        btnShowInGrid->onClick = [this] { if (aoMostrarNaGrade) aoMostrarNaGrade(); };
-        addAndMakeVisible(*btnShowInGrid);
-    }
-
-    void lookAndFeelChanged() override {
-        juce::Component::lookAndFeelChanged();
-        if (btnShowInGrid)
-            btnShowInGrid->setButtonText(i18n::t("arvore_backup.exibir_grade"));
-        repaint();
-    }
-
-    juce::String folderName;
-    bool isTrash = false;
-    std::vector<SubfolderEntry> subfolders;
-    std::vector<FileEntry> files;
-    std::function<void(const std::string&)> aoClicarArquivo;
-    std::function<void(const std::string&, bool)> aoMenuArquivo;
-    std::function<void()> aoMostrarNaGrade;
-    std::unique_ptr<juce::TextButton> btnShowInGrid;
-    int hoverFileIndex_ = -1;
-
-    void resized() override {
-        if (btnShowInGrid) {
-            btnShowInGrid->setBounds(12, 38, getWidth() - 24, 26);
-        }
-    }
-
-    void recalcularAltura() {
-        int h = 84;
-        if (!subfolders.empty()) h += 28 + static_cast<int>(subfolders.size()) * 24;
-        if (!files.empty()) h += 28 + static_cast<int>(files.size()) * 24;
-        h += 16;
-        setSize(getWidth(), std::max(h, getParentHeight()));
-    }
-
-    int fileIndexAtY(int mouseY) const {
-        int y = 8 + 24 + 4 + 36;
-        if (!subfolders.empty()) y += 20 + static_cast<int>(subfolders.size()) * 24 + 4;
-        if (files.empty()) return -1;
-        y += 20;
-        int idx = (mouseY - y) / 24;
-        if (idx < 0 || idx >= static_cast<int>(files.size())) return -1;
-        if (mouseY < y) return -1;
-        return idx;
-    }
-
-    void mouseDown(const juce::MouseEvent& e) override {
-        int idx = fileIndexAtY(e.getPosition().y);
-        if (idx >= 0 && idx < static_cast<int>(files.size())) {
-            const auto& fileId = files[static_cast<size_t>(idx)].id;
-            if (e.mods.isPopupMenu() && aoMenuArquivo) {
-                aoMenuArquivo(fileId, true);
-                return;
-            }
-            if (aoClicarArquivo)
-                aoClicarArquivo(fileId);
-        } else if (e.mods.isPopupMenu() && aoMenuArquivo) {
-            aoMenuArquivo("", true);
-        }
-    }
-
-    void mouseMove(const juce::MouseEvent& e) override {
-        int idx = fileIndexAtY(e.getPosition().y);
-        if (idx != hoverFileIndex_) { hoverFileIndex_ = idx; repaint(); }
-    }
-
-    void mouseExit(const juce::MouseEvent&) override {
-        if (hoverFileIndex_ != -1) { hoverFileIndex_ = -1; repaint(); }
-    }
-
-    void paint(juce::Graphics& g) override {
-        g.fillAll(tema().painel);
-
-        auto area = getLocalBounds().reduced(12, 8);
-
-        g.setColour(isTrash ? tema().perigo : tema().textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
-        juce::String tituloHeader = folderName;
-        if (isTrash) tituloHeader += " " + i18n::t("arvore_backup.trash_sub");
-        g.drawText(tituloHeader, area.removeFromTop(24), juce::Justification::centredLeft, true);
-
-        area.removeFromTop(36); // Space for btnShowInGrid
-
-        g.setColour(tema().borda);
-        g.drawHorizontalLine(area.getY(), static_cast<float>(area.getX()), static_cast<float>(area.getRight()));
-        area.removeFromTop(4);
-
-        if (!subfolders.empty()) {
-            g.setColour(tema().textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
-            g.drawText(i18n::t("arvore_backup.subpastas"), area.removeFromTop(20), juce::Justification::centredLeft);
-
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-            for (const auto& sf : subfolders) {
-                auto row = area.removeFromTop(24);
-                g.setColour(tema().textoPrimario);
-                g.drawText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x93\x81 ")) + sf.nome,
-                           row.removeFromLeft(row.getWidth() - 50),
-                           juce::Justification::centredLeft, true);
-                g.setColour(tema().textoTerciario);
-                g.drawText(juce::String(sf.contagemItens) + " " + i18n::t("arvore_backup.items"),
-                           row, juce::Justification::centredRight);
-            }
-            area.removeFromTop(4);
-        }
-
-        if (!files.empty()) {
-            g.setColour(tema().textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
-            g.drawText(i18n::t("arvore_backup.arquivos"), area.removeFromTop(20), juce::Justification::centredLeft);
-
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-            for (const auto& f : files) {
-                auto row = area.removeFromTop(24);
-                g.setColour(tema().textoPrimario);
-                auto nameArea = row.removeFromLeft(row.getWidth() - 60);
-                juce::String displayName = f.nome.isNotEmpty() ? f.nome : ("file." + f.extensao);
-                g.drawText(displayName, nameArea, juce::Justification::centredLeft, true);
-                g.setColour(tema().textoTerciario);
-                g.drawText(formatarTamanhoArquivo(f.tamanhoBytes), row, juce::Justification::centredRight);
-            }
-        }
-
-        if (subfolders.empty() && files.empty()) {
-            g.setColour(tema().textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-            g.drawText(i18n::t("arvore_backup.pasta_vazia"), area, juce::Justification::centredLeft);
-        }
-    }
 };
 
 namespace {
@@ -576,13 +419,6 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     criarSpread(rotuloSpread_, sliderSpread_, "arvore_backup.spread_rotulo", "arvore_backup.spread_tooltip", espalharX_);
     criarSpread(rotuloSpreadV_, sliderSpreadV_, "arvore_backup.spread_v_rotulo", "arvore_backup.spread_v_tooltip", espalharY_);
 
-    detailContent_ = std::make_unique<TreeDetailContent>();
-    detailViewport_ = std::make_unique<juce::Viewport>();
-    detailViewport_->setViewedComponent(detailContent_.get(), false);
-    detailViewport_->setScrollBarsShown(true, false);
-    detailViewport_->setVisible(false);
-    addChildComponent(*detailViewport_);
-
     painelPropostas_ = std::make_unique<PainelPropostas>();
     painelPropostas_->aoAlternar = [this] {
         painelPropostasRecolhido_ = !painelPropostasRecolhido_;
@@ -607,15 +443,6 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnFind_->setEnabled(false);
     btnFind_->onClick = [this] { if (!pastaExploradorId_.empty()) localizarPasta(pastaExploradorId_); };
     addAndMakeVisible(*btnFind_);
-
-    detailContent_->aoClicarArquivo = [this](const std::string& itemId) {
-        if (matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), itemId)) {
-            abrirConversaWhatsapp(itemId);
-        }
-    };
-    detailContent_->aoMenuArquivo = [this](const std::string& itemId, bool) {
-        mostrarMenuArquivoDetalhe(itemId);
-    };
 
     // Barra lateral no desenho do mapa: pílulas bege, – | Fit | + num trilho, Find com lupa no título do card.
     for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnAutoArranjar_.get(), btnResetTamanhos_.get(), btnMenuMapa_.get(),
@@ -663,7 +490,6 @@ ArvoreBackupComponent::~ArvoreBackupComponent() {
     janelaTrash_.reset();
     try { persistirEscalas(); } catch (...) {}
     EventBus::obterInstancia().removerListener(this);
-    detailViewport_->setViewedComponent(nullptr, false);
     if (treeExplorador_) treeExplorador_->setRootItem(nullptr);
 }
 
@@ -788,21 +614,7 @@ void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
         juce::MessageManager::callAsync([seguro] { if (seguro && seguro->isShowing()) seguro->recarregar(); });  // escondido: recarrega ao voltar à aba
         return;
     }
-    if (e.tipoAlteracao != "titulo") return;
-    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
-    std::string itemId = e.itemId;
-    std::vector<std::string> itemIds = e.itemIds;  // evento de lote (renomear em N itens)
-    juce::MessageManager::callAsync([safeThis, itemId, itemIds] {
-        if (!safeThis || safeThis->selectedFolderId_.empty()) return;
-        for (const auto& n : safeThis->nodes_) {
-            if (n.id == safeThis->selectedFolderId_) {
-                bool afeta = n.itemIdsDiretos.count(itemId) > 0;
-                for (size_t i = 0; !afeta && i < itemIds.size(); ++i) afeta = n.itemIdsDiretos.count(itemIds[i]) > 0;
-                if (afeta) safeThis->atualizarPainelDetalhe(safeThis->selectedFolderId_, true);
-                break;
-            }
-        }
-    });
+    // ("titulo" atualizava a lista de arquivos do painel da pasta selecionada, que saiu da coluna.)
 }
 
 // ---- NEW FOLDERS: árvore proposta por pasta ingerida inteira -------------------------------------------------
@@ -2097,49 +1909,6 @@ void ArvoreBackupComponent::confirmarEApagarPastas(const std::vector<std::string
     }), true);
 }
 
-void ArvoreBackupComponent::mostrarMenuArquivoDetalhe(const std::string& itemId) {
-    if (itemId.empty()) {
-        if (detailContent_ && detailContent_->isTrash) {
-            mostrarMenuPastaTrash();
-        }
-        return;
-    }
-    juce::PopupMenu menu;
-    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
-
-    menu.addItem(i18n::t("light.ui.mb.ctx.showAtSource"), [safeThis, itemId] {
-        if (safeThis) safeThis->mostrarNaOrigem(itemId);
-    });
-
-    if (detailContent_ && detailContent_->isTrash) {
-        menu.addItem(i18n::t("arvore_backup.restaurar_item"), [safeThis, itemId] {
-            if (!safeThis) return;
-            safeThis->projeto_.restaurarItensDaTrash({itemId}, safeThis->mapaAtivoId_);
-            safeThis->recarregar();
-        });
-        menu.addItem(i18n::t("arvore_backup.extrair_canvas"), [safeThis, itemId] {
-            if (!safeThis) return;
-            safeThis->projeto_.extrairItensParaCanvas({itemId}, safeThis->mapaAtivoId_);
-            safeThis->recarregar();
-        });
-    } else {
-        if (!mapaAtivoEhOriginal()) {
-            menu.addItem(i18n::t("arvore_backup.extrair_canvas"), [safeThis, itemId] {
-                if (!safeThis) return;
-                safeThis->projeto_.extrairItensParaCanvas({itemId}, safeThis->mapaAtivoId_);
-                safeThis->recarregar();
-            });
-            menu.addItem(i18n::t("arvore_backup.mover_para_trash"), [safeThis, itemId] {
-                if (!safeThis) return;
-                safeThis->projeto_.moverItensParaTrash({itemId}, safeThis->mapaAtivoId_);
-                safeThis->recarregar();
-            });
-        }
-    }
-
-    menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition());
-}
-
 void ArvoreBackupComponent::mostrarMenuPastaTrash() {
     if (mapaAtivoEhOriginal()) return;
     auto itens = projeto_.itensNaPastaTrash(mapaAtivoId_);
@@ -3119,11 +2888,6 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 }
 
 void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
-    // (também desenha a moldura da lista da pasta selecionada, que fica logo abaixo dos cards)
-    if (!detalheBounds_.isEmpty() && !selectedFolderId_.empty()) {
-        g.setColour(tema().borda.withAlpha(0.7f));
-        g.drawRoundedRectangle(detalheBounds_.toFloat().reduced(0.5f), tema().raioPequeno, 1.0f);
-    }
     const auto& tk = tema();
     if (!trilhoZoom_.isEmpty()) barra::pintarTrilhoSegmentado(g, trilhoZoom_);
     if (!caixaArvore_.isEmpty()) {
@@ -3246,13 +3010,12 @@ void ArvoreBackupComponent::resized() {
         coluna_.finalizarCard();
     }
 
-    // 5. FOLDER EXPLORER cresce: a árvore ocupa toda a altura que sobrar; Find no título do card. Com uma pasta
-    //    selecionada, a lista dela (nome, subpastas, arquivos) divide a sobra com a árvore, logo abaixo do card.
+    // 5. FOLDER EXPLORER cresce: a árvore ocupa toda a altura que sobrar; Find no título do card. (O painel da pasta
+    //    selecionada — nome, SHOW CONTENT IN GRID, subpastas, arquivos — saiu: a grade abre pelo duplo clique/menu do card.)
     const int alturaSemPasta = original ? 0 : (kPadV * 2 + 20 + kEntreCards);
-    const bool comDetalhe = detailViewport_ && detailViewport_->isVisible() && !selectedFolderId_.empty();
     {
         const int sobra = corpo.getHeight() - alturaSemPasta;
-        const int alturaCard = comDetalhe ? juce::jmax(140, static_cast<int>(sobra * 0.5f)) : juce::jmax(100, sobra - kEntreCards);
+        const int alturaCard = juce::jmax(100, sobra - kEntreCards);
         const int fundoCard = corpo.getY() + alturaCard;
         auto titulo = coluna_.iniciarCard(i18n::t("arvore_backup.card_explorador"));
         if (btnFind_) btnFind_->setBounds(titulo.removeFromRight(72).withSizeKeepingCentre(72, 24));
@@ -3262,22 +3025,6 @@ void ArvoreBackupComponent::resized() {
         coluna_.finalizarCard();
     }
     posicionarPainelPropostas();
-
-    // Pasta selecionada: nome, subpastas e a lista de arquivos no espaço entre o explorador e o _NO FOLDER.
-    detalheBounds_ = {};
-    if (comDetalhe) {
-        auto area = corpo.withTrimmedBottom(alturaSemPasta);
-        if (area.getHeight() >= 80) {
-            detalheBounds_ = area;
-            detailViewport_->setBounds(area.reduced(1));
-            detailContent_->setSize(area.getWidth() - 2 - detailViewport_->getScrollBarThickness(), detailContent_->getHeight());
-            corpo.removeFromTop(area.getHeight() + kEntreCards);
-        } else {
-            detailViewport_->setBounds({});
-        }
-    } else if (detailViewport_) {
-        detailViewport_->setBounds({});
-    }
 
     // 6. _NO FOLDER numa linha só, com a contagem à direita — clicável e aceitando drop (nunca no ORIGINAL).
     semPastaBounds_ = {};
@@ -4252,100 +3999,9 @@ void ArvoreBackupComponent::importarSemPastaNaPasta(const std::string& pastaId, 
     });
 }
 
-void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId, bool forcar) {
-    if (folderId.empty() || (folderId == selectedFolderId_ && !forcar)) {
-        if (folderId.empty() && !selectedFolderId_.empty()) {
-            selectedFolderId_.clear();
-            detailViewport_->setVisible(false);
-            resized();
-        }
-        return;
-    }
+// Só guarda a pasta selecionada (pastaSelecionadaId, aba, ingest na pasta): o painel com a lista dela saiu da coluna.
+void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId, bool) {
     selectedFolderId_ = folderId;
-
-    if (!trashFolderId_.empty() && folderId == trashFolderId_) {
-        detailContent_->isTrash = true;
-        detailContent_->folderName = "_trash";
-        detailContent_->subfolders.clear();
-        detailContent_->files.clear();
-        auto trashItens = projeto_.itensNaPastaTrash(mapaAtivoId_);
-        if (!trashItens.empty()) {
-            std::set<std::string> setItens(trashItens.begin(), trashItens.end());
-            auto detalhes = projeto_.obterDetalhesItens(setItens);
-            for (const auto& d : detalhes) {
-                TreeDetailContent::FileEntry fe;
-                fe.id = d.id;
-                fe.nome = d.nome;
-                fe.extensao = d.extensao;
-                fe.tamanhoBytes = d.tamanhoBytes;
-                detailContent_->files.push_back(fe);
-            }
-        }
-        detailContent_->aoMostrarNaGrade = [this, trashItens] {
-            if (aoMostrarConteudoNaGrade) {
-                std::set<std::string> s(trashItens.begin(), trashItens.end());
-                aoMostrarConteudoNaGrade(s);
-            }
-        };
-        detailViewport_->setVisible(true);
-        resized();
-        detailContent_->recalcularAltura();
-        detailContent_->repaint();
-        return;
-    }
-
-    const FolderNode* selected = nullptr;
-    for (const auto& n : nodes_)
-        if (n.id == folderId) { selected = &n; break; }
-    if (!selected) { detailViewport_->setVisible(false); return; }
-
-    detailContent_->isTrash = false;
-    detailContent_->folderName = selected->nome;
-
-    detailContent_->subfolders.clear();
-    for (const auto& n : nodes_) {
-        if (n.pastaPaiId == folderId) {
-            TreeDetailContent::SubfolderEntry sf;
-            sf.nome = n.nome;
-            sf.contagemItens = n.contagemItens;
-            detailContent_->subfolders.push_back(sf);
-        }
-    }
-
-    detailContent_->files.clear();
-    if (!selected->itemIdsDiretos.empty()) {
-        auto detalhes = projeto_.obterDetalhesItens(selected->itemIdsDiretos);
-        for (const auto& d : detalhes) {
-            TreeDetailContent::FileEntry fe;
-            fe.id = d.id;
-            fe.nome = d.nome;
-            fe.extensao = d.extensao;
-            fe.tamanhoBytes = d.tamanhoBytes;
-            detailContent_->files.push_back(fe);
-        }
-    }
-
-    std::set<std::string> allItemIds = selected->itemIdsDiretos;
-    std::function<void(const std::string&)> coletarFilhos = [&](const std::string& parentId) {
-        for (const auto& other : nodes_) {
-            if (other.pastaPaiId == parentId) {
-                allItemIds.insert(other.itemIdsDiretos.begin(), other.itemIdsDiretos.end());
-                coletarFilhos(other.id);
-            }
-        }
-    };
-    coletarFilhos(folderId);
-
-    detailContent_->aoMostrarNaGrade = [this, allItemIds] {
-        if (aoMostrarConteudoNaGrade) {
-            aoMostrarConteudoNaGrade(allItemIds);
-        }
-    };
-
-    detailViewport_->setVisible(true);
-    resized();
-    detailContent_->recalcularAltura();
-    detailContent_->repaint();
 }
 
 void ArvoreBackupComponent::lookAndFeelChanged() {
@@ -4364,7 +4020,6 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     if (sliderSpread_) sliderSpread_->setTooltip(i18n::t("arvore_backup.spread_tooltip"));
     if (rotuloSpreadV_) rotuloSpreadV_->setText(i18n::t("arvore_backup.spread_v_rotulo"), juce::dontSendNotification);
     if (sliderSpreadV_) sliderSpreadV_->setTooltip(i18n::t("arvore_backup.spread_v_tooltip"));
-    if (detailContent_) detailContent_->lookAndFeelChanged();
     resized();
     repaint();
 }

@@ -8,7 +8,6 @@
 
 namespace matriz::ui {
 
-class TreeDetailContent;
 class PainelPropostas;
 class ItemPastaExplorador;
 class PainelOverlay;
@@ -295,7 +294,6 @@ private:
     juce::Rectangle<int> rotuloTamanhoBounds_;  // "Size", à esquerda do slider de tamanho
     juce::Rectangle<int> caixaArvore_;        // fundo claro da árvore do FOLDER EXPLORER
     juce::Rectangle<int> semPastaBounds_;
-    juce::Rectangle<int> detalheBounds_;  // lista da pasta selecionada, no espaço livre da coluna
     juce::Rectangle<int> zoomIndicadorBounds_;
     // Canvas (pan/zoom): à direita da coluna, abaixo da barra de abas. screenToCanvas /
     // canvasToScreen já descontam a origem dele.
@@ -333,7 +331,6 @@ private:
     juce::Rectangle<int> boundsPastaTrash() const;
     void desenharPastaTrash(juce::Graphics& g) const;
     void confirmarEApagarPastas(const std::vector<std::string>& pastaIds);
-    void mostrarMenuArquivoDetalhe(const std::string& itemId);
     void mostrarMenuPastaTrash();
     std::string trashFolderId_;
     int trashContagem_ = 0;
@@ -481,8 +478,6 @@ private:
     juce::Component::SafePointer<juce::CallOutBox> corCallout_;
 
     static constexpr int kDetailPanelWidth = 280;
-    std::unique_ptr<juce::Viewport> detailViewport_;
-    std::unique_ptr<TreeDetailContent> detailContent_;
     std::string selectedFolderId_;
     void atualizarPainelDetalhe(const std::string& folderId, bool forcar = false);
 
