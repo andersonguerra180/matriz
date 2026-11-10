@@ -7572,6 +7572,21 @@ int rodarLoteSelfTest() {
                 for (size_t j = i + 1; j < mapaA.nodes_.size(); ++j)
                     if (mapaA.nodes_[i].bounds.intersects(mapaA.nodes_[j].bounds)) semSobra = false;
             checar(mapaA.nodes_.size() == 7 && semSobra, "and the whole map is arranged with no overlap (" + juce::String((int) mapaA.nodes_.size()) + " folders)");
+            {   // a vista fica na pasta reorganizada (antes o arranjo deixava zoom 1 / pan 0, na origem do mapa)
+                juce::Rectangle<int> arvoreRecebe;
+                bool primeiro = true;
+                for (const auto& n : mapaA.nodes_)
+                    if (n.id == recebe || n.pastaPaiId == recebe) {
+                        arvoreRecebe = primeiro ? n.bounds : arvoreRecebe.getUnion(n.bounds);
+                        primeiro = false;
+                    }
+                const auto canvasA = mapaA.areaCanvas();
+                const float cx = static_cast<float>(arvoreRecebe.getCentreX()) * mapaA.zoom_ + mapaA.panOffset_.x;
+                const float cy = static_cast<float>(arvoreRecebe.getCentreY()) * mapaA.zoom_ + mapaA.panOffset_.y;
+                checar(!primeiro && std::abs(cx - canvasA.getWidth() * 0.5f) <= 2.0f && std::abs(cy - canvasA.getHeight() * 0.5f) <= 2.0f,
+                       "after the AUTO rule the view stays on the reorganized folder (centre at " + juce::String(cx, 0) + ", " +
+                           juce::String(cy, 0) + ")");
+            }
             pa.definirMapaAtivo(mapa);
         }
 

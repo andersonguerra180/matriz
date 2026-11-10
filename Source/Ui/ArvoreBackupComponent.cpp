@@ -4192,7 +4192,11 @@ void ArvoreBackupComponent::aplicarAutoOrganizacaoNaPasta(const std::string& pas
     recarregar();
     // A regra montou/mudou a árvore (ex.: IMPORT FROM _no folder): ela já vem arranjada, como no AUTO ARRANGE —
     // as subpastas novas não ficam espremidas entre as pastas que já tinham posição.
-    if (r.status == S::Ok && (r.pastasCriadas > 0 || r.pastasApagadas > 0 || r.itensMovidos > 0)) autoArranjarMapaInteiro(false);
+    // O arranjo zera zoom/pan (vista volta à origem do mapa): a vista volta para a pasta reorganizada, como no FIND.
+    if (r.status == S::Ok && (r.pastasCriadas > 0 || r.pastasApagadas > 0 || r.itensMovidos > 0)) {
+        autoArranjarMapaInteiro(false);
+        localizarPasta(pastaId);
+    }
 }
 
 // IMPORT FROM _no folder: os ids são lidos fora da message thread (os do INTAKE ficam: ainda não entraram no catálogo); depois de
