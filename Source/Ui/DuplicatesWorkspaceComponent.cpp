@@ -1418,8 +1418,8 @@ private:
     juce::OwnedArray<Card> cards_;
 };
 
-DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projeto)
-    : Thread("BkrDuplicatesScan"), projeto_(projeto) {
+DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projeto, bool modoIntake)
+    : Thread("BkrDuplicatesScan"), projeto_(projeto), modoIntake_(modoIntake) {
     
     btnScan_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_scan"));
     btnScan_->onClick = [this] { iniciarScan(); };
@@ -1431,7 +1431,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     addAndMakeVisible(*lblScope_);
 
     cbScope_ = std::make_unique<juce::ComboBox>("cbScope");
-    cbScope_->addItem(matriz::i18n::t("duplicatas.scope_all"), 1);
+    cbScope_->addItem(matriz::i18n::t(modoIntake_ ? "duplicatas.scope_intake_all" : "duplicatas.scope_all"), 1);
     cbScope_->addItem(matriz::i18n::t("duplicatas.scope_selected"), 2);
     cbScope_->setSelectedId(1);
     cbScope_->setTooltip("Choose search scope (all database files vs selected grid items)");
@@ -1640,7 +1640,7 @@ DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
     // O card "Scanning Duplicates" é de quem o abriu: quem concluía era o timerCallback deste componente.
     // Destruído no meio do scan (troca de idioma/tema, projeto fechado), o card ficava parado pra sempre.
     if (estado_ == State::Scanning)
-        ProgressoGlobal::obterInstancia().concluirTarefa("duplicates_scan", "Scan interrupted");
+        ProgressoGlobal::obterInstancia().concluirTarefa(idTarefaScan(), "Scan interrupted");
     listaComponent_.reset();
     listaSequencias_.reset();
     viewport_.reset();
@@ -1964,7 +1964,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     if (cbScope_) {
         int sel = cbScope_->getSelectedId();
         cbScope_->clear(juce::dontSendNotification);
-        cbScope_->addItem(matriz::i18n::t("duplicatas.scope_all"), 1);
+        cbScope_->addItem(matriz::i18n::t(modoIntake_ ? "duplicatas.scope_intake_all" : "duplicatas.scope_all"), 1);
         cbScope_->addItem(matriz::i18n::t("duplicatas.scope_selected"), 2);
         cbScope_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
         atualizarContagemSelecionados();
@@ -2143,7 +2143,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     if (activeFilters_.scope == 2 && activeFilters_.selecionadosNoGrid.empty()) {
         const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "DUPLICATES",
-            pt ? juce::String::fromUTF8("Nenhum arquivo selecionado no grid. Selecione arquivos na aba METADATA ou escolha \"Todos\" no escopo.")
+            modoIntake_ ? matriz::i18n::t("duplicatas.intake_sem_selecao") : pt ? juce::String::fromUTF8("Nenhum arquivo selecionado no grid. Selecione arquivos na aba METADATA ou escolha \"Todos\" no escopo.")
                : juce::String("No files are selected in the grid. Select files in the METADATA tab or choose \"All\" as the scope."));
         return;
     }
@@ -2179,6 +2179,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     bytesScan_ = 0;
     gruposDetectados_.clear();
     sequenciasDetectadas_.clear();
+    idsRAutomatico_.clear();
     btnScan_->setEnabled(false);
     btnScan_->setButtonText(matriz::i18n::t("duplicatas.scanning"));
     lblStatus_->setText(matriz::i18n::t("duplicatas.scanning"), juce::dontSendNotification);  // dá altura ao status antes do resized()
@@ -2187,7 +2188,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     // SafePointer, nunca `this` bruto: o card pode sobreviver ao componente e o Cancelar chamaria um objeto liberado.
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
     ProgressoGlobal::obterInstancia().iniciarTarefa(
-        "duplicates_scan", "Scanning Duplicates", 0, [safeThis] { if (safeThis) safeThis->signalThreadShouldExit(); },
+        idTarefaScan(), "Scanning Duplicates", 0, [safeThis] { if (safeThis) safeThis->signalThreadShouldExit(); },
         "Analyzing catalog for duplicate assets...");
     
     startTimer(100); // Poll scan progress
@@ -2200,6 +2201,38 @@ void DuplicatesWorkspaceComponent::run() {
     auto& db = projeto_.projeto().registro();
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
     faseScan_ = 1;
+
+    // Modo Intake: quem está no Intake agora (em quarentena; o que já saiu como duplicata não conta) e quando chegou.
+    std::unordered_set<std::string> idsIntake;
+    std::unordered_map<std::string, std::string> chegadaIntake;  // item -> criado_em
+    if (modoIntake_) {
+        try {
+            auto st = db.prepare("SELECT id, COALESCE(criado_em, '') FROM item WHERE em_quarentena = 1 AND COALESCE(estado, '') != 'duplicata'");
+            while (st.step()) {
+                idsIntake.insert(st.columnText(0));
+                chegadaIntake[st.columnText(0)] = st.columnText(1);
+            }
+        } catch (...) {}
+        if (idsIntake.empty()) {
+            progressoScan_ = 1.0;
+            return;
+        }
+    }
+    // Modo Intake: o par só vale com um lado no Intake (catálogo x catálogo sai); a duplicata é sempre o arquivo do
+    // Intake e, entre dois do Intake, o que chegou por último. false = par só de catálogo.
+    auto orientarParaIntake = [&](DuplicateGroup& g) -> bool {
+        auto doIntake = [&](const DuplicateMatch& m) { return m.collectionCaminho.empty() && idsIntake.count(m.itemId) > 0; };
+        const bool origemIntake = doIntake(g.original), duplicataIntake = doIntake(g.duplicata);
+        if (!origemIntake && !duplicataIntake) return false;
+        bool trocar = origemIntake && !duplicataIntake;
+        if (origemIntake && duplicataIntake) {
+            const auto& co = chegadaIntake[g.original.itemId];
+            const auto& cd = chegadaIntake[g.duplicata.itemId];
+            trocar = co != cd ? co > cd : g.original.itemId > g.duplicata.itemId;
+        }
+        if (trocar) std::swap(g.original, g.duplicata);
+        return true;
+    };
 
     // A grade mostra só a capa de cada NEST/container: selecionar a capa vale para TODOS os arquivos dele (como a
     // ficha em lote). Sem isto o scan "Selected files" comparava só a capa e ignorava o que a seleção cobre.
@@ -2247,6 +2280,7 @@ void DuplicatesWorkspaceComponent::run() {
         std::string sha256;
         std::string dataOriginal;  // EXIF DateTimeOriginal (só imagens), se houver
         std::string camera;        // EXIF Model (ou Make), para a regra de sequência
+        bool intake = false;       // modo Intake: arquivo do Intake (o resto é o catálogo)
     };
     std::vector<ItemInfo> items;
     // SUBJECT / LIST de cada item (chave = collectionCaminho + "\n" + itemId), só os que têm algum dos dois.
@@ -2325,6 +2359,15 @@ void DuplicatesWorkspaceComponent::run() {
                                 info.colorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString().toStdString();
                             }
                         }
+                    }
+                }
+
+                // Modo Intake: os filtros valem só para o lado do Intake; o catálogo entra inteiro (é contra ele que se compara).
+                if (modoIntake_) {
+                    info.intake = colCaminho.empty() && idsIntake.count(info.itemId) > 0;
+                    if (!info.intake) {
+                        items.push_back(info);
+                        continue;
                     }
                 }
 
@@ -2501,6 +2544,7 @@ void DuplicatesWorkspaceComponent::run() {
             for (size_t j = i + 1; j < items.size(); ++j) {
                 if (threadShouldExit()) return;
                 const auto& b = items[j];
+                if (modoIntake_ && !a.intake && !b.intake) continue;
 
                 bool nomeIgual = juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo));
                 bool extIgual = (a.ext == b.ext);
@@ -2579,7 +2623,7 @@ void DuplicatesWorkspaceComponent::run() {
     } else {
         // Com qualquer filtro ativo (escopo, tipo, tamanho, ano) o "original" também tem que passar pelos filtros:
         // só se comparam arquivos que estão dentro do que o usuário escolheu.
-        const bool filtrosAtivos = activeFilters_.scope == 2 || !activeFilters_.containers.empty() || !activeFilters_.fileTypes.empty() ||
+        const bool filtrosAtivos = modoIntake_ || activeFilters_.scope == 2 || !activeFilters_.containers.empty() || !activeFilters_.fileTypes.empty() ||
                                    activeFilters_.sizeFilter > 1 ||
                                    activeFilters_.anoDe > 0 || activeFilters_.anoAte > 0;
         std::set<std::string> idsFiltrados;
@@ -2591,12 +2635,14 @@ void DuplicatesWorkspaceComponent::run() {
 
             const auto& item = items[i];
             progressoScan_ = 0.2 * static_cast<double>(i) / static_cast<double>(items.size());  // fase A = 0..20%
+            if (modoIntake_ && !item.intake) continue;  // o catálogo só entra como o "original" achado
             
             auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
                 db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.caminhoRelativo, item.itemId,
                 projeto_.projeto().pasta(), "", filtrosAtivos ? &idsFiltrados : nullptr);
 
-            if (matchOpt && matchOpt->itemId < item.itemId) {
+            // Achado no catálogo (modo Intake): o catálogo nunca é percorrido deste lado, então o par sai daqui.
+            if (matchOpt && (matchOpt->itemId < item.itemId || (modoIntake_ && idsIntake.count(matchOpt->itemId) == 0))) {
                 DuplicateGroup group;
                 group.duplicata.itemId = item.itemId;
                 group.duplicata.codigoAcervo = item.codigoAcervo;
@@ -2783,12 +2829,17 @@ void DuplicatesWorkspaceComponent::run() {
                 } catch (...) {}
                 paraGravar.clear();
             };
+            // Modo Intake: do catálogo só se calcula o checksum de quem tem o tamanho de algum arquivo do Intake (SHA igual
+            // exige tamanho igual).
+            std::unordered_set<juce::int64> tamanhosIntake;
+            if (modoIntake_) for (const auto& it : items) if (it.intake) tamanhosIntake.insert(it.tamanhoBytes);
+            auto podeCalcular = [&](const ItemInfo& it) { return !modoIntake_ || it.intake || tamanhosIntake.count(it.tamanhoBytes) > 0; };
             size_t semChecksum = 0;
-            for (const auto& it : items) if (it.sha256.empty() && !it.arquivoId.empty()) ++semChecksum;
+            for (const auto& it : items) if (it.sha256.empty() && !it.arquivoId.empty() && podeCalcular(it)) ++semChecksum;
             size_t feitos = 0;
             for (auto& it : items) {
                 if (threadShouldExit()) { gravarChecksums(); return; }
-                if (!it.sha256.empty() || it.arquivoId.empty() || it.fullPath.empty()) continue;
+                if (!it.sha256.empty() || it.arquivoId.empty() || it.fullPath.empty() || !podeCalcular(it)) continue;
                 progressoScan_ = 0.2 + 0.4 * static_cast<double>(feitos) / static_cast<double>(std::max<size_t>(1, semChecksum));  // 20..60%
                 ++feitos;
                 const juce::File f(juce::String::fromUTF8(it.fullPath.c_str()));
@@ -2808,10 +2859,19 @@ void DuplicatesWorkspaceComponent::run() {
                 if (!items[i].sha256.empty()) porSha[items[i].sha256].push_back(i);
             for (auto& [sha, idxs] : porSha) {
                 if (idxs.size() < 2) continue;
-                std::sort(idxs.begin(), idxs.end(), [&](size_t x, size_t y) { return items[x].itemId < items[y].itemId; });
+                std::sort(idxs.begin(), idxs.end(), [&](size_t x, size_t y) {
+                    if (modoIntake_) {  // o catálogo primeiro (é o original); no Intake, por ordem de chegada
+                        const auto& ix = items[x];
+                        const auto& iy = items[y];
+                        if (ix.intake != iy.intake) return !ix.intake;
+                        if (ix.intake && ix.criadoEm != iy.criadoEm) return ix.criadoEm < iy.criadoEm;
+                    }
+                    return items[x].itemId < items[y].itemId;
+                });
                 for (size_t k = 1; k < idxs.size(); ++k) {
                     const auto& a = items[idxs[0]];
                     const auto& b = items[idxs[k]];
+                    if (modoIntake_ && !a.intake && !b.intake) continue;
                     if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
                     if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
                     if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
@@ -3011,6 +3071,7 @@ void DuplicatesWorkspaceComponent::run() {
                         if (dist > kLimiar) continue;
                         const auto& a = items[ca.idx];
                         const auto& b = items[cb.idx];
+                        if (modoIntake_ && !a.intake && !b.intake) continue;
                         const auto chave = chavePar(a.itemId, b.itemId);
                         if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
                         if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
@@ -3059,6 +3120,11 @@ void DuplicatesWorkspaceComponent::run() {
                     }
                 }
             }
+        }
+        if (modoIntake_) {
+            std::vector<DuplicateGroup> comIntake;
+            for (auto& p : paresSequencia) if (orientarParaIntake(p)) comIntake.push_back(std::move(p));
+            paresSequencia = std::move(comIntake);
         }
         // Rajadas: os pares de sequência ligados por uma foto em comum viram um grupo só.
         {
@@ -3116,6 +3182,7 @@ void DuplicatesWorkspaceComponent::run() {
                     for (size_t y = x + 1; y < idxs.size(); ++y) {
                         const auto& a = items[idxs[x]];
                         const auto& b = items[idxs[y]];
+                        if (modoIntake_ && !a.intake && !b.intake) continue;
                         const auto chave = chavePar(a.itemId, b.itemId);
                         if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
                         if (activeFilters_.coincidirTamanho && a.tamanhoBytes > 0 && b.tamanhoBytes > 0 && a.tamanhoBytes != b.tamanhoBytes) continue;
@@ -3138,6 +3205,20 @@ void DuplicatesWorkspaceComponent::run() {
                 }
             }
         }
+    }
+
+    if (modoIntake_) {
+        std::vector<DuplicateGroup> comIntake;
+        for (auto& g : gruposDetectados_) if (orientarParaIntake(g)) comIntake.push_back(std::move(g));
+        gruposDetectados_ = std::move(comIntake);
+        // IDENTICAL (mesmo SHA-256): R direto no arquivo do Intake (timerCallback), sem passar pela lista. Sai da lista
+        // também qualquer outro par cuja duplicata já vai ganhar R.
+        std::set<std::string> comR;
+        for (const auto& g : gruposDetectados_) if (g.criterio == "IDENTICAL") comR.insert(g.duplicata.itemId);
+        gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                                               [&](const DuplicateGroup& g) { return comR.count(g.duplicata.itemId) > 0; }),
+                                gruposDetectados_.end());
+        idsRAutomatico_.assign(comR.begin(), comR.end());
     }
 
     // Numeração consistente em todos os pares do mesmo conjunto relacionado.
@@ -3218,7 +3299,13 @@ void DuplicatesWorkspaceComponent::timerCallback() {
                 viewport_->setVisible(true);
                 listaComponent_->updateList(gruposDetectados_);
             }
-            ProgressoGlobal::obterInstancia().concluirTarefa("duplicates_scan", msgFinal);
+            if (modoIntake_ && !idsRAutomatico_.empty()) {
+                const auto textoR = matriz::i18n::t("duplicatas.intake_r_automatico").replace("{n}", juce::String((int) idsRAutomatico_.size()));
+                msgFinal = gruposDetectados_.empty() ? textoR : textoR + " " + msgFinal;
+                lblStatus_->setText(msgFinal, juce::dontSendNotification);
+                if (aoMarcarRNoIntake) aoMarcarRNoIntake(idsRAutomatico_);
+            }
+            ProgressoGlobal::obterInstancia().concluirTarefa(idTarefaScan(), msgFinal);
             if (aoConcluirScan) aoConcluirScan(static_cast<int>(gruposDetectados_.size()));
             resized();
             repaint();
@@ -3236,7 +3323,7 @@ void DuplicatesWorkspaceComponent::timerCallback() {
                                 juce::dontSendNotification);
             repaint();  // barra de progresso da área direita
             ProgressoGlobal::obterInstancia().atualizarFracao(
-                "duplicates_scan", progressoScan_,
+                idTarefaScan(), progressoScan_,
                 fase + ": " + juce::String(static_cast<int>(progressoScan_ * 100)) + "%");
         }
     }
@@ -3271,6 +3358,11 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         }
         resized();
         repaint();
+        return;
+    }
+
+    if (modoIntake_) {  // R no arquivo do Intake; nada é juntado
+        marcarRNosGrupos({group});
         return;
     }
 
@@ -3650,6 +3742,18 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         return;
     }
 
+    if (modoIntake_) {  // VALIDATE ALL no Intake: R em todos os visíveis elegíveis (mesma regra do lote de sempre)
+        std::vector<DuplicateGroup> alvo;
+        for (const auto& g : gruposDetectados_)
+            if (passaFiltroResultado(g) && (todas || !ehPrevisto(g))) alvo.push_back(g);
+        const bool confirm = juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::QuestionIcon, matriz::i18n::t("duplicatas.janela_titulo_intake"),
+            matriz::i18n::t("duplicatas.intake_validar_confirmar").replace("{n}", juce::String((int) alvo.size())),
+            isPt ? juce::String::fromUTF8("Sim") : "Yes", isPt ? juce::String::fromUTF8("Não") : "No", this);
+        if (confirm) marcarRNosGrupos(alvo);
+        return;
+    }
+
     // Validate All em lote (item): uma escolha só, aplicada a TODOS os
     // grupos detectados de uma vez — não é mais um confirm/cancel binário.
     // Não apaga nada (nem catálogo, nem disco/fonte): só decide qual lado
@@ -3782,6 +3886,21 @@ void DuplicatesWorkspaceComponent::atualizarBotoesSelecionados() {
     if (btnDismissSelected_) btnDismissSelected_->setEnabled(temSelecao);
 }
 
+void DuplicatesWorkspaceComponent::marcarRNosGrupos(const std::vector<DuplicateGroup>& grupos) {
+    std::set<std::string> comR;
+    for (const auto& g : grupos) comR.insert(g.duplicata.itemId);
+    if (comR.empty()) return;
+    if (aoMarcarRNoIntake) aoMarcarRNoIntake(std::vector<std::string>(comR.begin(), comR.end()));
+    // Ganhou R: sai da lista, com qualquer outro par em que ele é a duplicata.
+    gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                                           [&](const DuplicateGroup& g) { return comR.count(g.duplicata.itemId) > 0; }),
+                            gruposDetectados_.end());
+    atualizarListaEStatusAposResolucao();
+    if (gruposDetectados_.empty())
+        lblStatus_->setText(matriz::i18n::t("duplicatas.intake_r_marcados").replace("{n}", juce::String((int) comR.size())),
+                            juce::dontSendNotification);
+}
+
 void DuplicatesWorkspaceComponent::atualizarListaEStatusAposResolucao() {
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (gruposDetectados_.empty()) {
@@ -3856,6 +3975,14 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
             }
             safeThis->atualizarListaEStatusAposResolucao();
         }, "Dismiss Duplicates");
+        return;
+    }
+
+    if (modoIntake_) {  // R no arquivo do Intake de cada par selecionado
+        std::vector<DuplicateGroup> alvo;
+        for (int idx : indices)
+            if (idx >= 0 && idx < static_cast<int>(gruposDetectados_.size())) alvo.push_back(gruposDetectados_[static_cast<size_t>(idx)]);
+        marcarRNosGrupos(alvo);
         return;
     }
 

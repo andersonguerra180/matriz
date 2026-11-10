@@ -23,7 +23,11 @@ class DuplicatesWorkspaceComponent : public juce::Component,
 public:
     friend int rodarDuplicatasResultadosSelfTest();
     friend int rodarLoteSelfTest();  // --selftest-lote: critérios rápidos (etapa 9)
-    explicit DuplicatesWorkspaceComponent(ProjetoAberto& projeto);
+    // modoIntake: a janela do botão Find duplicates do INTAKE. Compara arquivos do Intake com o catálogo e entre si
+    // (nunca catálogo x catálogo); os filtros valem para o lado do Intake. A duplicata de cada par é sempre o arquivo
+    // do Intake (entre dois do Intake, o que chegou por último). IDENTICAL ganha R sozinho no fim do scan; VALIDATE
+    // nos outros também só põe R — nada é juntado nem escondido, o catálogo não muda.
+    explicit DuplicatesWorkspaceComponent(ProjetoAberto& projeto, bool modoIntake = false);
     ~DuplicatesWorkspaceComponent() override;
 
     void paint(juce::Graphics& g) override;
@@ -39,6 +43,9 @@ public:
     void atualizarContagemSelecionados();
     // Fim de uma verificação (message thread): quantos grupos achou (0 = nenhuma). Alimenta o selo do Find duplicates.
     std::function<void(int grupos)> aoConcluirScan;
+    // Modo Intake: arquivos do Intake que devem ganhar R (message thread). Quem hospeda liga ao INTAKE.
+    std::function<void(const std::vector<std::string>& itemIds)> aoMarcarRNoIntake;
+    bool modoIntake() const { return modoIntake_; }
 
 private:
     static constexpr int kAlturaResumo = 28;
@@ -120,6 +127,13 @@ private:
     void resolverDuplicata(int grupoIdx, bool ehDuplicataReal);
 
     ProjetoAberto& projeto_;
+    const bool modoIntake_ = false;
+    // Modo Intake: IDENTICAL achados pelo último scan (lado do Intake). Escrito pela thread do scan, lido no
+    // timerCallback depois que ela termina.
+    std::vector<std::string> idsRAutomatico_;
+    // Modo Intake, VALIDATE: R no lado do Intake de cada par e o par sai da lista.
+    void marcarRNosGrupos(const std::vector<DuplicateGroup>& grupos);
+    const char* idTarefaScan() const { return modoIntake_ ? "duplicates_scan_intake" : "duplicates_scan"; }
 
     // UI State
 public:

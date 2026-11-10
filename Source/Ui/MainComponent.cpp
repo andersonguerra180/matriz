@@ -568,6 +568,7 @@ MainComponent::MainComponent() {
 
 void MainComponent::aplicarPreferenciaLoteDuplicatas() {
     if (duplicatesWorkspace_) duplicatesWorkspace_->aplicarPreferenciaLote();
+    if (duplicatesIntake_) duplicatesIntake_->aplicarPreferenciaLote();
 }
 
 void MainComponent::atualizarTooltips() {
@@ -654,6 +655,10 @@ void MainComponent::atualizarTema() {
         duplicatesWorkspace_->sendLookAndFeelChange();
         duplicatesWorkspace_->repaint();
     }
+    if (duplicatesIntake_) {
+        duplicatesIntake_->sendLookAndFeelChange();
+        duplicatesIntake_->repaint();
+    }
     if (analyticsWorkspace_) {
         analyticsWorkspace_->sendLookAndFeelChange();
         analyticsWorkspace_->repaint();
@@ -731,10 +736,13 @@ void MainComponent::atualizarIdioma() {
     auto tabAtual = barraNavegacao_ ? barraNavegacao_->getSelectedTab() : BarraNavegacaoComponent::Tab::Grid;
 
     const bool duplicatasAbertas = janelaDuplicatas_ && janelaDuplicatas_->isVisible();
+    const bool duplicatasIntakeAbertas = janelaDuplicatasIntake_ && janelaDuplicatasIntake_->isVisible();
     intakeWorkspace_.reset();
     catalogWorkspace_.reset();
     janelaDuplicatas_.reset();  // antes do workspace que ela hospeda
     duplicatesWorkspace_.reset();
+    janelaDuplicatasIntake_.reset();
+    duplicatesIntake_.reset();
     analyticsWorkspace_.reset();
     cartoesAnalytics_.reset();
     treeWorkspace_.reset();
@@ -766,6 +774,7 @@ void MainComponent::atualizarIdioma() {
         else if (tabAtual == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
     }
     if (duplicatasAbertas) mostrarDuplicates();
+    if (duplicatasIntakeAbertas) mostrarDuplicatesIntake();
 
     sendLookAndFeelChange();
     resized();
@@ -842,6 +851,8 @@ void MainComponent::reconstruirTelaInicial() {
     catalogWorkspace_.reset();
     janelaDuplicatas_.reset();  // antes do workspace que ela hospeda
     duplicatesWorkspace_.reset();
+    janelaDuplicatasIntake_.reset();
+    duplicatesIntake_.reset();
     resultadoDuplicatas_ = -1;
     analyticsWorkspace_.reset();
     cartoesAnalytics_.reset();
@@ -1865,6 +1876,7 @@ void MainComponent::mostrarIntake() {
         intakeWorkspace_->aoConfirmarParaGrid = [this] {
             if (catalogWorkspace_) catalogWorkspace_->recarregar();
         };
+        intakeWorkspace_->aoPedirDuplicatas = [this] { mostrarDuplicatesIntake(); };
         intakeWorkspace_->aoPedirAjuda = [] {
             HelpDialog::exibirModal();
         };
@@ -1969,6 +1981,39 @@ void MainComponent::mostrarDuplicates() {
     if (!novo) duplicatesWorkspace_->recarregar();
     else duplicatesWorkspace_->atualizarContagemSelecionados();
     janelaDuplicatas_->mostrar();
+}
+
+void MainComponent::mostrarDuplicatesIntake() {
+    if (!projetoAberto_) return;
+    const bool novo = !duplicatesIntake_;
+    if (novo) {
+        duplicatesIntake_ = std::make_unique<DuplicatesWorkspaceComponent>(*projetoAberto_, true);
+        duplicatesIntake_->fornecerSelecaoDoGrid = [this]() -> std::set<std::string> {
+            return intakeWorkspace_ ? intakeWorkspace_->itensSelecionados() : std::set<std::string>{};
+        };
+        duplicatesIntake_->aoMarcarRNoIntake = [this](const std::vector<std::string>& ids) {
+            if (intakeWorkspace_) {
+                intakeWorkspace_->marcarRDuplicatas(ids);
+                return;
+            }
+            if (!projetoAberto_) return;
+            const auto jaMarcados = projetoAberto_->idsMarcadosR();  // só liga: quem já tem R fica
+            std::vector<std::string> ligar;
+            for (const auto& id : ids) if (jaMarcados.count(id) == 0) ligar.push_back(id);
+            if (!ligar.empty()) projetoAberto_->alternarMarcaR(ligar);
+        };
+        duplicatesIntake_->setSize(1280, 800);
+    }
+    if (!janelaDuplicatasIntake_) {
+        janelaDuplicatasIntake_ = std::make_unique<JanelaDuplicatas>(*duplicatesIntake_, matriz::i18n::t("duplicatas.janela_titulo_intake"));
+        janelaDuplicatasIntake_->aoAtivar = [this] {
+            if (duplicatesIntake_) duplicatesIntake_->atualizarContagemSelecionados();
+        };
+    }
+    duplicatesIntake_->setVisible(true);
+    if (!novo) duplicatesIntake_->recarregar();
+    else duplicatesIntake_->atualizarContagemSelecionados();
+    janelaDuplicatasIntake_->mostrar();
 }
 
 // Aba "Structure": o FOLDER MAP (ArvoreBackupComponent). O SPACE MAP mudou para a aba STORAGE (mostrarStorage) e o

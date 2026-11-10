@@ -4,6 +4,22 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Find duplicates no INTAKE — 2026-11-10
+
+- Branch: `claude/dreamy-cerf-0b1fw5`. Botão "Find duplicates" no card ACTIONS do Intake (acima do Reject marked) abre a
+  janela "Duplicates — Intake": o mesmo `DuplicatesWorkspaceComponent`, construído com `modoIntake = true`
+  (`MainComponent::mostrarDuplicatesIntake`, instância e janela próprias; a do METADATA não muda).
+- Modo Intake: candidatos = itens do Intake (`em_quarentena = 1`, filtros Scope/Type/Group/Size/Year valem só para eles;
+  Scope "Selected" = seleção do Intake) + o catálogo inteiro. Só valem pares com um lado no Intake (Intake x catálogo e
+  Intake x Intake, nunca catálogo x catálogo). A duplicata é sempre o arquivo do Intake; entre dois do Intake, o que
+  chegou por último (`criado_em`). Do catálogo só se calcula checksum de quem tem o tamanho de algum arquivo do Intake.
+- Decisões do usuário: IDENTICAL (mesmo SHA-256) ganha R sozinho no fim do scan e sai da lista; PROBABLE/SIMILAR/POSSIBLE
+  ficam na lista e VALIDATE (par, selecionados, ALL) só põe R no arquivo do Intake — nada é juntado nem escondido, o
+  catálogo não muda. DISMISS continua igual (nota NOT_DUPLICATE). O R entra por `IntakeWorkspaceComponent::
+  marcarRDuplicatas` (só liga, nunca desliga; Undo do R de sempre). Rejeitar continua sendo o REJECT MARKED.
+- Tarefa de progresso própria (`duplicates_scan_intake`), para os dois scans não se atropelarem.
+- Checks novos no `--selftest-lote` (bloco "Intake scan: ...").
+
 ## Fixes da auditoria de 2026-11-02 (B-02, B-03, B-04, B-05) — 2026-11-02
 
 - Branch: `claude/dreamy-cerf-0b1fw5` (a partir de `fix/auditoria-2026-10-27` @ `e2f38c0`). Um commit por defeito.

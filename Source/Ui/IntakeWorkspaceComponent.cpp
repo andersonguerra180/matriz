@@ -2390,6 +2390,14 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnRemoverSelecao_ = std::move(btnRemover);
     addAndMakeVisible(*btnRemoverSelecao_);
 
+    auto btnDup = std::make_unique<PillButton>(i18n::t("intake.btn_find_duplicates"));
+    btnDup->tamanhoFonte = 13.0f;
+    btnDup->semQuadradinho = true;
+    btnDup->onClick = [this] { if (aoPedirDuplicatas) aoPedirDuplicatas(); };
+    btnDup->setTooltip(i18n::t("intake.find_duplicates_dica"));
+    btnDuplicatas_ = std::move(btnDup);
+    addAndMakeVisible(*btnDuplicatas_);
+
     {
         // A frase longa sobre o REJECT MARKED vai para o "?" (aparece ao passar o mouse), como no mapa.
         auto legenda = std::make_unique<LegendaAtalhosIntake>(i18n::t("intake.legenda_r_dica") + "\n" + i18n::t("intake.nota_reject"));
@@ -3423,6 +3431,27 @@ void IntakeWorkspaceComponent::alternarMarcaRDeItem(int itemIndex) {
     if (gridComponent_) gridComponent_->repaint();
 }
 
+void IntakeWorkspaceComponent::marcarRDuplicatas(const std::vector<std::string>& itemIds) {
+    // Só liga: alternarMarcaR com todos já marcados desligaria. Quem já tem R fica como está.
+    const auto jaMarcados = projeto_.idsMarcadosR();
+    std::vector<std::string> ligar;
+    for (const auto& id : itemIds)
+        if (jaMarcados.count(id) == 0) ligar.push_back(id);
+    if (!ligar.empty()) {
+        projeto_.aoMarcasRRevertidas = [safeThis = juce::Component::SafePointer<IntakeWorkspaceComponent>(this)]() {
+            if (!safeThis) return;
+            safeThis->marcadosR_ = safeThis->projeto_.idsMarcadosR();
+            safeThis->atualizarBotaoRejeitar();
+            safeThis->repaint();
+        };
+        projeto_.alternarMarcaR(ligar);
+    }
+    marcadosR_ = projeto_.idsMarcadosR();
+    atualizarBotaoRejeitar();
+    if (tabela_) tabela_->repaint();
+    if (gridComponent_) gridComponent_->repaint();
+}
+
 void IntakeWorkspaceComponent::rejeitarMarcados() {
     // Só o que tem R. A seleção atual é ignorada, sempre (camada de segurança contra seleção mal feita).
     if (marcadosR_.empty()) return;
@@ -4371,6 +4400,10 @@ void IntakeWorkspaceComponent::resized() {
     barra_.iniciarCard(i18n::t("intake.secao_actions"));
     linhaDupla(btnConfirmarSelecao_.get(), btnConfirmarTodos_.get(), 28, 0.56f);
     corpo.removeFromTop(6);
+    if (btnDuplicatas_) {  // Find duplicates logo acima do Reject marked: o que ele acha ganha R
+        btnDuplicatas_->setBounds(corpo.removeFromTop(28));
+        corpo.removeFromTop(6);
+    }
     btnRemoverSelecao_->setBounds(corpo.removeFromTop(28));
     corpo.removeFromTop(6);
     if (legendaAtalhos_) legendaAtalhos_->setBounds(corpo.removeFromTop(24));

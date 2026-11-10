@@ -92,6 +92,10 @@ public:
     std::function<void()> aoIngerirDeBridge;
     std::function<void()> aoConfirmarParaGrid;
     std::function<void()> aoPedirAjuda;
+    // Find duplicates do card ACTIONS: abre a janela de duplicatas no modo Intake (MainComponent).
+    std::function<void()> aoPedirDuplicatas;
+    // Duplicatas achadas pelo Find duplicates do Intake: põe R em quem ainda não tem (nunca tira).
+    void marcarRDuplicatas(const std::vector<std::string>& itemIds);
 
     // Android plugado por USB (aviso do MainComponent): abre direto o navegador do celular, se nenhuma janela estiver aberta.
     void abrirAndroidUsbAoPlugar();
@@ -291,6 +295,7 @@ private:
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
     std::unique_ptr<juce::TextButton> btnConfirmarTodos_;
     std::unique_ptr<juce::TextButton> btnRemoverSelecao_;
+    std::unique_ptr<juce::TextButton> btnDuplicatas_;  // card ACTIONS: Find duplicates (Intake x catálogo)
     std::unique_ptr<juce::Component> legendaAtalhos_;  // card ACTIONS: [R] Reject (?)
     std::unique_ptr<juce::Label> lblNotaReject_;
 

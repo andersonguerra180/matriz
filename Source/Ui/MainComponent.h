@@ -121,6 +121,8 @@ public:
     void mostrarGrid();
     // Abre (ou traz para a frente) a janela independente de duplicatas; a aba atual não muda.
     void mostrarDuplicates();
+    // Find duplicates do INTAKE: outra janela, o mesmo workspace no modo Intake (Intake x catálogo; achado = R).
+    void mostrarDuplicatesIntake();
     void mostrarAnalytics();  // STORAGE > SPACE MAP
     void mostrarTree();
     void mostrarBackup();
@@ -563,6 +565,8 @@ private:
     std::unique_ptr<DuplicatesWorkspaceComponent> duplicatesWorkspace_; // DUPLICATES (hospedado em janelaDuplicatas_)
     // Janela independente que hospeda duplicatesWorkspace_ sem ser dona dele; declarada depois para morrer antes.
     std::unique_ptr<JanelaDuplicatas> janelaDuplicatas_;
+    std::unique_ptr<DuplicatesWorkspaceComponent> duplicatesIntake_;  // modo Intake (hospedado em janelaDuplicatasIntake_)
+    std::unique_ptr<JanelaDuplicatas> janelaDuplicatasIntake_;
     std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // STORAGE > SPACE MAP (ex-ANALYTICS/Storage)
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // STRUCTURE > FOLDER MAP (ex-TREE/Treemap)
     // Sub-abas STORAGE/SPACE MAP da aba STORAGE (abas + painel; fica atrás do workspace ativo).

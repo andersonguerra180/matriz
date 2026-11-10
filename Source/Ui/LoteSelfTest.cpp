@@ -6408,6 +6408,67 @@ int rodarLoteSelfTest() {
                        "year range: items without a year never enter a restricted range");
             }
 
+            // ----- Find duplicates do INTAKE: Intake x catálogo e Intake x Intake; IDENTICAL ganha R sozinho, VALIDATE = R
+            {
+                // rExata (cópia idêntica de rOrig) e rPequena (versão menor de rOrig) voltam ao Intake; e dois arquivos novos,
+                // iguais entre si e a nada do catálogo, chegam ao Intake um depois do outro.
+                juce::Image ruido(juce::Image::RGB, 64, 64, true);
+                juce::Random rnd(1234);
+                for (int y = 0; y < 64; ++y)
+                    for (int x = 0; x < 64; ++x)
+                        ruido.setPixelAt(x, y, juce::Colour(static_cast<juce::uint32>(0xff000000u | static_cast<juce::uint32>(rnd.nextInt(0xffffff)))));
+                const auto fNovaA = raizQ.getChildFile("intake_nova_a.png");
+                {
+                    juce::PNGImageFormat png;
+                    juce::FileOutputStream out(fNovaA);
+                    if (out.openedOk()) png.writeImageToStream(ruido, out);
+                }
+                const auto fNovaB = raizQ.getChildFile("intake_nova_b.png");
+                fNovaA.copyFileTo(fNovaB);
+                const auto rNovaA = inserirItemComArquivo(reg, projetoId, "INT-1", fNovaA);
+                const auto rNovaB = inserirItemComArquivo(reg, projetoId, "INT-2", fNovaB);
+                reg.run("UPDATE item SET em_quarentena = 1, criado_em = '2026-01-02T10:00:00Z' WHERE id = ?", {Value::of(rNovaA)});
+                reg.run("UPDATE item SET em_quarentena = 1, criado_em = '2026-01-03T10:00:00Z' WHERE id = ?", {Value::of(rNovaB)});
+                reg.run("UPDATE item SET em_quarentena = 1 WHERE id = ? OR id = ?", {Value::of(rExata), Value::of(rPequena)});
+                const std::set<std::string> doIntake = {rExata, rPequena, rNovaA, rNovaB};
+
+                DuplicatesWorkspaceComponent dwI(pa, true);
+                std::set<std::string> comR;
+                dwI.aoMarcarRNoIntake = [&comR](const std::vector<std::string>& ids) { comR.insert(ids.begin(), ids.end()); };
+                dwI.iniciarScan();
+                esperarAte([&] { return dwI.estado_ != DuplicatesWorkspaceComponent::State::Scanning; }, 120000);
+                checar(comR.count(rExata) == 1, "Intake scan: an Intake file identical to a catalog file gets R at the end of the scan");
+                checar(comR.count(rNovaB) == 1 && comR.count(rNovaA) == 0,
+                       "Intake scan: two identical Intake files — only the one that arrived last gets R");
+                checar(comR.count(rOrig) == 0, "Intake scan: a catalog file never gets R");
+                bool soComIntake = true, semIdentical = true;
+                for (const auto& g : dwI.gruposDetectados_) {
+                    if (doIntake.count(g.duplicata.itemId) == 0) soComIntake = false;
+                    if (g.criterio == "IDENTICAL") semIdentical = false;
+                }
+                checar(soComIntake, "Intake scan: every pair has an Intake file as the duplicate (no catalog x catalog pair)");
+                checar(semIdentical, "Intake scan: IDENTICAL pairs leave the list (they already got R)");
+                // VALIDATE num par que não é IDENTICAL (posto direto na lista: a detecção por pHash tem checks próprios acima).
+                {
+                    DuplicatesWorkspaceComponent::DuplicateGroup g;
+                    g.original.itemId = rOrig;
+                    g.duplicata.itemId = rPequena;
+                    g.criterio = "PROBABLE";
+                    dwI.gruposDetectados_.push_back(g);
+                }
+                dwI.resolverDuplicata(static_cast<int>(dwI.gruposDetectados_.size()) - 1, true);
+                bool pequenaFora = true;
+                for (const auto& g : dwI.gruposDetectados_) if (g.duplicata.itemId == rPequena) pequenaFora = false;
+                checar(comR.count(rPequena) == 1 && pequenaFora, "Intake scan: VALIDATE marks R on the Intake file and the pair leaves the list");
+                {
+                    auto st = reg.prepare("SELECT COALESCE(estado, '') FROM item WHERE id = ?");
+                    st.bind(1, Value::of(rPequena));
+                    checar(st.step() && st.columnText(0) != "duplicata", "Intake scan: VALIDATE does not merge nor hide anything (only R)");
+                }
+                reg.run("UPDATE item SET em_quarentena = 0 WHERE id = ? OR id = ?", {Value::of(rExata), Value::of(rPequena)});
+                reg.run("UPDATE item SET estado = 'duplicata' WHERE id = ? OR id = ?", {Value::of(rNovaA), Value::of(rNovaB)});
+            }
+
             // PROVÁVEIS nunca entram em decisão em lote.
             dwRec.aplicarEscolhaGlobal(1);
             esperarAte([&] { return acharGrupo(rOrig, rExata) == nullptr; }, 30000);
