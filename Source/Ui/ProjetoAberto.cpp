@@ -4013,7 +4013,8 @@ ProjetoAberto::ResultadoAutoOrg ProjetoAberto::aplicarAutoOrganizacao(const std:
     for (size_t i = 0; i < linhas.size(); ++i) indice[linhas[i].id] = i;
     auto alvoIt = indice.find(pastaId);
     if (alvoIt == indice.end()) { res.status = StatusAutoOrg::PastaInvalida; return res; }
-    if (regraEhAuto(juce::String(linhas[alvoIt->second].regra))) { res.status = StatusAutoOrg::SubpastaAuto; return res; }
+    // Subpasta AUTO aceita regra própria: sai da regra de cima (que deixa de entrar nela) e as subpastas AUTO dela passam a
+    // ser desta regra. O desfazer devolve o '@auto' (regraAnterior) e ela volta para a regra de cima.
     if (pastaTemArquivosNoMain(pastaId)) { res.status = StatusAutoOrg::TemArquivosNoMain; return res; }
     const std::string regraAnterior = linhas[alvoIt->second].regra;
     const bool regraAnteriorNula = linhas[alvoIt->second].regraNula;
@@ -4021,21 +4022,35 @@ ProjetoAberto::ResultadoAutoOrg ProjetoAberto::aplicarAutoOrganizacao(const std:
     std::map<std::string, std::vector<std::string>> filhosPorPai;
     for (const auto& l : linhas)
         if (!l.paiNulo) filhosPorPai[l.paiId].push_back(l.id);
-    // Subpastas AUTO alcançáveis a partir da pasta por pastas AUTO (uma pasta manual barra o caminho).
-    std::vector<std::string> autoDescendentes;
-    {
-        std::vector<std::string> pilha{pastaId};
+    // Subpastas AUTO alcançáveis a partir de uma pasta por pastas AUTO (uma pasta manual barra o caminho).
+    auto autoDescendentesDe = [&](const std::string& raiz) {
+        std::vector<std::string> out;
+        std::vector<std::string> pilha{raiz};
         while (!pilha.empty()) {
             const auto atual = pilha.back();
             pilha.pop_back();
             for (const auto& f : filhosPorPai[atual]) {
                 if (regraEhAuto(juce::String(linhas[indice[f]].regra))) {
-                    autoDescendentes.push_back(f);
+                    out.push_back(f);
                     pilha.push_back(f);
                 }
             }
         }
-    }
+        return out;
+    };
+    const std::vector<std::string> autoDescendentes = autoDescendentesDe(pastaId);
+    // Pastas com regra própria (não AUTO), por pai e nome: o caminho da regra que passa por uma delas entrega o item a ela, e a
+    // regra dela o distribui (ex.: "2019/Rock" ganhou regra LIST; arquivo novo de 2019/Rock não cria outra "Rock" ao lado).
+    auto niveisPermitidos = [](const std::string& regra) {
+        matriz::consolidacao::HierarquiaBackup out;
+        for (auto n : matriz::consolidacao::hierarquiaDeCsv(regra))
+            if (nivelPermitidoNaAutoOrganizacao(n)) out.push_back(n);
+        return out;
+    };
+    std::map<std::string, std::map<std::string, std::string>> comRegraPorNome;  // pai -> nome minúsculo -> id
+    for (const auto& l : linhas)
+        if (!l.paiNulo && !l.regraNula && l.id != pastaId && !regraEhAuto(juce::String(l.regra)))
+            comRegraPorNome[l.paiId][juce::String(l.nome).toLowerCase().toStdString()] = l.id;
     std::set<std::string> pastasDeOrigem(autoDescendentes.begin(), autoDescendentes.end());
     pastasDeOrigem.insert(pastaId);
 
@@ -4055,14 +4070,11 @@ ProjetoAberto::ResultadoAutoOrg ProjetoAberto::aplicarAutoOrganizacao(const std:
     // 2. Segmentos de cada item, numa consulta por lote.
     const auto segmentos = segmentosDeOrganizacao(itensAOrganizar, niveis);
 
-    // 3. Caminhos distintos, em ordem alfabética, pra as pastas nascerem já ordenadas.
     auto chave = [](const std::vector<juce::String>& segs) {
         std::vector<std::string> k;
         for (const auto& s : segs) k.push_back(s.toLowerCase().toStdString());
         return k;
     };
-    std::map<std::vector<std::string>, std::vector<juce::String>> caminhos;
-    for (const auto& [item, segs] : segmentos) caminhos.emplace(chave(segs), segs);
 
     // Desfazer: uma organização = um grupo. A passada automática não registra nada (senão o
     // Cmd+Z seria desfeito de novo no próximo recarregamento do mapa).
@@ -4095,28 +4107,64 @@ ProjetoAberto::ResultadoAutoOrg ProjetoAberto::aplicarAutoOrganizacao(const std:
             const auto& l = linhas[indice[id]];
             autoFilhoPorNome[l.paiId][juce::String(l.nome).toLowerCase().toStdString()] = id;
         }
-        std::map<std::vector<std::string>, std::string> pastaDoCaminho;
-        for (const auto& [k, segs] : caminhos) {
-            std::string atual = pastaId;
-            for (const auto& seg : segs) {
-                const auto nomeMin = seg.toLowerCase().toStdString();
-                auto& mapaFilhos = autoFilhoPorNome[atual];
-                auto it = mapaFilhos.find(nomeMin);
-                if (it == mapaFilhos.end()) {
-                    const std::string novo = criarPastaAcervo(seg.toStdString(), atual, mapaId);
-                    if (novo.empty()) throw std::runtime_error("criarPastaAcervo falhou");
-                    db.run("UPDATE acervo_pasta SET regra_organizacao = '@auto' WHERE id = ?", {matriz::db::Value::of(novo)});
-                    criadas.push_back(novo);
-                    it = mapaFilhos.emplace(nomeMin, novo).first;
+        // Zonas: a pasta com a regra dela; um caminho que chega numa pasta com regra própria vira a zona dessa pasta (mesma
+        // transação e mesmo desfazer). Caminhos distintos em ordem alfabética, pra as pastas nascerem já ordenadas.
+        struct Zona {
+            std::string raiz;
+            std::map<std::string, std::vector<juce::String>> segmentos;
+        };
+        std::vector<Zona> zonas{{pastaId, segmentos}};
+        std::set<std::string> zonasVistas{pastaId};
+        std::map<std::string, std::string> destinoFinal;  // item -> pasta
+        for (size_t z = 0; z < zonas.size(); ++z) {
+            const std::string raiz = zonas[z].raiz;
+            const auto segsZona = std::move(zonas[z].segmentos);
+            std::map<std::vector<std::string>, std::vector<juce::String>> caminhos;
+            for (const auto& [item, segs] : segsZona) caminhos.emplace(chave(segs), segs);
+            std::map<std::vector<std::string>, std::string> pastaDoCaminho, entregaDoCaminho;
+            for (const auto& [k, segs] : caminhos) {
+                std::string atual = raiz, entrega;
+                for (const auto& seg : segs) {
+                    const auto nomeMin = seg.toLowerCase().toStdString();
+                    auto& mapaFilhos = autoFilhoPorNome[atual];
+                    auto it = mapaFilhos.find(nomeMin);
+                    if (it == mapaFilhos.end()) {
+                        if (auto ic = comRegraPorNome.find(atual); ic != comRegraPorNome.end())
+                            if (auto f = ic->second.find(nomeMin); f != ic->second.end()) { entrega = f->second; break; }
+                        const std::string novo = criarPastaAcervo(seg.toStdString(), atual, mapaId);
+                        if (novo.empty()) throw std::runtime_error("criarPastaAcervo falhou");
+                        db.run("UPDATE acervo_pasta SET regra_organizacao = '@auto' WHERE id = ?", {matriz::db::Value::of(novo)});
+                        criadas.push_back(novo);
+                        it = mapaFilhos.emplace(nomeMin, novo).first;
+                    }
+                    atual = it->second;
                 }
-                atual = it->second;
+                if (entrega.empty()) pastaDoCaminho[k] = atual;
+                else entregaDoCaminho[k] = entrega;
             }
-            pastaDoCaminho[k] = atual;
+            std::map<std::string, std::set<std::string>> itensPorEntrega;
+            for (const auto& [item, segs] : segsZona) {
+                const auto k = chave(segs);
+                if (auto e = entregaDoCaminho.find(k); e != entregaDoCaminho.end()) itensPorEntrega[e->second].insert(item);
+                else destinoFinal[item] = pastaDoCaminho[k];
+            }
+            for (const auto& [f, itens] : itensPorEntrega) {
+                const auto niveisF = niveisPermitidos(linhas[indice[f]].regra);
+                if (niveisF.empty() || zonasVistas.count(f)) {
+                    for (const auto& item : itens) destinoFinal[item] = f;
+                    continue;
+                }
+                for (const auto& id : autoDescendentesDe(f)) {
+                    const auto& l = linhas[indice[id]];
+                    autoFilhoPorNome[l.paiId][juce::String(l.nome).toLowerCase().toStdString()] = id;
+                }
+                zonasVistas.insert(f);
+                zonas.push_back({f, segmentosDeOrganizacao(itens, niveisF)});
+            }
         }
 
         // Itens: cada um vai pra pasta do caminho dele (mesma transação, sem N transações).
-        for (const auto& [item, segs] : segmentos) {
-            const std::string& destino = pastaDoCaminho[chave(segs)];
+        for (const auto& [item, destino] : destinoFinal) {
             const auto& atuais = pastasAtuaisDoItem[item];
             if (atuais.size() == 1 && atuais.front() == destino) continue;
             for (const auto& p : atuais) associacoesAntes.emplace_back(item, p);

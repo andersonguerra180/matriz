@@ -3642,11 +3642,12 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addSeparator();
             }
 
-            // Auto-organização: só no mapa do usuário, uma pasta por vez; subpasta AUTO não aceita regra própria.
-            if (!batch && !mapaAtivoEhOriginal() && !hitNodeRef.autoSub) {
+            // Auto-organização: só no mapa do usuário, uma pasta por vez. Subpasta AUTO aceita regra própria (sai da regra de
+            // cima, só ela e as subpastas dela mudam); até lá ela conta como pasta sem regra.
+            if (!batch && !mapaAtivoEhOriginal()) {
                 juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
                 const juce::String nomeNo = hitNodeRef.nome;
-                const juce::String regraNo = hitNodeRef.regra;
+                const juce::String regraNo = hitNodeRef.autoSub ? juce::String() : hitNodeRef.regra;
                 const bool editavel = !projeto_.somenteLeitura();
                 if (regraNo.isEmpty()) {
                     menu.addItem(i18n::t("arvore_backup.auto_organizar"), editavel, false, [safeThis, pId, nomeNo] {

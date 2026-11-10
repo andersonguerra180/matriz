@@ -2829,9 +2829,56 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         pa.desfazer();
         checar(regraDe(inbox) == "ano,content_type" && pastaDoItem(i6).front().regra == "@auto", "undo of turning it off restores rule and AUTO marks");
 
-        // Bloqueios: pasta com arquivo no MAIN, subpasta AUTO, mapa ORIGINAL.
-        checar(pa.aplicarAutoOrganizacao(pastaDoItem(i6).front().pai, "ano").status == ProjetoAberto::StatusAutoOrg::SubpastaAuto,
-               "an AUTO subfolder does not accept its own rule");
+        // Regra própria numa subpasta AUTO (Inbox/2019 por LIST, o resto do Inbox por YEAR > CONTENT): só ela e as subpastas
+        // dela mudam; a regra de cima não entra mais nela e entrega a ela os arquivos novos de 2019.
+        {
+            const std::string ano2019 = pastaDoItem(i6).front().pai;
+            reg.run("UPDATE item SET lista = 'Top 10' WHERE id = ?", {Value::of(i6)});
+            const auto caminhoI3 = caminhoDaPasta(pastaDoItem(i3).front().id);
+            const auto caminhoI4 = caminhoDaPasta(pastaDoItem(i4).front().id);
+            const auto caminhoI1 = caminhoDaPasta(pastaDoItem(i1).front().id);
+            auto restoIgual = [&] {
+                return caminhoDaPasta(pastaDoItem(i3).front().id) == caminhoI3 && caminhoDaPasta(pastaDoItem(i4).front().id) == caminhoI4 &&
+                       caminhoDaPasta(pastaDoItem(i1).front().id) == caminhoI1 && regraDe(inbox) == "ano,content_type";
+            };
+            auto pastasChamadas = [&](const std::string& pai, const char* nome) {
+                auto st = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE pasta_pai_id = ? AND nome = ?");
+                st.bind(1, Value::of(pai));
+                st.bind(2, Value::of(std::string(nome)));
+                return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
+            };
+            checar(regraDe(ano2019) == "@auto" && caminhoDaPasta(ano2019) == "Inbox/2019", "setup: Inbox/2019 is an AUTO subfolder");
+
+            const auto rSub = pa.aplicarAutoOrganizacao(ano2019, "lista");
+            checar(rSub.status == ProjetoAberto::StatusAutoOrg::Ok && regraDe(ano2019) == "lista",
+                   "an AUTO subfolder accepts its own rule (LIST)");
+            checar(caminhoDaPasta(pastaDoItem(i6).front().id) == "Inbox/2019/Top 10" &&
+                       caminhoDaPasta(pastaDoItem(i2).front().id) == "Inbox/2019/No list" && pastasChamadas(ano2019, "Photo") == 0,
+                   "its own rule reorganizes only its files (Top 10 / No list) and removes its emptied AUTO subfolder");
+            checar(restoIgual(), "the rest of the tree is untouched (other years, parent rule)");
+
+            pa.desfazer();
+            checar(regraDe(ano2019) == "@auto" && caminhoDaPasta(pastaDoItem(i6).front().id) == "Inbox/2019/Photo" &&
+                       pastasChamadas(ano2019, "Top 10") == 0 && restoIgual(),
+                   "one Undo gives the subfolder back to the parent rule (AUTO mark, files and folders back)");
+
+            pa.aplicarAutoOrganizacao(ano2019, "lista");
+            const auto rCima = pa.aplicarAutoOrganizacao(inbox, "ano,content_type");
+            checar(rCima.status == ProjetoAberto::StatusAutoOrg::Ok && rCima.itensMovidos == 0 &&
+                       caminhoDaPasta(pastaDoItem(i6).front().id) == "Inbox/2019/Top 10" && regraDe(ano2019) == "lista",
+                   "reorganizing the parent no longer reaches inside the subfolder with its own rule");
+
+            const auto i9 = inserirItemComArquivo(reg, projetoId, "AJU-9", arquivoReal("nove.wav"));
+            definirCampoRaiz(reg, i9, "ano", "2019");
+            reg.run("UPDATE item SET collection_type = 'Photo', lista = 'Top 10' WHERE id = ?", {Value::of(i9)});
+            pa.adicionarItensAPasta({i9}, inbox);
+            pa.organizarItensSoltosDasPastasComRegra(mapa);
+            checar(caminhoDaPasta(pastaDoItem(i9).front().id) == "Inbox/2019/Top 10" && pastasChamadas(inbox, "2019") == 1,
+                   "a new 2019 file in the parent goes into the subfolder and its rule places it (no second 2019 folder)");
+            checar(restoIgual(), "the rest of the tree is still untouched");
+        }
+
+        // Bloqueios: pasta com arquivo no MAIN, mapa ORIGINAL.
         reg.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
                 "checksum_sha256, consolidado_em) SELECT ?, item_id, ?, id, 'x.wav', 'abc', ? FROM arquivo WHERE item_id = ?",
                 {Value::of(matriz::model::novoUuid()), Value::of(manual), Value::of(matriz::model::agoraIso8601()), Value::of(i5)});
