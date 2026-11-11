@@ -344,6 +344,15 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnZoomFit_->onClick = [this] { enquadrarTudo(); };
     addAndMakeVisible(*btnZoomFit_);
 
+    // Presets de profundidade 1-4: a partir da pasta selecionada, mostram só N níveis (só a vista; nada é gravado).
+    for (int n = 1; n <= 4; ++n) {
+        auto& b = btnNivel_[static_cast<size_t>(n - 1)];
+        b = std::make_unique<juce::TextButton>(juce::String(n));
+        b->setTooltip(i18n::t("arvore_backup.nivel_dica").replace("{n}", juce::String(n)));
+        b->onClick = [this, n] { aplicarNivelNaVista(n); };
+        addAndMakeVisible(*b);
+    }
+
     chkContainersComoPastas_ = std::make_unique<juce::ToggleButton>(i18n::t("arvore_backup.containers_como_pastas"));
     chkContainersComoPastas_->setToggleState(containersComoPastas_, juce::dontSendNotification);
     chkContainersComoPastas_->setTooltip(i18n::t("arvore_backup.containers_como_pastas_dica"));
@@ -453,6 +462,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnMenuMapa_->getProperties().set("leve", true);
     btnZoomFit_->getProperties().set("destaque", true);
     for (auto* b : {btnZoomIn_.get(), btnZoomOut_.get(), btnZoomFit_.get()}) b->setLookAndFeel(&segmentoLf_);
+    for (auto& b : btnNivel_) b->setLookAndFeel(&segmentoLf_);
     btnZoomOut_->setButtonText(juce::String::fromUTF8("\xe2\x80\x93"));  // "–"
     for (auto* sl : {sliderTamanho_.get(), sliderSpread_.get(), sliderSpreadV_.get()}) {
         sl->setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 24);
@@ -485,6 +495,7 @@ ArvoreBackupComponent::~ArvoreBackupComponent() {
     for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnAutoArranjar_.get(), btnZoomIn_.get(), btnZoomOut_.get(),
                     btnZoomFit_.get(), btnResetTamanhos_.get(), btnMenuMapa_.get(), btnNovoMapa_.get(), btnFind_.get()})
         if (b) b->setLookAndFeel(nullptr);  // pilulaLf_/segmentoLf_ morrem antes dos botões
+    for (auto& b : btnNivel_) if (b) b->setLookAndFeel(nullptr);
     autoRolagem_.stopTimer();
     limparDicaPasta();
     janelaTrash_.reset();
@@ -1118,6 +1129,47 @@ void ArvoreBackupComponent::mostrarMenuExplorador(const juce::MouseEvent&) {
     menu.showMenuAsync(juce::PopupMenu::Options());
 }
 
+bool ArvoreBackupComponent::ocultaNaVista(const std::string& id) const {
+    return !ocultasNaVista_.empty() && mapaDasOcultas_ == mapaAtivoId_ && ocultasNaVista_.count(id) > 0;
+}
+
+// Presets 1-4 do VIEW: a partir da(s) pasta(s) selecionada(s) (nenhuma = as raízes) mostra só `niveis` níveis —
+// 1 = só ela, 2 = ela e as subpastas diretas, etc. Só a vista: o mapa, as posições e o banco não mudam.
+void ArvoreBackupComponent::aplicarNivelNaVista(int niveis) {
+    if (mapaDasOcultas_ != mapaAtivoId_) { ocultasNaVista_.clear(); mapaDasOcultas_ = mapaAtivoId_; }
+    std::unordered_map<std::string, std::vector<size_t>> filhos;
+    std::set<std::string> ids;
+    for (const auto& n : nodes_) ids.insert(n.id);
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (!nodes_[i].pastaPaiId.empty()) filhos[nodes_[i].pastaPaiId].push_back(i);
+    std::vector<size_t> raizes;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (nodes_[i].selecionado) raizes.push_back(i);
+    if (raizes.empty())
+        for (size_t i = 0; i < nodes_.size(); ++i)
+            if (nodes_[i].pastaPaiId.empty() || !ids.count(nodes_[i].pastaPaiId)) raizes.push_back(i);
+    for (const size_t r : raizes) {
+        ocultasNaVista_.erase(nodes_[r].id);
+        std::vector<std::pair<size_t, int>> pilha{{r, 0}};
+        std::set<size_t> vistos{r};
+        while (!pilha.empty()) {
+            const auto [idx, d] = pilha.back();
+            pilha.pop_back();
+            if (d > 0) {
+                if (d >= niveis) ocultasNaVista_.insert(nodes_[idx].id);
+                else ocultasNaVista_.erase(nodes_[idx].id);
+            }
+            const auto it = filhos.find(nodes_[idx].id);
+            if (it == filhos.end()) continue;
+            for (const size_t f : it->second)
+                if (vistos.insert(f).second) pilha.push_back({f, d + 1});
+        }
+    }
+    for (auto& n : nodes_)
+        if (ocultasNaVista_.count(n.id)) n.selecionado = false;
+    repaint();
+}
+
 // FIND: seleciona a pasta e todos os descendentes no stage, mostra o card da pasta e enquadra a vista na árvore dela.
 void ArvoreBackupComponent::localizarPasta(const std::string& pastaId) {
     int indice = -1;
@@ -1625,6 +1677,7 @@ juce::Rectangle<int> ArvoreBackupComponent::areaBarraAbas() const {
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaCanvas() const {
+    if (canvasForcado_) return *canvasForcado_;  // exportação da vista como imagem
     return getLocalBounds().withTrimmedLeft(barra::kLargura).withTrimmedTop(sobreposto_ ? 0 : kAlturaBarraAbas);
 }
 
@@ -2625,6 +2678,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         juce::Rectangle<float>(screenToCanvas(canvas.getTopLeft()), screenToCanvas(canvas.getBottomRight())).expanded(40.0f);
 
     for (const auto& node : nodes_) {
+        if (ocultaNaVista(node.id)) continue;
         if (!node.pastaPaiId.empty() && outputPorts.count(node.pastaPaiId) && inputPorts.count(node.id)) {
             const auto p1 = outputPorts[node.pastaPaiId], p2 = inputPorts[node.id];
             if (!juce::Rectangle<float>(p1, p2).expanded(40.0f).intersects(visivel)) continue;
@@ -2635,6 +2689,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     // Containers ligados a uma pasta: a linha sai da porta de saída da pasta e entra pela porta de entrada do container.
     for (const auto& lf : looseFiles_) {
         if (!lf.ehContainer || lf.pastaPaiId.empty() || !outputPorts.count(lf.pastaPaiId)) continue;
+        if (ocultaNaVista(lf.pastaPaiId)) continue;
         const auto p1 = outputPorts[lf.pastaPaiId], p2 = portaEntradaDoContainer(lf);
         if (!juce::Rectangle<float>(p1, p2).expanded(40.0f).intersects(visivel)) continue;
         desenharLinhaConexaoN8n(g, p1, p2, true, false);
@@ -2648,6 +2703,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     // Node cards
     const bool arrastando = nodeDragIndice_ >= 0 || panning_;
     for (const auto& node : nodes_) {
+        if (ocultaNaVista(node.id)) continue;
         if (!node.bounds.toFloat().intersects(visivel)) continue;
         auto b = node.bounds.toFloat();
 
@@ -2877,6 +2933,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     }
 
     g.restoreState();
+    if (exportandoImagem_) return;  // a imagem exportada é só o mapa: sem coluna, abas nem cards fixos
 
     coluna_.paint(g);
     desenharSemPasta(g);
@@ -2885,6 +2942,77 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     desenharIndicadorZoom(g);
     desenharBarraDeAbas(g);
     desenharMarcaMapaDoMain(g);
+}
+
+// Botão direito > EXPORT FOLDER MAP VIEW AS IMAGE: o mapa que está na vista (pastas visíveis pelos presets 1-4,
+// com as posições e os nomes de agora), inteiro e em tamanho legível, num PNG/JPG — não só o que cabe na tela.
+void ArvoreBackupComponent::exportarVistaComoImagem() {
+    juce::Rectangle<int> uniao;
+    bool primeiro = true;
+    auto somar = [&](juce::Rectangle<int> r) { uniao = primeiro ? r : uniao.getUnion(r); primeiro = false; };
+    for (const auto& n : nodes_)
+        if (!ocultaNaVista(n.id)) somar(n.bounds);
+    for (const auto& lf : looseFiles_)
+        if (!(lf.ehContainer && !lf.pastaPaiId.empty() && ocultaNaVista(lf.pastaPaiId))) somar(lf.bounds);
+    if (primeiro) return;
+    constexpr int kMargem = 48;
+    uniao = uniao.expanded(kMargem);
+    const float escala = juce::jmin(2.0f, 12000.0f / static_cast<float>(juce::jmax(uniao.getWidth(), uniao.getHeight())));
+    const int w = juce::jmax(1, juce::roundToInt(static_cast<float>(uniao.getWidth()) * escala));
+    const int h = juce::jmax(1, juce::roundToInt(static_cast<float>(uniao.getHeight()) * escala));
+
+    juce::String nomeMapa = "folder-map";
+    if (comboMapas_ && comboMapas_->getText().isNotEmpty()) nomeMapa = comboMapas_->getText();
+    auto sugestao = juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
+                        .getChildFile(juce::File::createLegalFileName(nomeMapa) + ".png");
+    auto chooser = std::make_shared<juce::FileChooser>(i18n::t("arvore_backup.exportar_imagem_titulo"), sugestao, "*.png;*.jpg");
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+                             juce::FileBrowserComponent::warnAboutOverwriting,
+                         [safeThis, chooser, uniao, escala, w, h](const juce::FileChooser& fc) {
+        if (!safeThis) return;
+        auto destino = fc.getResult();
+        if (destino == juce::File()) return;
+        const bool jpg = destino.hasFileExtension("jpg;jpeg");
+        if (!jpg && !destino.hasFileExtension("png")) destino = destino.withFileExtension("png");
+
+        auto* self = safeThis.getComponent();
+        const float zoomAntes = self->zoom_;
+        const auto panAntes = self->panOffset_;
+        self->zoom_ = escala;
+        self->panOffset_ = {-static_cast<float>(uniao.getX()) * escala, -static_cast<float>(uniao.getY()) * escala};
+        self->canvasForcado_ = juce::Rectangle<int>(0, 0, w, h);
+        self->exportandoImagem_ = true;
+        juce::Image img(jpg ? juce::Image::RGB : juce::Image::ARGB, w, h, true);
+        {
+            juce::Graphics g(img);
+            self->paint(g);
+        }
+        self->exportandoImagem_ = false;
+        self->canvasForcado_.reset();
+        self->zoom_ = zoomAntes;
+        self->panOffset_ = panAntes;
+        self->repaint();
+
+        bool ok = false;
+        {
+            juce::FileOutputStream saida(destino);
+            if (saida.openedOk()) {
+                saida.setPosition(0);
+                saida.truncate();
+                if (jpg) { juce::JPEGImageFormat f; f.setQuality(0.92f); ok = f.writeImageToStream(img, saida); }
+                else { juce::PNGImageFormat f; ok = f.writeImageToStream(img, saida); }
+            }
+        }
+        if (ok) destino.revealToUser();
+        else
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                             .withTitle(i18n::t("arvore_backup.exportar_imagem_titulo"))
+                                             .withMessage(i18n::t("arvore_backup.exportar_imagem_erro").replace("{path}", destino.getFullPathName()))
+                                             .withButton("OK"),
+                                         nullptr);
+    });
 }
 
 void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
@@ -2986,7 +3114,13 @@ void ArvoreBackupComponent::resized() {
         if (btnZoomOut_) btnZoomOut_->setBounds(seg.removeFromLeft(wPonta));
         if (btnZoomIn_) btnZoomIn_->setBounds(seg.removeFromRight(wPonta));
         if (btnZoomFit_) btnZoomFit_->setBounds(seg);
-        corpo.removeFromTop(8);
+        corpo.removeFromTop(6);
+        {
+            auto linhaNivel = corpo.removeFromTop(30);
+            const int wNivel = linhaNivel.getWidth() / 4;
+            for (auto& b : btnNivel_) if (b) b->setBounds(linhaNivel.removeFromLeft(wNivel));
+        }
+        corpo.removeFromTop(4);
         if (chkContainersComoPastas_) chkContainersComoPastas_->setBounds(corpo.removeFromTop(36));
         coluna_.finalizarCard();
     }
@@ -3255,6 +3389,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
     // — ORIGINAL é somente leitura, nunca aceita reconectar pastas (S4/13).
     if (!mapaAtivoEhOriginal()) {
         for (size_t i = 0; i < nodes_.size(); ++i) {
+            if (ocultaNaVista(nodes_[i].id)) continue;
             juce::Point<float> outPort(static_cast<float>(nodes_[i].bounds.getRight()), static_cast<float>(nodes_[i].bounds.getCentreY()));
             // Raio de captura em pixels de TELA, limitado a uma fração do card: com o zoom afastado o card
             // fica pequeno e um raio fixo engolia o corpo dele (impedia selecionar/mover).
@@ -3272,7 +3407,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
     // Check Node Cards for dragging or context menu (in canvas space)
     int hitIndex = -1;
     for (size_t i = 0; i < nodes_.size(); ++i) {
-        if (nodes_[i].bounds.toFloat().contains(canvasClick)) { hitIndex = static_cast<int>(i); break; }
+        if (!ocultaNaVista(nodes_[i].id) && nodes_[i].bounds.toFloat().contains(canvasClick)) { hitIndex = static_cast<int>(i); break; }
     }
     bool hitNode = (hitIndex >= 0);
 
@@ -3485,6 +3620,8 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
             menu.addItem(i18n::t("arvore_backup.apagar_pasta_menu"), [this, selectedIds] {
                 confirmarEApagarPastas(selectedIds);
             });
+            menu.addSeparator();
+            menu.addItem(i18n::t("arvore_backup.exportar_imagem"), [this] { exportarVistaComoImagem(); });
             menu.showMenuAsync(juce::PopupMenu::Options());
         }
     }
@@ -3500,6 +3637,8 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                         safeThis->criarNovaPasta(nome->trim().toStdString(), std::nullopt);
                     });
             });
+            menu.addSeparator();
+            menu.addItem(i18n::t("arvore_backup.exportar_imagem"), [this] { exportarVistaComoImagem(); });
             menu.showMenuAsync(juce::PopupMenu::Options());
             return;
         }
@@ -3662,7 +3801,7 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
         int countSelecionados = 0;
         std::string unicoSelId;
         for (auto& n : nodes_) {
-            n.selecionado = marqueeRectCanvas_.intersects(n.bounds.toFloat());
+            n.selecionado = !ocultaNaVista(n.id) && marqueeRectCanvas_.intersects(n.bounds.toFloat());
             if (n.selecionado) { ++countSelecionados; unicoSelId = n.id; }
         }
         for (auto& lf : looseFiles_) {
@@ -3679,7 +3818,7 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
         std::string targetChildId;
 
         for (const auto& node : nodes_) {
-            if (node.id != socketDragParentId_) {
+            if (node.id != socketDragParentId_ && !ocultaNaVista(node.id)) {
                 juce::Point<float> inPort(static_cast<float>(node.bounds.getX()), static_cast<float>(node.bounds.getCentreY()));
                 if (inPort.getDistanceSquaredFrom(canvasRelease) <= 900.0f || node.bounds.toFloat().contains(canvasRelease)) {
                     targetChildId = node.id;
@@ -4207,6 +4346,7 @@ void ArvoreBackupComponent::enquadrarTudo() {
     juce::Rectangle<int> uniao;
     bool primeiro = true;
     for (const auto& n : nodes_) {
+        if (ocultaNaVista(n.id)) continue;
         uniao = primeiro ? n.bounds : uniao.getUnion(n.bounds);
         primeiro = false;
     }
@@ -4829,10 +4969,11 @@ void ArvoreBackupComponent::gravarLayoutSalvo() {
 
 int ArvoreBackupComponent::pastaAlvoDoDrop(juce::Point<float> cursorCanvas, juce::Rectangle<int> iconeCanvas) const {
     for (size_t i = 0; i < nodes_.size(); ++i)
-        if (nodes_[i].bounds.toFloat().contains(cursorCanvas)) return static_cast<int>(i);
+        if (!ocultaNaVista(nodes_[i].id) && nodes_[i].bounds.toFloat().contains(cursorCanvas)) return static_cast<int>(i);
     int melhor = -1;
     long long melhorArea = 0;
     for (size_t i = 0; i < nodes_.size(); ++i) {
+        if (ocultaNaVista(nodes_[i].id)) continue;
         const auto inter = nodes_[i].bounds.getIntersection(iconeCanvas);
         const long long area = static_cast<long long>(inter.getWidth()) * inter.getHeight();
         if (area > melhorArea) { melhorArea = area; melhor = static_cast<int>(i); }

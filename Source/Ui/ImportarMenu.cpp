@@ -166,7 +166,10 @@ std::vector<No> montarArvore() {
           grupo("production.archive", IconeUi::Documents, "ci_doc_scanned_png", daCategoria(CategoriaContainer::Acervo)),
           grupo("production.projects", IconeUi::Multimedia, "ci_vid_film_16_mm_8_mm_png",
                 { doTipo("video.film_project"), doTipo("other.branding"), doTipo("other.marketing"),
-                  doTipo("doc.project_documentation") }) });
+                  doTipo("doc.project_documentation") }),
+          grupo("production.other", IconeUi::Other, "ci_doc_other_png",
+                { doTipo("other.clipping"), doTipo("other.release"), doTipo("other.lyrics"), doTipo("other.text"),
+                  doTipo("other.documents"), doTipo("other.scan"), doTipo("other.grants") }) });
     colorir(producao, juce::Colour(0xffb45309));
     raiz.push_back(std::move(producao));
 

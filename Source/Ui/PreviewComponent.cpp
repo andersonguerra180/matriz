@@ -373,6 +373,7 @@ void PreviewComponent::construirParaItem() {
     textViewer_.reset();
     conversaWhatsapp_.reset();
     imagemPrincipal_ = {};
+    zoomImagem_.reset();
     labelSemPreview_->setText("", juce::dontSendNotification);
     categoriaAtual_ = matriz::ingest::CategoriaMidia::Desconhecida;
 
@@ -449,6 +450,8 @@ void PreviewComponent::construirParaItem() {
     switch (categoriaAtual_) {
         case matriz::ingest::CategoriaMidia::Imagem: {
             imagemPrincipal_ = juce::ImageFileFormat::loadFrom(arquivoFile);
+            if (!imagemPrincipal_.isValid() && arquivoFile.hasFileExtension("svg"))
+                imagemPrincipal_ = rasterizarSvg(arquivoFile);
             if (!imagemPrincipal_.isValid() && caminhoMiniatura)
                 imagemPrincipal_ = juce::ImageFileFormat::loadFrom(juce::File(*caminhoMiniatura));
             int orient = lerOrientacaoExif(arquivoFile);
@@ -583,7 +586,56 @@ void PreviewComponent::timerCallback() {
     }
 }
 
+juce::Rectangle<int> PreviewComponent::areaDaImagem() const {
+    auto area = getLocalBounds();
+    area.removeFromTop(48);
+    area.removeFromBottom(80);
+    if (timeline_ != nullptr) area.removeFromBottom(145);
+    return area.reduced(tema().espacoGrande);
+}
+
+void PreviewComponent::atualizarCursorImagem() {
+    setMouseCursor(zoomImagemAtivo() && zoomImagem_.alterado() ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
+void PreviewComponent::mouseDown(const juce::MouseEvent& e) {
+    if (!zoomImagemAtivo() || e.mods.isPopupMenu()) return;
+    zoomImagem_.iniciarArrasto(e);
+    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+}
+
+void PreviewComponent::mouseDrag(const juce::MouseEvent& e) {
+    if (!zoomImagem_.arrastando) return;
+    zoomImagem_.arrastar(e);
+    repaint();
+}
+
+void PreviewComponent::mouseUp(const juce::MouseEvent&) {
+    zoomImagem_.terminarArrasto();
+    atualizarCursorImagem();
+}
+
+void PreviewComponent::mouseDoubleClick(const juce::MouseEvent&) {
+    if (!zoomImagemAtivo()) return;
+    zoomImagem_.reset();
+    atualizarCursorImagem();
+    repaint();
+}
+
+void PreviewComponent::mouseMagnify(const juce::MouseEvent& e, float fator) {
+    if (!zoomImagemAtivo()) return;
+    zoomImagem_.pinca(e, fator, areaDaImagem().toFloat());
+    atualizarCursorImagem();
+    repaint();
+}
+
 void PreviewComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) {
+    if (zoomImagemAtivo()) {
+        zoomImagem_.roda(e, wheel, areaDaImagem().toFloat());
+        atualizarCursorImagem();
+        repaint();
+        return;
+    }
     if (timeline_) {
         timeline_->mouseWheelMove(e, wheel);
     }
@@ -613,16 +665,29 @@ bool PreviewComponent::keyPressed(const juce::KeyPress& tecla) {
 void PreviewComponent::paint(juce::Graphics& g) {
     g.fillAll(tema().fundo);
     if (imagemPrincipal_.isValid()) {
-        auto area = getLocalBounds();
-        area.removeFromTop(48);
-        area.removeFromBottom(80);
-        
-        if (timeline_ != nullptr) {
-            area.removeFromBottom(145);
+        const auto area = areaDaImagem();
+        if (zoomImagemAtivo()) {
+            // Fit na área, depois zoom/pan do usuário; o recorte impede a imagem de vazar para o cabeçalho/rodapé.
+            const auto base = juce::RectanglePlacement(juce::RectanglePlacement::centred)
+                                  .appliedTo(juce::Rectangle<float>(0.0f, 0.0f, static_cast<float>(imagemPrincipal_.getWidth()),
+                                                                    static_cast<float>(imagemPrincipal_.getHeight())),
+                                             area.toFloat());
+            const auto destino = zoomImagem_.aplicar(base, area.toFloat());
+            g.saveState();
+            g.reduceClipRegion(area);
+            // Zoom acima de 100%: pixels visíveis, sem borrar (imagem pequena); abaixo, suavizado.
+            g.setImageResamplingQuality(destino.getWidth() > static_cast<float>(imagemPrincipal_.getWidth())
+                                            ? juce::Graphics::lowResamplingQuality : juce::Graphics::highResamplingQuality);
+            g.drawImage(imagemPrincipal_, destino);
+            g.restoreState();
+            g.setColour(tema().textoTerciario);
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
+            const auto dica = getLocalBounds().removeFromBottom(18).reduced(tema().espacoGrande, 0);
+            g.drawText(juce::String(juce::roundToInt(zoomImagem_.zoom * 100.0f)) + "%  ·  " + matriz::i18n::t("preview.zoom_dica"),
+                       dica, juce::Justification::centredLeft);
+        } else {
+            g.drawImage(imagemPrincipal_, area.toFloat(), juce::RectanglePlacement::centred);
         }
-        
-        area = area.reduced(tema().espacoGrande);
-        g.drawImage(imagemPrincipal_, area.toFloat(), juce::RectanglePlacement::centred);
 
         if (timeline_ && timeline_->mostrandoTimecode()) {
             int tcW = 240;

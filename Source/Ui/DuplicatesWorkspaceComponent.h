@@ -75,6 +75,7 @@ private:
         std::string fullPath;
         std::string collectionNome;
         std::string collectionCaminho;
+        bool noIntake = false;  // modo Intake: este arquivo está no Intake (false = catálogo)
         std::string dataOriginal;  // EXIF DateTimeOriginal (aba SEQUENCES)
         std::string camera;        // EXIF Model (ou Make)
         std::string subject;       // item.dc_subject (SUBJECT do card; vazio = "—")

@@ -9,6 +9,7 @@
 #include "../Ingest/Checksum.h"
 #include "../Ingest/Duplicata.h"
 #include "VideoPlayerComponent.h"
+#include "ZoomPan.h"
 #include "../Vault/Resolucao.h"
 #include "ModalMitigacao.h"
 #include "ProgressoGlobal.h"
@@ -377,11 +378,11 @@ public:
 
         if (file_ != juce::File()) {
             juce::String extension = juce::String(ext_).toLowerCase();
-            isImage_ = (extension == "jpg" || extension == "jpeg" || extension == "png" || extension == "gif" || extension == "tiff");
+            isImage_ = (extension == "jpg" || extension == "jpeg" || extension == "png" || extension == "gif" || extension == "tiff" || extension == "svg");
             isDoc_ = (extension == "pdf" || extension == "txt" || extension == "doc" || extension == "docx" || extension == "json" || extension == "xml");
             
             if (isImage_) {
-                image_ = juce::ImageFileFormat::loadFrom(file_);
+                image_ = extension == "svg" ? rasterizarSvg(file_) : juce::ImageFileFormat::loadFrom(file_);
             } else if (isDoc_) {
                 if (extension == "txt" || extension == "json" || extension == "xml") {
                     docText_ = file_.loadFileAsString();
@@ -461,16 +462,38 @@ public:
         if (isImage_) {
             if (image_.isValid()) {
                 g.setOpacity(1.0f);  // a imagem herda o alfa da cor atual
-                g.drawImageWithin(image_, 10, 10, getWidth() - 20, getHeight() - 20,
-                                  juce::RectanglePlacement::centred, false);
+                const auto area = areaConteudo();
+                const auto base = juce::RectanglePlacement(juce::RectanglePlacement::centred)
+                                      .appliedTo(juce::Rectangle<float>(0.0f, 0.0f, static_cast<float>(image_.getWidth()),
+                                                                        static_cast<float>(image_.getHeight())), area);
+                const auto destino = zoom_.aplicar(base, area);
+                g.saveState();
+                g.reduceClipRegion(area.toNearestInt());
+                g.setImageResamplingQuality(destino.getWidth() > static_cast<float>(image_.getWidth()) ? juce::Graphics::lowResamplingQuality
+                                                                                                        : juce::Graphics::highResamplingQuality);
+                g.drawImage(image_, destino);
+                g.restoreState();
+                desenharIndicadorZoom(g);
             } else {
                 g.setColour(tk.textoTerciario);
                 g.drawText(matriz::i18n::t("duplicatas.imagem_invalida"), getLocalBounds(), juce::Justification::centred);
             }
         } else if (isDoc_) {
-            g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-            g.drawFittedText(docText_, getLocalBounds().reduced(15), juce::Justification::topLeft, 12);
+            // Texto inteiro, com rolagem, zoom (tamanho da fonte) e mãozinha — antes só cabiam as primeiras linhas.
+            const auto area = getLocalBounds().reduced(15).toFloat();
+            juce::AttributedString as;
+            as.setWordWrap(juce::AttributedString::byWord);
+            as.append(docText_, juce::Font(juce::FontOptions(tk.tamanhoFontePequena * zoom_.zoom)), tk.textoPrimario);
+            juce::TextLayout layout;
+            layout.createLayout(as, area.getWidth());
+            const float excesso = std::max(0.0f, layout.getHeight() - area.getHeight());
+            zoom_.pan.y = juce::jlimit(-excesso, 0.0f, zoom_.pan.y);
+            zoom_.pan.x = 0.0f;
+            g.saveState();
+            g.reduceClipRegion(area.toNearestInt());
+            layout.draw(g, area.translated(0.0f, zoom_.pan.y));
+            g.restoreState();
+            desenharIndicadorZoom(g);
         } else {
             // Audio or Video
             if (!player_) {
@@ -522,7 +545,61 @@ public:
         }
     }
 
+    // Zoom/rolagem/mãozinha para imagem e texto (ver ZoomPan.h).
+    bool zoomavel() const { return (isImage_ && image_.isValid()) || isDoc_; }
+    juce::Rectangle<float> areaConteudo() const { return juce::Rectangle<float>(10.0f, 10.0f, static_cast<float>(getWidth() - 20), static_cast<float>(getHeight() - 20)); }
+    void desenharIndicadorZoom(juce::Graphics& g) const {
+        if (!zoom_.alterado()) return;
+        const auto& tk = tema();
+        const juce::String t = juce::String(juce::roundToInt(zoom_.zoom * 100.0f)) + "%";
+        const juce::Rectangle<int> r(getWidth() - 62, getHeight() - 26, 54, 18);
+        g.setColour(juce::Colours::black.withAlpha(0.6f));
+        g.fillRoundedRectangle(r.toFloat(), 4.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro, juce::Font::bold)));
+        g.drawText(t, r, juce::Justification::centred);
+    }
+    void atualizarCursor() { setMouseCursor(zoomavel() && zoom_.alterado() ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor); }
+    void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override {
+        if (!zoomavel()) return;
+        if (isDoc_) {  // texto: ⌘/Ctrl = tamanho da fonte; sem modificador = rolar
+            if (e.mods.isCommandDown() || e.mods.isCtrlDown()) zoom_.zoom = juce::jlimit(0.5f, 6.0f, zoom_.zoom * (1.0f + w.deltaY * 0.5f));
+            else zoom_.pan.y += w.deltaY * 400.0f;
+        } else {
+            zoom_.roda(e, w, areaConteudo());
+        }
+        atualizarCursor();
+        repaint();
+    }
+    void mouseMagnify(const juce::MouseEvent& e, float fator) override {
+        if (!zoomavel() || fator <= 0.0f) return;
+        if (isDoc_) zoom_.zoom = juce::jlimit(0.5f, 6.0f, zoom_.zoom * fator);
+        else zoom_.pinca(e, fator, areaConteudo());
+        atualizarCursor();
+        repaint();
+    }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if (!zoom_.arrastando) return;
+        zoom_.arrastar(e);
+        repaint();
+    }
+    void mouseUp(const juce::MouseEvent&) override {
+        zoom_.terminarArrasto();
+        atualizarCursor();
+    }
+    void mouseDoubleClick(const juce::MouseEvent&) override {
+        if (!zoomavel()) return;
+        zoom_.reset();
+        atualizarCursor();
+        repaint();
+    }
+
     void mouseDown(const juce::MouseEvent& e) override {
+        if (!e.mods.isPopupMenu() && zoomavel()) {
+            zoom_.iniciarArrasto(e);
+            setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+            return;
+        }
         if (e.mods.isPopupMenu()) {
             juce::PopupMenu menu;
             menu.addItem(1, "SHOW SOURCE");
@@ -587,6 +664,7 @@ private:
     bool isDoc_ = false;
     juce::Image image_;
     juce::String docText_;
+    ZoomPan zoom_;
     std::unique_ptr<VideoPlayerComponent> player_;
     std::unique_ptr<juce::TextButton> btnPlay_;
     std::unique_ptr<juce::Label> lblTimecode_;
@@ -918,7 +996,9 @@ private:
 
                 // Esquerda = ARQUIVO 1, direita = ARQUIVO 2, sempre (é o que MANTER ARQUIVO 1/2 age). A ordem de ingestão
                 // dentro do conjunto de relacionados (#2/3) é outra coisa e vai como etiqueta menor, depois.
-                const juce::String rotuloLado = matriz::i18n::t(isDup ? "duplicatas.lado_arquivo2" : "duplicatas.lado_arquivo1");
+                juce::String rotuloLado = matriz::i18n::t(isDup ? "duplicatas.lado_arquivo2" : "duplicatas.lado_arquivo1");
+                if (owner_.modoIntake_)  // modo Intake: de que lado está cada arquivo
+                    rotuloLado << " · " << matriz::i18n::t(m.noIntake ? "duplicatas.lado_intake" : "duplicatas.lado_catalogo");
                 const juce::Font fonteLado(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold));
                 const int larguraLado = juce::GlyphArrangement::getStringWidthInt(fonteLado, rotuloLado) + 14;
                 g->setColour(juce::Colours::black);
@@ -2231,6 +2311,8 @@ void DuplicatesWorkspaceComponent::run() {
             trocar = co != cd ? co > cd : g.original.itemId > g.duplicata.itemId;
         }
         if (trocar) std::swap(g.original, g.duplicata);
+        g.original.noIntake = doIntake(g.original);
+        g.duplicata.noIntake = doIntake(g.duplicata);
         return true;
     };
 
@@ -3300,10 +3382,18 @@ void DuplicatesWorkspaceComponent::timerCallback() {
                 listaComponent_->updateList(gruposDetectados_);
             }
             if (modoIntake_ && !idsRAutomatico_.empty()) {
-                const auto textoR = matriz::i18n::t("duplicatas.intake_r_automatico").replace("{n}", juce::String((int) idsRAutomatico_.size()));
+                const auto textoR = juce::String::fromUTF8("\xE2\x9A\xA0  ") + matriz::i18n::t("duplicatas.intake_r_automatico").replace("{n}", juce::String((int) idsRAutomatico_.size()));
                 msgFinal = gruposDetectados_.empty() ? textoR : textoR + " " + msgFinal;
                 lblStatus_->setText(msgFinal, juce::dontSendNotification);
                 if (aoMarcarRNoIntake) aoMarcarRNoIntake(idsRAutomatico_);
+                // Aviso ostensivo: janela própria (não só a linha de status) dizendo quantos foram marcados R sozinhos.
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions()
+                        .withIconType(juce::MessageBoxIconType::WarningIcon)
+                        .withTitle(matriz::i18n::t("duplicatas.intake_r_aviso_titulo"))
+                        .withMessage(textoR + "\n\n" + matriz::i18n::t("duplicatas.intake_r_aviso_corpo"))
+                        .withButton("OK"),
+                    nullptr);
             }
             ProgressoGlobal::obterInstancia().concluirTarefa(idTarefaScan(), msgFinal);
             if (aoConcluirScan) aoConcluirScan(static_cast<int>(gruposDetectados_.size()));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <array>
 #include "ColunaCardsLayout.h"
 #include "BarraLateral.h"
 #include "EventBus.h"
@@ -219,6 +220,15 @@ private:
     std::unique_ptr<juce::TextButton> btnZoomIn_;
     std::unique_ptr<juce::TextButton> btnZoomOut_;
     std::unique_ptr<juce::TextButton> btnZoomFit_;
+    // VIEW 1-4: presets de profundidade a partir da pasta selecionada (só a vista).
+    std::array<std::unique_ptr<juce::TextButton>, 4> btnNivel_;
+    std::set<std::string> ocultasNaVista_;
+    std::string mapaDasOcultas_;
+    bool ocultaNaVista(const std::string& id) const;
+    void aplicarNivelNaVista(int niveis);
+    void exportarVistaComoImagem();
+    std::optional<juce::Rectangle<int>> canvasForcado_;
+    bool exportandoImagem_ = false;
     std::unique_ptr<juce::TextButton> btnResetTamanhos_;
 
     // Pasta ingerida inteira: árvore PROPOSTA (card NEW FOLDERS na coluna esquerda).

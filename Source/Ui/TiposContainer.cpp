@@ -68,8 +68,17 @@ const std::vector<TipoContainer>& tiposDeContainer() {
     { "archive.exhibition", CategoriaContainer::Acervo, "tipoc.archive.exhibition", "", "", CategoriaConteudo::Nenhuma, "ci_foto_computer_folder_png" },
     { "archive.oral_history", CategoriaContainer::Acervo, "tipoc.archive.oral_history", "", "", CategoriaConteudo::Nenhuma, "ci_aud_voice_memo_png" },
     { "archive.digitization", CategoriaContainer::Acervo, "tipoc.archive.digitization", "", "", CategoriaConteudo::Nenhuma, "ci_arm_external_hdd_png" },
+    { "archive.website_backup", CategoriaContainer::Acervo, "tipoc.archive.website_backup", "", "", CategoriaConteudo::Nenhuma, "videoweb_png" },
+    { "archive.social_network", CategoriaContainer::Acervo, "tipoc.archive.social_network", "", "", CategoriaConteudo::Nenhuma, "instagram_jpeg" },
     { "other.branding", CategoriaContainer::Outro, "tipoc.other.branding", "", "", CategoriaConteudo::Nenhuma, "ci_doc_other_png" },
     { "other.marketing", CategoriaContainer::Outro, "tipoc.other.marketing", "", "", CategoriaConteudo::Nenhuma, "ci_doc_other_png" },
+    { "other.clipping", CategoriaContainer::Outro, "tipoc.other.clipping", "", "", CategoriaConteudo::Nenhuma, "ci_doc_scanned_png" },
+    { "other.release", CategoriaContainer::Outro, "tipoc.other.release", "", "", CategoriaConteudo::Nenhuma, "ci_doc_other_png" },
+    { "other.lyrics", CategoriaContainer::Outro, "tipoc.other.lyrics", "", "", CategoriaConteudo::Nenhuma, "ci_doc_digital_native_png" },
+    { "other.text", CategoriaContainer::Outro, "tipoc.other.text", "", "", CategoriaConteudo::Nenhuma, "ci_doc_digital_native_png" },
+    { "other.documents", CategoriaContainer::Outro, "tipoc.other.documents", "", "", CategoriaConteudo::Nenhuma, "ci_doc_digital_native_png" },
+    { "other.scan", CategoriaContainer::Outro, "tipoc.other.scan", "", "", CategoriaConteudo::Nenhuma, "ci_doc_scanned_png" },
+    { "other.grants", CategoriaContainer::Outro, "tipoc.other.grants", "", "", CategoriaConteudo::Nenhuma, "ci_doc_other_png" },
     };
     return tabela;
 }

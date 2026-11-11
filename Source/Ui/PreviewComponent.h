@@ -6,6 +6,7 @@
 #include "ProjetoAberto.h"
 #include "TimelineComponent.h"
 #include "VideoPlayerComponent.h"
+#include "ZoomPan.h"
 
 // Preview no painel central (Reorientação completa §3.4) — troca a grade
 // pelo conteúdo do arquivo selecionado, no mesmo espaço. Imagem mostra a
@@ -43,6 +44,11 @@ public:
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
+    void mouseMagnify(const juce::MouseEvent&, float) override;
 
 private:
     void construirParaItem();
@@ -68,6 +74,11 @@ private:
     std::unique_ptr<juce::Label> cabecalhoTitulo_;
 
     juce::Image imagemPrincipal_;
+    // Imagem (não vídeo/áudio): zoom, rolagem e mãozinha para navegar em imagens pequenas ou grandes.
+    ZoomPan zoomImagem_;
+    bool zoomImagemAtivo() const { return categoriaAtual_ == matriz::ingest::CategoriaMidia::Imagem && imagemPrincipal_.isValid(); }
+    juce::Rectangle<int> areaDaImagem() const;
+    void atualizarCursorImagem();
     std::unique_ptr<juce::Label> labelMetadados_;
     std::unique_ptr<juce::Label> labelSemPreview_;
     std::unique_ptr<juce::TextEditor> textViewer_;
