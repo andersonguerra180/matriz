@@ -341,15 +341,16 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnZoomOut_);
 
     btnZoomFit_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_fit"));
-    btnZoomFit_->onClick = [this] { enquadrarTudo(); };
+    btnZoomFit_->onClick = [this] { mensagemNivelAuto_.clear(); enquadrarLegivel(true); };
     addAndMakeVisible(*btnZoomFit_);
 
     // Presets de profundidade 1-4: a partir da pasta selecionada, mostram só N níveis (só a vista; nada é gravado).
-    for (int n = 1; n <= 4; ++n) {
+    for (int n = 1; n <= 9; ++n) {  // 1-8 e FULL (n == 9)
         auto& b = btnNivel_[static_cast<size_t>(n - 1)];
-        b = std::make_unique<juce::TextButton>(juce::String(n));
-        b->setTooltip(i18n::t("arvore_backup.nivel_dica").replace("{n}", juce::String(n)));
-        b->onClick = [this, n] { aplicarNivelNaVista(n); };
+        const bool full = n == 9;
+        b = std::make_unique<juce::TextButton>(full ? i18n::t("arvore_backup.nivel_full") : juce::String(n));
+        b->setTooltip(full ? i18n::t("arvore_backup.nivel_full_dica") : i18n::t("arvore_backup.nivel_dica").replace("{n}", juce::String(n)));
+        b->onClick = [this, n, full] { aplicarNivelNaVista(full ? 0 : n); };
         addAndMakeVisible(*b);
     }
 
@@ -462,7 +463,8 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnMenuMapa_->getProperties().set("leve", true);
     btnZoomFit_->getProperties().set("destaque", true);
     for (auto* b : {btnZoomIn_.get(), btnZoomOut_.get(), btnZoomFit_.get()}) b->setLookAndFeel(&segmentoLf_);
-    for (auto& b : btnNivel_) b->setLookAndFeel(&segmentoLf_);
+    for (size_t i = 0; i < 8; ++i) btnNivel_[i]->setLookAndFeel(&nivelLf_);
+    btnNivel_[8]->setLookAndFeel(&pilulaLf_);
     btnZoomOut_->setButtonText(juce::String::fromUTF8("\xe2\x80\x93"));  // "–"
     for (auto* sl : {sliderTamanho_.get(), sliderSpread_.get(), sliderSpreadV_.get()}) {
         sl->setTextBoxStyle(juce::Slider::TextBoxRight, false, 56, 24);
@@ -1129,6 +1131,10 @@ void ArvoreBackupComponent::mostrarMenuExplorador(const juce::MouseEvent&) {
     menu.showMenuAsync(juce::PopupMenu::Options());
 }
 
+int ArvoreBackupComponent::nivelAtivoExibido() const {
+    return (!ocultasNaVista_.empty() && mapaDasOcultas_ == mapaAtivoId_) ? nivelAtivo_ : 0;
+}
+
 bool ArvoreBackupComponent::ocultaNaVista(const std::string& id) const {
     return !ocultasNaVista_.empty() && mapaDasOcultas_ == mapaAtivoId_ && ocultasNaVista_.count(id) > 0;
 }
@@ -1137,6 +1143,8 @@ bool ArvoreBackupComponent::ocultaNaVista(const std::string& id) const {
 // 1 = só ela, 2 = ela e as subpastas diretas, etc. Só a vista: o mapa, as posições e o banco não mudam.
 void ArvoreBackupComponent::aplicarNivelNaVista(int niveis) {
     if (mapaDasOcultas_ != mapaAtivoId_) { ocultasNaVista_.clear(); mapaDasOcultas_ = mapaAtivoId_; }
+    mensagemNivelAuto_.clear();
+    nivelAtivo_ = niveis;
     std::unordered_map<std::string, std::vector<size_t>> filhos;
     std::set<std::string> ids;
     for (const auto& n : nodes_) ids.insert(n.id);
@@ -1156,7 +1164,7 @@ void ArvoreBackupComponent::aplicarNivelNaVista(int niveis) {
             const auto [idx, d] = pilha.back();
             pilha.pop_back();
             if (d > 0) {
-                if (d >= niveis) ocultasNaVista_.insert(nodes_[idx].id);
+                if (niveis > 0 && d >= niveis) ocultasNaVista_.insert(nodes_[idx].id);  // niveis == 0: FULL, mostra tudo
                 else ocultasNaVista_.erase(nodes_[idx].id);
             }
             const auto it = filhos.find(nodes_[idx].id);
@@ -1167,6 +1175,62 @@ void ArvoreBackupComponent::aplicarNivelNaVista(int niveis) {
     }
     for (auto& n : nodes_)
         if (ocultasNaVista_.count(n.id)) n.selecionado = false;
+    // Cada clique é seguido de um AUTO ARRANGE só das pastas visíveis e do enquadramento delas.
+    autoArranjarMapaInteiro();
+    enquadrarLegivel(false);
+    repaint();
+}
+
+// FIT inteligente: enquadra só as pastas visíveis. Se para caberem todas o zoom ficaria ilegível (nomes minúsculos),
+// recolhe sozinho os níveis mais fundos (só a vista, como os botões 1-4) até o nome dar para ler, reorganiza só as
+// visíveis e enquadra. `podeRecolher` = false nos presets, onde o usuário já escolheu os níveis.
+void ArvoreBackupComponent::enquadrarLegivel(bool podeRecolher) {
+    if (nodes_.empty()) return;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 200 || canvas.getHeight() < 150) return;
+    constexpr float kZoomLegivel = 0.30f;
+
+    auto zoomDoConjunto = [&](int nivelMax) -> float {  // zoom de fit se só os níveis < nivelMax ficassem
+        std::vector<layoutarvore::NoTam> nos;
+        for (const auto& n : nodes_)
+            if (!ocultaNaVista(n.id) && n.nivel < nivelMax) nos.push_back({n.id, n.pastaPaiId, static_cast<double>(n.escalaManual)});
+        if (nos.empty()) return 1.0f;
+        layoutarvore::ParametrosAuto pa;
+        pa.areaLargura = canvas.getWidth();
+        pa.areaAltura = canvas.getHeight();
+        const auto r = layoutarvore::calcularAutoArranjo(nos, pa);
+        juce::Rectangle<int> uniao;
+        bool primeiro = true;
+        for (const auto& [id, c] : r.caixas) {
+            const juce::Rectangle<int> rc(c.x, c.y, c.w, c.h);
+            uniao = primeiro ? rc : uniao.getUnion(rc);
+            primeiro = false;
+        }
+        if (primeiro) return 1.0f;
+        return std::min((static_cast<float>(canvas.getWidth()) - 80.0f) / static_cast<float>(std::max(1, uniao.getWidth())),
+                        (static_cast<float>(canvas.getHeight()) - 80.0f) / static_cast<float>(std::max(1, uniao.getHeight())));
+    };
+
+    if (podeRecolher) {
+        int nivelMax = 0;
+        for (const auto& n : nodes_)
+            if (!ocultaNaVista(n.id)) nivelMax = std::max(nivelMax, n.nivel + 1);
+        int escolhido = nivelMax;
+        while (escolhido > 1 && zoomDoConjunto(escolhido) < kZoomLegivel) --escolhido;
+        // Só recolhe se com isso os nomes ficam legíveis; senão (nem a primeira camada cabe) mostra tudo como está.
+        if (escolhido < nivelMax && zoomDoConjunto(escolhido) >= kZoomLegivel) {
+            if (mapaDasOcultas_ != mapaAtivoId_) { ocultasNaVista_.clear(); mapaDasOcultas_ = mapaAtivoId_; }
+            for (const auto& n : nodes_)
+                if (!ocultaNaVista(n.id) && n.nivel >= escolhido) ocultasNaVista_.insert(n.id);
+            for (auto& n : nodes_)
+                if (ocultasNaVista_.count(n.id)) n.selecionado = false;
+            nivelAtivo_ = escolhido;
+            mensagemNivelAuto_ = i18n::t("arvore_backup.nivel_auto").replace("{a}", juce::String(escolhido)).replace("{b}", juce::String(nivelMax));
+            autoArranjarMapaInteiro();
+        }
+    }
+    enquadrarTudo();
+    // Pastas pequenas demais para ler: nunca abaixo do piso se o conjunto couber melhor; o resto o usuário rola.
     repaint();
 }
 
@@ -1565,13 +1629,16 @@ bool ArvoreBackupComponent::calcularEAplicarAutoArranjo(bool comContainers) {
 
     std::vector<layoutarvore::NoTam> nos;
     nos.reserve(nodes_.size());
-    for (const auto& n : nodes_) nos.push_back({n.id, n.pastaPaiId, static_cast<double>(n.escalaManual)});
+    for (const auto& n : nodes_)
+        if (!ocultaNaVista(n.id)) nos.push_back({n.id, n.pastaPaiId, static_cast<double>(n.escalaManual)});  // colapsadas ficam de fora
+    if (nos.empty()) return false;
     // Containers ligados a uma pasta mostrada: filhos-folha dela, com o tamanho do próprio cartão (o id leva um
     // prefixo para não colidir com o de uma pasta).
     const std::string kPrefixoContainer = "container:";
     if (comContainers) {
         std::set<std::string> pastasMostradas;
-        for (const auto& n : nodes_) pastasMostradas.insert(n.id);
+        for (const auto& n : nodes_)
+            if (!ocultaNaVista(n.id)) pastasMostradas.insert(n.id);
         for (const auto& lf : looseFiles_) {
             if (!lf.ehContainer || lf.pastaPaiId.empty() || !pastasMostradas.count(lf.pastaPaiId)) continue;
             layoutarvore::NoTam no{kPrefixoContainer + lf.id, lf.pastaPaiId, 1.0};
@@ -1606,8 +1673,14 @@ bool ArvoreBackupComponent::calcularEAplicarAutoArranjo(bool comContainers) {
 
 void ArvoreBackupComponent::recalcularPivot() {
     if (nodes_.empty()) { pivotEscala_ = {0.0f, 0.0f}; return; }
-    juce::Rectangle<int> uniao = nodes_.front().boundsOriginal;
-    for (const auto& n : nodes_) uniao = uniao.getUnion(n.boundsOriginal);
+    juce::Rectangle<int> uniao;
+    bool primeiro = true;
+    for (const auto& n : nodes_) {
+        if (ocultaNaVista(n.id)) continue;  // o pivô é o centro do que está visível
+        uniao = primeiro ? n.boundsOriginal : uniao.getUnion(n.boundsOriginal);
+        primeiro = false;
+    }
+    if (primeiro) uniao = nodes_.front().boundsOriginal;
     pivotEscala_ = uniao.getCentre().toFloat();
 }
 
@@ -2256,7 +2329,8 @@ void ArvoreBackupComponent::autoArranjarMapaInteiro(bool registrarUndo) {
     // posição fica guardada (por pasta) e acompanha a pasta.
     if (!mapaAtivoEhOriginal()) {
         std::set<std::string> pastasMostradas;
-        for (const auto& n : nodes_) pastasMostradas.insert(n.id);
+        for (const auto& n : nodes_)
+            if (!ocultaNaVista(n.id)) pastasMostradas.insert(n.id);
         bool gravou = false;
         for (auto& lf : looseFiles_) {
             if (!lf.ehContainer || lf.pastaPaiId.empty() || !pastasMostradas.count(lf.pastaPaiId)) continue;
@@ -2934,6 +3008,19 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
     g.restoreState();
     if (exportandoImagem_) return;  // a imagem exportada é só o mapa: sem coluna, abas nem cards fixos
+    if (mensagemNivelAuto_.isNotEmpty()) {  // o FIT recolheu níveis sozinho: avisa e diz como voltar
+        const auto cv = areaCanvas();
+        const juce::Font f(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold));
+        const int w = juce::GlyphArrangement::getStringWidthInt(f, mensagemNivelAuto_) + 24;
+        const juce::Rectangle<int> r(cv.getCentreX() - w / 2, cv.getY() + 12, w, 26);
+        g.setColour(tema().painel.withAlpha(0.95f));
+        g.fillRoundedRectangle(r.toFloat(), 13.0f);
+        g.setColour(tema().acento);
+        g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 13.0f, 1.0f);
+        g.setFont(f);
+        g.setColour(tema().textoPrimario);
+        g.drawText(mensagemNivelAuto_, r, juce::Justification::centred);
+    }
 
     coluna_.paint(g);
     desenharSemPasta(g);
@@ -3024,6 +3111,24 @@ void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
         g.setColour(tk.borda.withAlpha(0.55f));
         g.drawRoundedRectangle(caixaArvore_.toFloat().reduced(0.5f), 8.0f, 1.0f);
     }
+    if (!rotuloNivelBounds_.isEmpty()) {
+        g.setColour(tk.textoSecundario);
+        g.setFont(barra::fonteChip());
+        g.drawText(i18n::t("arvore_backup.rotulo_nivel"), rotuloNivelBounds_, juce::Justification::centredLeft, false);
+        const int ativo = nivelAtivoExibido();
+        g.setColour(tk.textoTerciario);
+        g.setFont(barra::fonteContagem());
+        g.drawText(ativo <= 0 ? i18n::t("arvore_backup.nivel_mostrando_tudo")
+                              : i18n::t(ativo == 1 ? "arvore_backup.nivel_mostrando_um" : "arvore_backup.nivel_mostrando").replace("{n}", juce::String(ativo)),
+                   textoNivelBounds_, juce::Justification::centredRight, true);
+        for (size_t i = 0; i < 8; ++i) {  // o nível ativo em grafite
+            const bool on = static_cast<int>(i) + 1 == ativo;
+            if (static_cast<bool>(btnNivel_[i]->getProperties()["ativo"]) != on) {
+                btnNivel_[i]->getProperties().set("ativo", on);
+                btnNivel_[i]->repaint();
+            }
+        }
+    }
     if (!rotuloTamanhoBounds_.isEmpty()) {
         g.setColour(tk.textoSecundario);
         g.setFont(barra::fonteChip());
@@ -3103,24 +3208,33 @@ void ArvoreBackupComponent::resized() {
     linhaDupla(btnRenomearPasta_.get(), btnAutoArranjar_.get(), kChipH);
     coluna_.finalizarCard();
 
-    // 3. VIEW numa linha: – | Fit | + agrupados com o zoom ao lado; "Show Project Containers as Folders" logo abaixo.
+    // 3. VIEW: zoom – | Fit | + numa pílula (a porcentagem no título); TREE LEVEL 1-8 numa linha só com o resumo
+    //    ("showing 3 levels") à direita do rótulo; "Full · all levels" na linha toda; "Show Project Containers as Folders".
     {
-        auto linha = coluna_.iniciarCardEmLinha(i18n::t("arvore_backup.card_visualizacao"), 30);
-        zoomIndicadorBounds_ = linha.removeFromRight(44);
-        linha.removeFromRight(6);
-        trilhoZoom_ = linha.withSizeKeepingCentre(juce::jmin(linha.getWidth(), 100), 30).withX(linha.getRight() - juce::jmin(linha.getWidth(), 100));
+        auto titulo = coluna_.iniciarCard(i18n::t("arvore_backup.card_visualizacao"));
+        zoomIndicadorBounds_ = titulo.removeFromRight(60);
+        trilhoZoom_ = corpo.removeFromTop(34);
         auto seg = trilhoZoom_;
-        const int wPonta = 28;
+        const int wPonta = 36;
         if (btnZoomOut_) btnZoomOut_->setBounds(seg.removeFromLeft(wPonta));
         if (btnZoomIn_) btnZoomIn_->setBounds(seg.removeFromRight(wPonta));
         if (btnZoomFit_) btnZoomFit_->setBounds(seg);
-        corpo.removeFromTop(6);
+        corpo.removeFromTop(8);
         {
-            auto linhaNivel = corpo.removeFromTop(30);
-            const int wNivel = linhaNivel.getWidth() / 4;
-            for (auto& b : btnNivel_) if (b) b->setBounds(linhaNivel.removeFromLeft(wNivel));
+            auto linhaRotulo = corpo.removeFromTop(18);
+            textoNivelBounds_ = linhaRotulo.removeFromRight(linhaRotulo.getWidth() / 2);
+            rotuloNivelBounds_ = linhaRotulo;
         }
         corpo.removeFromTop(4);
+        {
+            auto linha = corpo.removeFromTop(28);
+            const int w = linha.getWidth() / 8;
+            for (size_t i = 0; i < 8; ++i)
+                if (btnNivel_[i]) btnNivel_[i]->setBounds(i == 7 ? linha : linha.removeFromLeft(w));
+        }
+        corpo.removeFromTop(6);
+        if (btnNivel_[8]) btnNivel_[8]->setBounds(corpo.removeFromTop(kChipH));
+        corpo.removeFromTop(6);
         if (chkContainersComoPastas_) chkContainersComoPastas_->setBounds(corpo.removeFromTop(36));
         coluna_.finalizarCard();
     }

@@ -156,7 +156,7 @@ struct ParametrosAuto {
     // Piso de legibilidade: nenhum cartão fica menor que pisoNivel x fatorMin x (190x84) (= 142x63 px), o
     // bastante para o nome, o contador e as bolinhas de conexão (que não encolhem com o cartão). Mapa grande
     // que não cabe na área NÃO encolhe os cartões: passa da área e o FIT/zoom mostram o conjunto.
-    double decaimentoPorNivel = 0.92, pisoNivel = 0.75;
+    double decaimentoPorNivel = 0.85, pisoNivel = 0.6;  // hierarquia visível: cada nível ~15% menor, até 60% do tamanho da raiz
     double fatorMin = 1.0, fatorMax = 2.5;
 };
 

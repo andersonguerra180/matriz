@@ -221,7 +221,9 @@ private:
     std::unique_ptr<juce::TextButton> btnZoomOut_;
     std::unique_ptr<juce::TextButton> btnZoomFit_;
     // VIEW 1-4: presets de profundidade a partir da pasta selecionada (só a vista).
-    std::array<std::unique_ptr<juce::TextButton>, 4> btnNivel_;
+    std::array<std::unique_ptr<juce::TextButton>, 9> btnNivel_;  // 1-8 e FULL
+    juce::String mensagemNivelAuto_;  // aviso do FIT que recolheu níveis sozinho
+    void enquadrarLegivel(bool podeRecolher);
     std::set<std::string> ocultasNaVista_;
     std::string mapaDasOcultas_;
     bool ocultaNaVista(const std::string& id) const;
@@ -301,6 +303,11 @@ private:
     barra::PilulaLf pilulaLf_;
     barra::SegmentoLf segmentoLf_;
     juce::Rectangle<int> trilhoZoom_;         // trilho do – | Fit | +
+    barra::NivelLf nivelLf_;
+    int nivelAtivo_ = 0;  // último TREE LEVEL aplicado (0 = FULL)
+    int nivelAtivoExibido() const;
+    juce::Rectangle<int> textoNivelBounds_;
+    juce::Rectangle<int> rotuloNivelBounds_;    // "TREE LEVEL", acima dos botões 1-8/FULL
     juce::Rectangle<int> rotuloTamanhoBounds_;  // "Size", à esquerda do slider de tamanho
     juce::Rectangle<int> caixaArvore_;        // fundo claro da árvore do FOLDER EXPLORER
     juce::Rectangle<int> semPastaBounds_;

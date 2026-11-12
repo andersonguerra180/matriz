@@ -262,6 +262,31 @@ struct SegmentoLf : public MatrizLookAndFeel {
     }
 };
 
+// Quadradinhos numerados (TREE LEVEL 1-8 do STRUCTURE): claros com borda; o ativo (propriedade "ativo") em grafite com texto claro.
+struct NivelLf : public MatrizLookAndFeel {
+    void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool sobre, bool apertado) override {
+        const auto& tk = tema();
+        const auto r = b.getLocalBounds().toFloat().reduced(1.5f);
+        const bool ativo = static_cast<bool>(b.getProperties()["ativo"]);
+        if (ativo) {
+            g.setColour(tk.acento);
+            g.fillRoundedRectangle(r, 6.0f);
+        } else {
+            g.setColour(apertado ? tk.campoFundo.darker(0.08f) : (sobre ? tk.campoFundo.brighter(0.03f) : tk.campoFundo));
+            g.fillRoundedRectangle(r, 6.0f);
+            g.setColour(tk.borda.withAlpha(0.7f));
+            g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
+        }
+    }
+    void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override {
+        const auto& tk = tema();
+        const bool ativo = static_cast<bool>(b.getProperties()["ativo"]);
+        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.setColour(ativo ? tk.textoSobreAcento : tk.textoPrimario);
+        g.drawText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
+    }
+};
+
 // Pílula grafite da ação principal. Com a propriedade "rotulo", desenha "rotulo · n" (n = o "(n)" do texto do botão,
 // que fica como está para quem já o lê); sem ela, o próprio texto.
 struct PrimariaLf : public MatrizLookAndFeel {
